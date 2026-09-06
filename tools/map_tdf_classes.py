@@ -79,14 +79,22 @@ def find_class_names(pe: PE) -> dict[int, str]:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("exe", type=Path)
+    ap.add_argument("exe", type=Path,
+                    help="NFS14.exe LUB pelny minidump .dmp (odszyfrowana .text z RAM)")
     ap.add_argument("--members", type=Path, default=Path("docs/recon/tdf_members.json"))
     ap.add_argument("-o", "--out", type=Path, default=Path("docs/recon"))
     ap.add_argument("--window", type=int, default=256,
                     help="ile bajtow kodu wokol lea szukac pary nazwa/tablica")
     args = ap.parse_args()
 
-    pe = PE(args.exe.read_bytes())
+    # .exe -> PE (na dysku, .text zaszyfrowana); .dmp -> obraz z pamieci
+    # (.text odszyfrowana). Rozpoznajemy po sygnaturze MDMP.
+    head = args.exe.read_bytes()[:4]
+    if head == b"MDMP":
+        from dump_image import load_dump
+        pe = load_dump(args.exe)
+    else:
+        pe = PE(args.exe.read_bytes())
     members: list[dict] = json.loads(args.members.read_text(encoding="utf-8"))
     members.sort(key=lambda e: e["va"])
     member_vas = {e["va"] for e in members}

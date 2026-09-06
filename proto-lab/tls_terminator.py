@@ -262,7 +262,13 @@ def handle(conn: socket.socket, addr, args, out_dir: Path,
         counter[0] += 1
         n = counter[0]
     tag = f"{dt.datetime.now():%H%M%S}-{n:03d}"
-    print(f"\n=== [{tag}] klient {addr[0]}:{addr[1]} ===")
+    try:
+        local_port = conn.getsockname()[1]
+    except OSError:
+        local_port = 0
+    role = "BLAZE" if local_port == args.blaze_port else "redirector"
+    print(f"\n=== [{tag}] klient {addr[0]}:{addr[1]} -> nasz port {local_port} "
+          f"({role}) ===")
 
     w = Wire(conn)
     transcript = b""                                  # wiadomosci handshake (z naglowkami)
@@ -358,12 +364,16 @@ def handle(conn: socket.socket, addr, args, out_dir: Path,
                   f"error={fr.error} seq={fr.seq} payload={len(fr.payload)}B")
             if fr.component == 5 and fr.command == 1:
                 resp = blaze.build_getserverinstance_response(
-                    args.redirect_ip, args.redirect_port, seq=fr.seq)
+                    args.redirect_ip, args.blaze_port, seq=fr.seq,
+                    addr_index=args.addr_index, minimal=args.addr_only,
+                    msg_type=args.reply_msgtype, host=args.blaze_host)
                 w.send_record(RT_APPDATA, resp)
                 print(f"  -> odpowiedz getServerInstance ({len(resp)} B) -> "
-                      f"{args.redirect_ip}:{args.redirect_port} [DRAFT]")
+                      f"{args.redirect_ip}:{args.blaze_port} [DRAFT, addr_index={args.addr_index}]")
+                print(f"     (czekam na polaczenie gry na porcie Blaze {args.blaze_port})")
             else:
-                print(f"  (nieoczekiwany component/command - nie odpowiadam)")
+                print(f"  *** PAKIET NA PORCIE BLAZE (nie getServerInstance) - "
+                      f"to jest kolejny etap (preAuth/login)! ***")
         except Exception as e:                        # noqa: BLE001 - diagnostyka
             print(f"  [!] nie zbudowalem/nie wyslalem odpowiedzi: {e}")
 
@@ -414,12 +424,21 @@ def main() -> int:
     ap.add_argument("--redirect-ip", default="127.0.0.1",
                     help="adres, ktory oddajemy w odpowiedzi getServerInstance "
                          "(domyslnie my sami, by klient wrocil po kolejny pakiet)")
-    ap.add_argument("--redirect-port", type=int, default=None,
-                    help="port w odpowiedzi getServerInstance (domyslnie = --port)")
+    ap.add_argument("--blaze-port", type=int, default=14219,
+                    help="port serwera Blaze zwracany w odpowiedzi getServerInstance "
+                         "(INNY niz --port redirectora); terminator nasluchuje takze na nim")
+    ap.add_argument("--blaze-host", default="gosredirector.ea.com",
+                    help="nazwa hosta w polu HOST odpowiedzi (musi byc w pliku hosts "
+                         "-> 127.0.0.1 ORAZ pasowac do CN certu). Gra laczy sie z nia.")
+    ap.add_argument("--addr-index", type=int, default=0,
+                    help="indeks aktywnego skladnika unii ADDR (0=IpAddress dla "
+                         "ServerAddressInfo; do prob, jesli klient nie laczy sie)")
+    ap.add_argument("--addr-only", action="store_true",
+                    help="odpowiedz tylko z polem ADDR (izolacja unii, diagnostyka)")
+    ap.add_argument("--reply-msgtype", type=lambda x: int(x, 0), default=0x10,
+                    help="bajt msgType w naglowku Fire2 odpowiedzi. 0x10 = REPLY "
+                         "(potwierdzone: gra dekoduje ServerInstanceInfo)")
     args = ap.parse_args()
-
-    if args.redirect_port is None:
-        args.redirect_port = args.port
 
     if not args.cert.exists() or not args.key.exists():
         sys.stderr.write("brak pki/ - uruchom najpierw make_stub_cert.py\n")
@@ -429,20 +448,34 @@ def main() -> int:
     rsa = load_rsa_priv(args.key)
     print(f"klucz RSA zaladowany ({rsa[2] * 8} bit), cert {len(cert_der)} B")
 
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    s.bind(("0.0.0.0", args.port))
-    s.listen(16)
-    print(f"terminator 0.0.0.0:{args.port} - czekam na klienta. Ctrl+C konczy.\n")
+    # Nasluch na porcie redirectora ORAZ na porcie Blaze - rozdzielenie pozwala
+    # zobaczyc, czy gra faktycznie laczy sie po odpowiedzi getServerInstance.
+    ports = [args.port]
+    if args.blaze_port != args.port:
+        ports.append(args.blaze_port)
 
     counter, lock = [0], threading.Lock()
-    try:
+
+    def serve(port: int) -> None:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        s.bind(("0.0.0.0", port))
+        s.listen(16)
+        role = "redirector" if port == args.port else "BLAZE"
+        print(f"nasluch 0.0.0.0:{port} ({role})")
         while True:
             conn, addr = s.accept()
             threading.Thread(target=handle,
                              args=(conn, addr, args, args.out, counter, lock,
                                    rsa, cert_der),
                              daemon=True).start()
+
+    for p in ports[1:]:
+        threading.Thread(target=serve, args=(p,), daemon=True).start()
+    print(f"oddajemy grze adres Blaze: {args.redirect_ip}:{args.blaze_port}. "
+          f"Ctrl+C konczy.\n")
+    try:
+        serve(ports[0])
     except KeyboardInterrupt:
         print("\nkoniec")
     return 0

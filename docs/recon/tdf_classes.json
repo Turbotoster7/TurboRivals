@@ -1,0 +1,7 @@
+{
+ "0x0001416b6e98": "Blaze::ByteVault::User",
+ "0x0001416c4450": "Blaze::Util::UserText",
+ "0x0001416f61f0": "Blaze::Redirector::XboxServerAddress",
+ "0x0001416fd440": "Blaze::GameReporting::SubmitGameReportRequest",
+ "0x0001417066c8": "Blaze::DynamicInetFilter::ReplicatedInetFilterReplicationReason"
+}

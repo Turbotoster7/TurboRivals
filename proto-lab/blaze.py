@@ -54,37 +54,41 @@ def dec_tag(b3: bytes) -> str:
 
 # ---------------------------------------------------------------- liczby (varint heat2)
 def enc_int(v: int) -> bytes:
-    """Varint heat2: 1. bajt bity0-5 = wartosc, bit6 = 'sa dalsze', kolejne
-    bajty bity0-6 z bit7 = kontynuacja. (Kodujemy wartosci nieujemne.)"""
-    if v < 0:
-        raise ValueError("enc_int obsluguje tylko wartosci nieujemne")
+    """Varint heat2 (zweryfikowany na polu LOC z zywego zadania):
+    1. bajt: bity 0-5 = wartosc, bit6 = ZNAK (ujemna), bit7 = KONTYNUACJA;
+    kolejne bajty: bity 0-6 = wartosc, bit7 = kontynuacja.
+    UWAGA: kontynuacja to ZAWSZE bit7 - wczesniejsza wersja mylila go z bit6
+    (znakiem), przez co IP/PORT >= 0x40 wychodzily zle i klient odrzucal cert."""
+    neg = v < 0
+    if neg:
+        v = -v
     out = bytearray()
-    if v < 0x40:
-        out.append(v & 0x3F)
-        return bytes(out)
-    out.append(0x40 | (v & 0x3F))
+    b = v & 0x3F
     v >>= 6
-    while True:
-        if v < 0x80:
-            out.append(v & 0x7F)
-            break
-        out.append(0x80 | (v & 0x7F))
+    if neg:
+        b |= 0x40
+    if v:
+        b |= 0x80
+    out.append(b)
+    while v:
+        b = v & 0x7F
         v >>= 7
+        if v:
+            b |= 0x80
+        out.append(b)
     return bytes(out)
 
 
 def dec_int(buf: bytes, p: int) -> tuple[int, int]:
-    first = buf[p]; p += 1
-    val = first & 0x3F
-    if first & 0x40:
-        shift = 6
-        while True:
-            bb = buf[p]; p += 1
-            val |= (bb & 0x7F) << shift
-            shift += 7
-            if not bb & 0x80:
-                break
-    return val, p
+    b = buf[p]; p += 1
+    neg = b & 0x40
+    val = b & 0x3F
+    shift = 6
+    while b & 0x80:
+        b = buf[p]; p += 1
+        val |= (b & 0x7F) << shift
+        shift += 7
+    return (-val if neg else val), p
 
 
 # ---------------------------------------------------------------- wartosci
@@ -144,67 +148,148 @@ def encode_tdf(fields: list[Field]) -> bytes:
 # ---------------------------------------------------------------- ramka Fire2
 FIRE2_HDR = 12
 
+# messageType (pole uint16 na offsecie 8 naglowka). Wartosci wg Blaze Fire2.
+MSG_MESSAGE = 0        # zadanie (tak wysyla klient)
+MSG_REPLY = 1          # odpowiedz na zadanie (tak MUSIMY odpowiedziec)
+MSG_NOTIFICATION = 2
+MSG_ERROR_REPLY = 3
+MSG_PING = 4
+MSG_PING_REPLY = 5
+
 
 @dataclass
 class Fire2:
+    """Ramka Fire2. Naglowek 12 B = 6x uint16 BE:
+    size, component, command, errorCode, messageType, messageId.
+    W zadaniu klienta messageType=MESSAGE(0), messageId rosnie 0,1,2...
+    Odpowiedz MUSI miec messageType=REPLY(1) i ten sam messageId (echo)."""
     component: int
     command: int
     payload: bytes
     error: int = 0
-    seq: int = 0
-    msg_type: int = 0            # 0=REQUEST; odpowiedz zwykle tez 0 z error=0
+    seq: int = 0                 # messageId
+    msg_type: int = MSG_MESSAGE
 
     def encode(self) -> bytes:
-        # Uklad naglowka jak w przechwyconym pakiecie: size(2) comp(2) cmd(2)
-        # error(2) rez(2) seq... Ostatni bajt to numer sekwencyjny (u klienta
-        # rosl 0,1,2...). Odpowiedz echo-uje seq zadania.
-        hdr = struct.pack(">HHHH", len(self.payload), self.component,
-                          self.command, self.error)
-        hdr += bytes((0, 0, 0, self.seq & 0xFF))
-        return hdr + self.payload
+        # Naglowek 12 B: size(2) comp(2) cmd(2) err(2) msgType(1) reserved(1) msgId(2)
+        # UWAGA: messageType to POJEDYNCZY BAJT na offsecie 8 (nie uint16 na [8-9]).
+        # Wczesniej kodowany jako uint16 -> REPLY(1) ladowal 0x00 w bajcie 8 =>
+        # gra czytala nasza odpowiedz jako MESSAGE (kolejne zadanie), nie REPLY.
+        return struct.pack(">HHHHBBH", len(self.payload), self.component,
+                           self.command, self.error, self.msg_type & 0xFF, 0,
+                           self.seq & 0xFFFF) + self.payload
 
     @staticmethod
     def decode(b: bytes) -> "Fire2":
         size, comp, cmd, err = struct.unpack_from(">HHHH", b, 0)
-        seq = b[11]
-        return Fire2(component=comp, command=cmd, payload=b[FIRE2_HDR:FIRE2_HDR + size],
-                     error=err, seq=seq)
+        mtype = b[8]
+        mid = struct.unpack_from(">H", b, 10)[0]
+        return Fire2(component=comp, command=cmd,
+                     payload=b[FIRE2_HDR:FIRE2_HDR + size],
+                     error=err, seq=mid, msg_type=mtype)
 
 
 # ---------------------------------------------------------------- dekoder TDF (pomocniczy)
+def f_list_empty(tag: str, elem_wtype: int) -> Field:
+    """Pusta lista heat2: typ elementu + licznik 0."""
+    return Field(tag, T_LIST, bytes((elem_wtype,)) + enc_int(0))
+
+
 def build_getserverinstance_response(ip: str, port: int, *, secure: bool = True,
                                      service: str = "nfs-rivals-pc",
-                                     seq: int = 0) -> bytes:
-    """DRAFT odpowiedzi Redirector.getServerInstance (comp 5, cmd 1, error 0).
+                                     seq: int = 0, addr_index: int = 0,
+                                     minimal: bool = False,
+                                     msg_type: int = MSG_REPLY,
+                                     host: str | None = None) -> bytes:
+    """Odpowiedz Redirector.getServerInstance (comp 5, cmd 1, error 0).
 
-    Kieruje gre pod podany adres (IP:port) - domyslnie na NAS, zeby po redirekcie
-    klient polaczyl sie ponownie i wyslal kolejny pakiet (preAuth/auth), ktory
-    znow odczytamy. Schemat ServerInstanceInfo ustalany EMPIRYCZNIE - to pierwsza
-    proba oparta na tagach z docs/recon/tdf_members.json (MSTR/INST/ADDR/IP/PORT/
-    SECU). Jesli klient odrzuci - log reakcji wskaze, co poprawic.
+    Schemat WYCIAGNIETY z odszyfrowanej binarki (zrzut pamieci + map_tdf_classes):
+    klasa ServerInstanceInfo (@0x1416f6890) ma pola w kolejnosci tagow:
+        ADDR (union, mAddress) | AMAP (list) | CERT (list, mCertificateList) |
+        MSGS (list) | NMAP (list) | SECU (bool, mSecure) | XDNS (int, mDefaultDnsAddress)
+    Struktura adresu (@0x1416f8580): HOST (mHostname) | IP (mIp) | PORT (mPort).
 
-    Adres kodujemy jako union ServerAddressInfo, wariant IP (struct IP+PORT).
-    Indeks aktywnego skladnika unii (ADDR_MEMBER_IP) to najbardziej niepewny
-    element - latwy do zmiany w razie odrzucenia.
+    WAZNE: heat2 wymaga pol w ROSNACEJ kolejnosci tagow (tak wygladal request:
+    BSDK<BTIM<...<NAME). Emitujemy dokladnie w tej kolejnosci, inaczej dekoder
+    pomija pola (to pogrzebalo pierwszy draft - ADDR szedl po SECU, malejaco).
+
+    Kieruje gre pod podany adres - domyslnie na NAS, by klient wrocil z kolejnym
+    pakietem (preAuth/auth). Podajemy i HOST, i IP, zeby klient mogl uzyc dowolnego.
+
+    Nadal empiryczne (log reakcji potwierdzi): indeks/tag skladnika unii ADDR.
     """
-    ADDR_MEMBER_IP = 0                     # <- do skorygowania empirycznie
+    ADDR_MEMBER_INDEX = addr_index         # 0=ServerAddressInfo.mIpAddress; do prob
+    ADDR_MEMBER_TAG = "VALU"
     ip_int = int.from_bytes(bytes(int(o) for o in ip.split(".")), "big")
 
-    # ServerAddressInfo (union) -> wariant IP: struct { IP int, PORT int }
-    ip_struct = f_struct("VALU", [f_int("IP", ip_int), f_int("PORT", port)])
-    addr = f_union("ADDR", ADDR_MEMBER_IP, ip_struct)
+    # union ADDR -> skladnik = struct adresu {HOST, IP, PORT} (rosnaco po tagu).
+    # HOST = nazwa hosta, ktora (a) jest w pliku hosts -> wskazuje na nas oraz
+    # (b) pasuje do CN certu (gosredirector.ea.com) - inaczej gra odrzuca cert na
+    # polaczeniu Blaze. Gra WOLI HOST (rozwiazuje go) nad polem IP.
+    addr_struct = f_struct(ADDR_MEMBER_TAG, [
+        f_str("HOST", host if host is not None else ip),
+        f_int("IP", ip_int),
+        f_int("PORT", port),
+    ])
+    if minimal:
+        # tylko ADDR - izolacja unii (bez list/bool, ktore moga psuc dekodowanie)
+        fields = [f_union("ADDR", ADDR_MEMBER_INDEX, addr_struct)]
+    else:
+        fields = [
+            f_union("ADDR", ADDR_MEMBER_INDEX, addr_struct),
+            f_list_empty("AMAP", T_STRUCT),
+            f_list_empty("CERT", T_STRUCT),
+            f_list_empty("MSGS", T_STRING),
+            f_list_empty("NMAP", T_STRUCT),
+            f_int("SECU", 1 if secure else 0),
+            f_int("XDNS", ip_int),
+        ]
+    payload = encode_tdf(fields)
+    return Fire2(component=5, command=1, payload=payload, error=0, seq=seq,
+                 msg_type=msg_type).encode()
 
-    # pojedyncza instancja serwera
-    instance = f_struct("VALU", [addr, f_str("NAME", service)])
 
-    server_instance_info = [
-        f_int("SECU", 1 if secure else 0),
-        addr,                              # adres na najwyzszym poziomie (redundancja pomaga)
-        instance,                          # master/instancja
-        f_str("SNAM", service),
+def f_list_int(tag: str, values: list[int]) -> Field:
+    """Lista heat2 int: typ elementu(int=0) + licznik + wartosci."""
+    body = bytes((T_INT,)) + enc_int(len(values))
+    for v in values:
+        body += enc_int(v)
+    return Field(tag, T_LIST, body)
+
+
+# Komponenty Blaze, ktore zwykle sa hostowane (CIDS). Klient dowiaduje sie z tego,
+# jakie komponenty ma serwer. Zestaw orientacyjny - do korekty wg reakcji gry.
+DEFAULT_COMPONENT_IDS = [1, 4, 5, 7, 9, 11, 15, 21, 25, 30, 63, 2000]
+
+
+def build_preauth_response(seq: int, *, msg_type: int = MSG_REPLY,
+                           service: str = "nfs-rivals-pc",
+                           component_ids: list[int] | None = None) -> bytes:
+    """Odpowiedz Util.preAuth (component 9, command 7).
+
+    Schemat PreAuthResponse (z binarki, kolejnosc tagow rosnaca):
+      ASRC(str) CIDS(list int) CONF(struct) ESRC(str) INST(str) MINR(?) NASP(str)
+      PILD(str) PLAT(str) QOSS(struct) RSRC(str) SVER(str).
+    Pierwsza proba: wypelniamy stringi + CIDS + puste CONF/QOSS. Reszta opcjonalna.
+    """
+    if component_ids is None:
+        component_ids = DEFAULT_COMPONENT_IDS
+    fields = [
+        f_str("ASRC", "205604"),                    # authentication source (id)
+        f_list_int("CIDS", component_ids),
+        f_struct("CONF", []),                        # config map - pusto na start
+        f_str("ESRC", "205604"),                    # entitlement source
+        f_str("INST", service),
+        f_str("NASP", "cem_ea_id"),                  # persona namespace EA
+        f_str("PILD", ""),
+        f_str("PLAT", "pc"),
+        f_struct("QOSS", []),                        # QoS settings - pusto na start
+        f_str("RSRC", "205604"),
+        f_str("SVER", "Blaze 3.15.08.0 (CL# 1058939)"),
     ]
-    payload = encode_tdf(server_instance_info)
-    return Fire2(component=5, command=1, payload=payload, error=0, seq=seq).encode()
+    payload = encode_tdf(fields)
+    return Fire2(component=9, command=7, payload=payload, error=0, seq=seq,
+                 msg_type=msg_type).encode()
 
 
 def decode_tdf(buf: bytes, p: int = 0, end: int | None = None) -> list[tuple]:
