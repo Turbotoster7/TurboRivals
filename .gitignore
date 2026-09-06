@@ -7,6 +7,9 @@ docs/recon/capture/
 # Kopie zapasowe pliku hosts
 *.turborivals-*.bak
 
+# Klucz prywatny i cert zastepczy serwera - generowane lokalnie, nie do repo
+proto-lab/pki/
+
 __pycache__/
 *.pyc
 

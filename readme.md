@@ -50,6 +50,12 @@ python tools/hosts_switch.py off        # zawsze po sesji
 
 # pasywny nasluch - co gra wysyla
 python proto-lab/tcp_tap.py -p 42127
+
+# logujace proxy miedzy gra a prawdziwym EA (handshake jawnym tekstem)
+python proto-lab/tcp_proxy.py --upstream 159.153.51.18 --port 42127
+
+# certyfikat zastepczy dla naszego serwera (klucz do proto-lab/pki/)
+python proto-lab/make_stub_cert.py
 ```
 
 ## Plan

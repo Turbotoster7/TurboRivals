@@ -577,7 +577,7 @@ _Wszystko co dotyka BlazeSDK - nazwy komponentow, stany polaczenia, bledy._
 
 ## dirtysdk (11)
 
-_DirtySDK - warstwa sieciowa EA. Wersja ProtoSSL decyduje o tym, czy zadziala sztuczka z podrobionym certyfikatem._
+_DirtySDK - warstwa sieciowa EA. Wersja ProtoSSL decyduje o tym, czy klient przyjmie cert zastepczy naszego serwera._
 
 ```
 0x016534f8  ascii  NetConnection
