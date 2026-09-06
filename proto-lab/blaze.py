@@ -343,6 +343,44 @@ def build_ping_response(seq: int, *, msg_type: int = MSG_REPLY) -> bytes:
                  msg_type=msg_type).encode()
 
 
+def build_postauth_response(seq: int, *, msg_type: int = MSG_REPLY) -> bytes:
+    """Odpowiedz Util.postAuth (component 9, command 8) = PostAuthResponse.
+    Struktura (@0x1416c3b50): { PSS TELE TICK UROP (struct) ... }. Na start puste."""
+    payload = encode_tdf([
+        f_struct("PSS", []),
+        f_struct("TELE", []),
+        f_struct("TICK", []),
+        f_struct("UROP", []),
+    ])
+    return Fire2(component=9, command=8, payload=payload, error=0, seq=seq,
+                 msg_type=msg_type).encode()
+
+
+MSG_NOTIFY_BYTE = 0x20        # bajt msgType dla notyfikacji (typ 2 w gornym nibble)
+
+
+def build_notification(component: int, command: int, payload: bytes, *,
+                       seq: int = 0, msg_type: int = MSG_NOTIFY_BYTE) -> bytes:
+    """Serwerowa notyfikacja Fire2 (async, nie odpowiedz)."""
+    return Fire2(component=component, command=command, payload=payload,
+                 error=0, seq=seq, msg_type=msg_type).encode()
+
+
+def build_usersession_update(user_id: int = REDACTED_EA_USER_ID, *, component: int = 30,
+                             command: int = 5, seq: int = 0,
+                             msg_type: int = MSG_NOTIFY_BYTE) -> bytes:
+    """UserSessions notyfikacja UserSessionExtendedDataUpdate.
+    Struktura (@0x1416d81c0): { DATA(UserSessionExtendedData) SUBS(bool) USID(int64) }.
+    DATA na start puste. component/command UserSessions do potwierdzenia empirycznie
+    (standard Blaze: UserSessions=30; command notyfikacji 1/5 do proby)."""
+    payload = encode_tdf([
+        f_struct("DATA", []),
+        f_int("SUBS", 1),
+        f_int("USID", user_id),
+    ])
+    return build_notification(component, command, payload, seq=seq, msg_type=msg_type)
+
+
 def decode_tdf(buf: bytes, p: int = 0, end: int | None = None) -> list[tuple]:
     """Dekoduje pola do konca bufora/struktury. Zwraca liste (tag, typ, wartosc).
     Obsluguje typy, ktore realnie widzimy; nieznane konczy z surowym ogonem."""

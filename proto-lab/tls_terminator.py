@@ -373,6 +373,10 @@ def handle(conn: socket.socket, addr, args, out_dir: Path,
                         w.send_record(RT_APPDATA, resp)
                         print(f"  -> odpowiedz comp={fr.component} cmd={fr.command} "
                               f"({len(resp)} B)")
+                        for note in _after_reply(fr, args):
+                            w.send_record(RT_APPDATA, note)
+                            print(f"  -> async NOTIFY comp={args.notify_comp} "
+                                  f"cmd={args.notify_cmd} ({len(note)} B)")
                     else:
                         print("  *** brak handlera - zrzut (kolejny etap do zbudowania) ***")
                         print(hexdump(pkt, 384))
@@ -411,7 +415,25 @@ def _dispatch_blaze(fr, args):
         return blaze.build_ping_response(fr.seq, msg_type=args.reply_msgtype)
     if fr.component == 1 and fr.command == 152:         # Authentication.login (Origin)
         return blaze.build_login_response(fr.seq, msg_type=args.reply_msgtype)
+    if fr.component == 9 and fr.command == 8:           # Util.postAuth
+        return blaze.build_postauth_response(fr.seq, msg_type=args.reply_msgtype)
     return None
+
+
+def _after_reply(fr, args):
+    """Async notyfikacje wysylane PO odpowiedzi (np. po loginie: UserSessions)."""
+    out = []
+    if fr.component == 1 and fr.command == 152:         # po loginie
+        if args.notify_probe:
+            # wyslij notyfikacje dla wielu command ID - Frida pokaze, ktory
+            # uruchamia dekodowanie UserSessionExtendedDataUpdate.
+            for cmd in range(1, 11):
+                out.append(blaze.build_usersession_update(
+                    component=args.notify_comp, command=cmd))
+        else:
+            out.append(blaze.build_usersession_update(
+                component=args.notify_comp, command=args.notify_cmd))
+    return out
 
 
 def _drain_alert(rtype: int, body: bytes) -> None:
@@ -443,6 +465,14 @@ def main() -> int:
                          "ServerAddressInfo; do prob, jesli klient nie laczy sie)")
     ap.add_argument("--addr-only", action="store_true",
                     help="odpowiedz tylko z polem ADDR (izolacja unii, diagnostyka)")
+    ap.add_argument("--notify-comp", type=lambda x: int(x, 0), default=30,
+                    help="component notyfikacji UserSessions po loginie (std 30)")
+    ap.add_argument("--notify-cmd", type=lambda x: int(x, 0), default=5,
+                    help="command notyfikacji po loginie (UserSessionExtendedDataUpdate; "
+                         "sprobuj 1/2/5 jesli gra nie rusza)")
+    ap.add_argument("--notify-probe", action="store_true",
+                    help="po loginie wyslij notyfikacje dla command 1..10 (diagnostyka: "
+                         "Frida pokaze, ktory uruchamia dekodowanie)")
     ap.add_argument("--reply-msgtype", type=lambda x: int(x, 0), default=0x10,
                     help="bajt msgType w naglowku Fire2 odpowiedzi. 0x10 = REPLY "
                          "(potwierdzone: gra dekoduje ServerInstanceInfo)")

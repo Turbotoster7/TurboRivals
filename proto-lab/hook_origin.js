@@ -81,6 +81,10 @@ if (!base) {
   hookFn(ptr("0xf8a0c0"), "ServerInstance (decode?)");
   hookFn(ptr("0xf8a0d0"), "ServerInstanceError (decode?)");
   hookFn(ptr("0xf8a090"), "ServerAddressInfo (decode?)");
+  // login / postAuth / notyfikacja po loginie
+  hookFn(ptr("0xf0c0a0"), "FullLoginResponse (decode odp. login)");
+  hookFn(ptr("0xf211d0"), "PostAuthRequest (encode -> gra wysyla postAuth!)");
+  hookFn(ptr("0xf66220"), "UserSessionExtendedDataUpdate (decode notyfikacji)");
 
   // --- podsluch polaczen sieciowych: pokaz KAZDY adres:port, do ktorego gra
   //     sie laczy (redirector, Blaze). To ujawni, dokad idzie po zdobyciu tokenu.
