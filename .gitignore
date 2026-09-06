@@ -1,0 +1,14 @@
+# Pelny zrzut stringow z binarki - duzy i odtwarzalny jednym poleceniem
+docs/recon/strings_*_all.txt
+
+# Surowe przechwycone bajty - generowane lokalnie
+docs/recon/capture/
+
+# Kopie zapasowe pliku hosts
+*.turborivals-*.bak
+
+__pycache__/
+*.pyc
+
+# Rust (fazy 3-4)
+target/
