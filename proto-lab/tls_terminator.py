@@ -350,52 +350,44 @@ def handle(conn: socket.socket, addr, args, out_dir: Path,
             return
 
         out_dir.mkdir(parents=True, exist_ok=True)
-        blob = out_dir / f"blaze-first-{tag}.bin"
-        blob.write_bytes(app)
-        print(f"\n  *** PIERWSZY PAKIET BLAZE (cleartext): {len(app)} B -> {blob.name}")
-        print(hexdump(app, 512))
 
-        # 10. Odpowiedz na Redirector.getServerInstance (comp 5, cmd 1) - kieruj
-        #     gre z powrotem na nas, zeby wyslala kolejny pakiet (preAuth/auth).
-        #     DRAFT schematu odpowiedzi - patrz blaze.build_getserverinstance_response.
-        try:
-            fr = blaze.Fire2.decode(app)
-            print(f"  Fire2: component={fr.component} command={fr.command} "
-                  f"error={fr.error} seq={fr.seq} payload={len(fr.payload)}B")
-            if fr.component == 5 and fr.command == 1:
-                resp = blaze.build_getserverinstance_response(
-                    args.redirect_ip, args.blaze_port, seq=fr.seq,
-                    addr_index=args.addr_index, minimal=args.addr_only,
-                    msg_type=args.reply_msgtype, host=args.blaze_host)
-                w.send_record(RT_APPDATA, resp)
-                print(f"  -> odpowiedz getServerInstance ({len(resp)} B) -> "
-                      f"{args.redirect_ip}:{args.blaze_port} [DRAFT, addr_index={args.addr_index}]")
-                print(f"     (czekam na polaczenie gry na porcie Blaze {args.blaze_port})")
-            else:
-                print(f"  *** PAKIET NA PORCIE BLAZE (nie getServerInstance) - "
-                      f"to jest kolejny etap (preAuth/login)! ***")
-        except Exception as e:                        # noqa: BLE001 - diagnostyka
-            print(f"  [!] nie zbudowalem/nie wyslalem odpowiedzi: {e}")
-
-        # zbierz reakcje klienta (kolejne pakiety albo Alert/rozlaczenie)
-        extra = []
-        conn.settimeout(5)
+        # 10. Petla serwera Blaze: dekoduj kazde zadanie Fire2 i odpowiadaj.
+        #     Pierwszy pakiet juz mamy w `app`; kolejne czytamy w petli.
+        conn.settimeout(20)
+        pkt, pktno = app, 0
         try:
             while True:
-                rtype, ver, more = w.recv_record()
-                if rtype == RT_APPDATA:
-                    extra.append(more)
-                    print(f"  + reakcja klienta: ApplicationData {len(more)} B")
-                    print(hexdump(more, 256))
-                elif rtype == RT_ALERT:
-                    _drain_alert(rtype, more)
+                pktno += 1
+                (out_dir / f"blaze-{tag}-{pktno:02d}.bin").write_bytes(pkt)
+                try:
+                    fr = blaze.Fire2.decode(pkt)
+                except Exception as e:                # noqa: BLE001
+                    print(f"  [!] nie zdekodowalem Fire2: {e}")
+                    print(hexdump(pkt, 256)); fr = None
+                if fr is not None:
+                    print(f"\n  <- Fire2 comp={fr.component} cmd={fr.command} "
+                          f"err={fr.error} type=0x{fr.msg_type:02x} seq={fr.seq} "
+                          f"payload={len(fr.payload)}B")
+                    resp = _dispatch_blaze(fr, args)
+                    if resp is not None:
+                        w.send_record(RT_APPDATA, resp)
+                        print(f"  -> odpowiedz comp={fr.component} cmd={fr.command} "
+                              f"({len(resp)} B)")
+                    else:
+                        print("  *** brak handlera - zrzut (kolejny etap do zbudowania) ***")
+                        print(hexdump(pkt, 384))
+                rtype, ver, pkt = w.recv_record()
+                while rtype == RT_HANDSHAKE:
+                    rtype, ver, pkt = w.recv_record()
+                if rtype == RT_ALERT:
+                    _drain_alert(rtype, pkt); break
+                if rtype != RT_APPDATA:
+                    print(f"  po odpowiedzi dostalem typ {rtype}, nie ApplicationData")
                     break
         except socket.timeout:
-            print("  (brak dalszych pakietow w tej sesji - koniec 5 s okna)")
+            print("  (koniec okna 20 s - brak dalszych pakietow)")
         except ConnectionError:
-            print("  (klient zamknal to polaczenie)")
-        if extra:
-            (out_dir / f"blaze-first-{tag}-rest.bin").write_bytes(b"".join(extra))
+            print("  (klient zamknal polaczenie)")
 
     except (ConnectionError, ValueError, struct.error) as e:
         print(f"  blad sesji: {e}")
@@ -404,6 +396,22 @@ def handle(conn: socket.socket, addr, args, out_dir: Path,
             conn.close()
         except OSError:
             pass
+
+
+def _dispatch_blaze(fr, args):
+    """Zwraca bajty odpowiedzi Fire2 dla znanego zadania, albo None (brak handlera)."""
+    if fr.component == 5 and fr.command == 1:          # Redirector.getServerInstance
+        return blaze.build_getserverinstance_response(
+            args.redirect_ip, args.blaze_port, seq=fr.seq,
+            addr_index=args.addr_index, minimal=args.addr_only,
+            msg_type=args.reply_msgtype, host=args.blaze_host)
+    if fr.component == 9 and fr.command == 7:           # Util.preAuth
+        return blaze.build_preauth_response(fr.seq, msg_type=args.reply_msgtype)
+    if fr.component == 9 and fr.command == 2:           # Util.ping
+        return blaze.build_ping_response(fr.seq, msg_type=args.reply_msgtype)
+    if fr.component == 1 and fr.command == 152:         # Authentication.login (Origin)
+        return blaze.build_login_response(fr.seq, msg_type=args.reply_msgtype)
+    return None
 
 
 def _drain_alert(rtype: int, body: bytes) -> None:

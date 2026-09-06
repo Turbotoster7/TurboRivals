@@ -292,6 +292,57 @@ def build_preauth_response(seq: int, *, msg_type: int = MSG_REPLY,
                  msg_type=msg_type).encode()
 
 
+def build_login_response(seq: int, *, msg_type: int = MSG_REPLY,
+                         user_id: int = REDACTED_EA_USER_ID, persona: str = "PayTonkaaa",
+                         email: str = "player@nfsrivals.local") -> bytes:
+    """Odpowiedz Authentication.login (component 1, command 152) = FullLoginResponse.
+
+    Struktura z binarki:
+      FullLoginResponse{ AGUP ANON NTOS PCTK SESS SPAM UNDR }
+        SESS=SessionInfo{ BUID FRST KEY LLOG MAIL PDTL UID }
+          PDTL=PersonaDetails{ DSNM LAST PID PLAT STAS XREF }
+    """
+    import time
+    now = int(time.time())
+    pdtl = f_struct("PDTL", [
+        f_str("DSNM", persona),
+        f_int("LAST", now),
+        f_int("PID", user_id),
+        f_int("PLAT", 4),                 # pc
+        f_int("STAS", 2),                 # ACTIVE
+        f_int("XREF", 0),
+    ])
+    sess = f_struct("SESS", [
+        f_int("BUID", user_id),
+        f_int("FRST", 0),
+        f_str("KEY", f"1_{user_id}_sess"),
+        f_int("LLOG", now),
+        f_str("MAIL", email),
+        pdtl,
+        f_int("UID", user_id),
+    ])
+    fields = [
+        f_int("AGUP", 0),
+        f_int("ANON", 0),
+        f_int("NTOS", 0),
+        f_str("PCTK", ""),
+        sess,
+        f_int("SPAM", 1),
+        f_int("UNDR", 0),
+    ]
+    payload = encode_tdf(fields)
+    return Fire2(component=1, command=152, payload=payload, error=0, seq=seq,
+                 msg_type=msg_type).encode()
+
+
+def build_ping_response(seq: int, *, msg_type: int = MSG_REPLY) -> bytes:
+    """Odpowiedz Util.ping (component 9, command 2) = { STIM mServerTime }."""
+    import time
+    payload = encode_tdf([f_int("STIM", int(time.time()))])
+    return Fire2(component=9, command=2, payload=payload, error=0, seq=seq,
+                 msg_type=msg_type).encode()
+
+
 def decode_tdf(buf: bytes, p: int = 0, end: int | None = None) -> list[tuple]:
     """Dekoduje pola do konca bufora/struktury. Zwraca liste (tag, typ, wartosc).
     Obsluguje typy, ktore realnie widzimy; nieznane konczy z surowym ogonem."""
