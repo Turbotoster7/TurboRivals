@@ -446,9 +446,14 @@ def _dispatch_blaze(fr, args):
             addr_index=args.addr_index, minimal=args.addr_only,
             msg_type=args.reply_msgtype, host=args.blaze_host)
     if fr.component == 9 and fr.command == 7:           # Util.preAuth
+        if args.no_client_config:
+            conf = {}                                   # puste CONF (stare zachowanie)
+        elif args.client_config is not None:
+            conf = dict(kv.split("=", 1) for kv in args.client_config.split(",") if kv)
+        else:
+            conf = None                                 # DEFAULT_CLIENT_CONFIG
         return blaze.build_preauth_response(
-            fr.seq, msg_type=args.reply_msgtype,
-            client_config=None if not args.no_client_config else {},
+            fr.seq, msg_type=args.reply_msgtype, client_config=conf,
             qos=not args.no_qoss, qos_host=args.redirect_ip,
             qos_port=args.qos_port)
     if fr.component == 9 and fr.command == 2:           # Util.ping
@@ -532,6 +537,9 @@ def main() -> int:
     ap.add_argument("--notify-probe", action="store_true",
                     help="po loginie wyslij notyfikacje dla command 1..10 (diagnostyka: "
                          "Frida pokaze, ktory uruchamia dekodowanie)")
+    ap.add_argument("--client-config", metavar="K=V,K=V",
+                    help="wlasny zestaw kluczy client configu zamiast domyslnego "
+                         "(do bisekcji: sprawdzanie klucz po kluczu, ktory wywraca gre)")
     ap.add_argument("--no-client-config", action="store_true",
                     help="odsylaj PUSTE CONF w preAuth (stare zachowanie; klient "
                          "prosi o config przez FCCR{CFID='BlazeSDK'})")
