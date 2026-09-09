@@ -170,6 +170,58 @@ if (!base) {
   hookConnect("connect");
   hookConnect("WSAConnect");
 
+  // --- UDP: test QoS Blaze idzie po UDP, nie TCP. Jesli gra po preAuth sonduje
+  //     ping-site'y, zobaczymy tu dokad i ile razy. CISZA tutaj = hipoteza QoS
+  //     upada i blokada siedzi w danych sesji (UserSessionExtendedData).
+  //     sendto(s, buf, len, flags, to, tolen) - adres celu w args[4].
+  const udpSeen = {};                       // adres -> licznik (nie zalewamy logu)
+  function hookSendto(name, addrArgIdx) {
+    const ex = findExport("ws2_32.dll", name) || findExport("wsock32.dll", name);
+    if (!ex) { console.log("[!] nie znalazlem eksportu " + name); return; }
+    Interceptor.attach(ex, {
+      onEnter(args) {
+        try {
+          const sa = args[addrArgIdx];
+          if (sa.isNull()) return;
+          if (sa.readU16() !== 2) return;   // tylko AF_INET
+          const port = (sa.add(2).readU8() << 8) | sa.add(3).readU8();
+          const ip = sa.add(4).readU8() + "." + sa.add(5).readU8() + "." +
+                     sa.add(6).readU8() + "." + sa.add(7).readU8();
+          const key = name + " " + ip + ":" + port;
+          udpSeen[key] = (udpSeen[key] || 0) + 1;
+          // pierwsze 3 pakiety na adres logujemy z trescia, potem co 50.
+          if (udpSeen[key] <= 3 || udpSeen[key] % 50 === 0) {
+            let head = "";
+            try { head = bin2hex(args[1].readByteArray(Math.min(args[2].toInt32(), 32))); } catch (e) {}
+            console.log("[UDP " + name + " #" + udpSeen[key] + "] -> " + ip + ":" + port +
+                        "  " + args[2].toInt32() + " B  " + head);
+          }
+        } catch (e) {}
+      }
+    });
+    console.log("[+] net " + name + " @ " + ex);
+  }
+  hookSendto("sendto", 4);
+  hookSendto("WSASendTo", 6);              // (s, bufs, cnt, sent, flags, to, tolen, ...)
+
+  // recvfrom: czy sonda QoS dostaje ODPOWIEDZ. Jesli gra wysyla, a nic nie wraca,
+  // to nasz serwer musi odbijac pakiety QoS (responder UDP).
+  const rfEx = findExport("ws2_32.dll", "recvfrom");
+  if (rfEx) {
+    Interceptor.attach(rfEx, {
+      onEnter(a) { this.buf = a[1]; },
+      onLeave(ret) {
+        const n = ret.toInt32();
+        if (n > 0) {
+          let head = "";
+          try { head = bin2hex(this.buf.readByteArray(Math.min(n, 32))); } catch (e) {}
+          console.log("[UDP recvfrom] " + n + " B  " + head);
+        }
+      }
+    });
+    console.log("[+] net recvfrom @ " + rfEx);
+  }
+
   // recv: czy gra ODCZYTUJE nasza odpowiedz? (zaszyfrowane, ale dlugosc/timing
   // powie, czy cokolwiek przyszlo po getServerInstance). Logujemy tylko zwroty >0.
   const recvEx = findExport("ws2_32.dll", "recv");

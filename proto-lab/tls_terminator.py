@@ -388,6 +388,11 @@ def handle(conn: socket.socket, addr, args, out_dir: Path,
                     print(f"\n  <- Fire2 comp={fr.component} cmd={fr.command} "
                           f"err={fr.error} type=0x{fr.msg_type:02x} seq={fr.seq} "
                           f"payload={len(fr.payload)}B")
+                    if args.dump_tdf and fr.payload:
+                        try:
+                            print(blaze.dump_tdf(blaze.decode_tdf(fr.payload), 3))
+                        except Exception as e:            # noqa: BLE001
+                            print(f"      (nie zdekodowalem TDF zadania: {e})")
                     resp = _dispatch_blaze(fr, args)
                     if resp is not None:
                         w.send_record(RT_APPDATA, resp)
@@ -477,8 +482,11 @@ def _after_reply(fr, args, seq0: int = 0):
             # Kolejnosc jak w Blaze po loginie: UserAdded (cmd 2, tworzy usera),
             # ExtendedDataUpdate (cmd 1, dane sesji), UserAuthenticated (cmd 8,
             # sygnal "zalogowany" -> trigger postAuth; pusty payload).
-            out.append(blaze.build_useradded_notify(component=args.notify_comp, command=2))
-            out.append(blaze.build_usersession_update(component=args.notify_comp, command=1))
+            rich = not args.plain_session_data
+            out.append(blaze.build_useradded_notify(component=args.notify_comp, command=2,
+                                                    rich_data=rich))
+            out.append(blaze.build_usersession_update(component=args.notify_comp, command=1,
+                                                      rich_data=rich))
             out.append(blaze.build_notification(args.notify_comp, 8, b""))
     # nadaj rosnace msgId (buildery domyslnie daja 0 dla kazdej notyfikacji)
     return [blaze.reseq(n, seq0 + i) for i, n in enumerate(out)]
@@ -520,6 +528,12 @@ def main() -> int:
     ap.add_argument("--notify-probe", action="store_true",
                     help="po loginie wyslij notyfikacje dla command 1..10 (diagnostyka: "
                          "Frida pokaze, ktory uruchamia dekodowanie)")
+    ap.add_argument("--plain-session-data", action="store_true",
+                    help="wysylaj PUSTE UserSessionExtendedData w notyfikacjach po "
+                         "loginie (stare zachowanie - do porownania A/B)")
+    ap.add_argument("--dump-tdf", action="store_true",
+                    help="wypisz drzewo TDF kazdego zadania klienta (widac, co gra "
+                         "przysyla w login/postAuth)")
     ap.add_argument("--idle-timeout", type=int, default=300,
                     help="ile sekund ciszy zanim wypiszemy 'czekam' (polaczenia NIE "
                          "zamykamy - gra trzyma sesje Blaze otwarta)")

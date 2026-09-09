@@ -257,6 +257,70 @@ def f_list_int(tag: str, values: list[int]) -> Field:
     return Field(tag, T_LIST, body)
 
 
+def f_map_empty(tag: str, key_wtype: int, val_wtype: int) -> Field:
+    """Pusta mapa heat2: typ klucza + typ wartosci + licznik 0. Klient dostaje
+    poprawnie otagowane, ale puste pole zamiast braku pola."""
+    return Field(tag, T_MAP, bytes((key_wtype, val_wtype)) + enc_int(0))
+
+
+# --- adresy sieciowe -------------------------------------------------------
+# NetworkAddress to UNIA; warianty (potwierdzone wczesniej z binarki):
+#   0=XboxClientAddress 1=XboxServerAddress 2=IpPairAddress 3=IpAddress 4=HostNameAddress
+# Klient PC opisuje siebie jako IpPairAddress (@0x141706320): EXIP INIP MACI,
+# gdzie EXIP/INIP to struktury adresu (@0x1416f8580): HOST IP PORT.
+NETADDR_IPPAIR = 2
+NETADDR_IPADDR = 3
+
+
+def _ip_to_int(ip: str) -> int:
+    return int.from_bytes(bytes(int(o) for o in ip.split(".")), "big")
+
+
+def f_ip_pair(tag: str, ip: str = "127.0.0.1", port: int = 3659, *,
+              machine_id: int = 0) -> Field:
+    """Unia NetworkAddress z aktywnym IpPairAddress (adres wewn. == zewn.)."""
+    inner = [f_int("IP", _ip_to_int(ip)), f_int("PORT", port)]
+    pair = f_struct("VALU", [                    # tagi rosnaco: EXIP < INIP < MACI
+        f_struct("EXIP", inner),
+        f_struct("INIP", inner),
+        f_int("MACI", machine_id),
+    ])
+    return f_union(tag, NETADDR_IPPAIR, pair)
+
+
+def f_extended_data(tag: str = "DATA", *, ip: str = "127.0.0.1", port: int = 3659,
+                    ping_site: str = "ams", country: str = "PL",
+                    latencies: list[int] | None = None) -> Field:
+    """UserSessionExtendedData (@0x1416d7ac0) - stan sesji uzytkownika.
+
+    Pola w kolejnosci tagow (heat2 czyta sekwencyjnie, wiec ROSNACO):
+        ADDR(union NetworkAddress) BPS(str, alias najlepszego ping-site)
+        CTY(str) DMAP(map) HWFG(int) PSLM(list latencji) QDAT(struct QosData)
+        UATT(int) ULST(list ObjectId)
+
+    Wczesniej wysylalismy tu PUSTA strukture. Klient po loginie trzyma w tym
+    swoj wlasny stan sesji; bez adresu i wyniku QoS nie uznaje sie za gotowego
+    online i nie wysyla updateNetworkInfo - stad ekran "Laczenie".
+    """
+    if latencies is None:
+        latencies = [10]                          # jeden ping-site, 10 ms
+    return f_struct(tag, [
+        f_ip_pair("ADDR", ip, port),
+        f_str("BPS", ping_site),
+        f_str("CTY", country),
+        f_map_empty("DMAP", T_INT, T_INT),        # mDataMap - brak danych wlasnych
+        f_int("HWFG", 0),                         # mHardwareFlags
+        f_list_int("PSLM", latencies),            # mLatencyList
+        f_struct("QDAT", [                        # mQosData - wynik testu QoS
+            f_int("DBPS", 100000),                # downstream bit/s
+            f_int("NATT", 0),                     # NAT type: OPEN
+            f_int("UBPS", 100000),                # upstream bit/s
+        ]),
+        f_int("UATT", 0),                         # mUserInfoAttribute
+        f_list_empty("ULST", T_OBJID),            # mBlazeObjectIdList
+    ])
+
+
 def f_map_str(tag: str, items: dict[str, str]) -> Field:
     """Mapa heat2 string->string: typ klucza(1) + typ wartosci(1) + licznik +
     pary (klucz, wartosc) BEZ naglowkow tagow. Format wg TdfEncoder BlazeSDK
@@ -472,7 +536,8 @@ def build_useradded_notify(user_id: int = REDACTED_EA_USER_ID, persona: str = "P
                            session_key: str | None = None, *, component: int = 0x7802,
                            command: int = 2, seq: int = 0,
                            msg_type: int = MSG_NOTIFY_BYTE,
-                           email: str = "player@nfsrivals.local") -> bytes:
+                           email: str = "player@nfsrivals.local",
+                           rich_data: bool = True) -> bytes:
     """UserSessions notyfikacja UserAdded (cmd 1) = Blaze::NotifyUserAdded.
     Struktura (@0x1416d87d0): { DATA(UserSessionExtendedData) USER(mUserInfo) }.
     USER wypelniamy jako UserSessionLoginInfo (tozsamosc+sesja lokalnego usera).
@@ -496,51 +561,119 @@ def build_useradded_notify(user_id: int = REDACTED_EA_USER_ID, persona: str = "P
         f_int("USTP", 0),
         f_int("XREF", 0),
     ])
-    data = f_struct("DATA", [])              # UserSessionExtendedData - puste na start
+    data = f_extended_data("DATA") if rich_data else f_struct("DATA", [])
     payload = encode_tdf([data, user])       # DATA < USER
     return build_notification(component, command, payload, seq=seq, msg_type=msg_type)
 
 
 def build_usersession_update(user_id: int = REDACTED_EA_USER_ID, *, component: int = 0x7802,
                              command: int = 1, seq: int = 0,
-                             msg_type: int = MSG_NOTIFY_BYTE) -> bytes:
+                             msg_type: int = MSG_NOTIFY_BYTE,
+                             rich_data: bool = True) -> bytes:
     """UserSessions notyfikacja UserSessionExtendedDataUpdate.
     Struktura (@0x1416d81c0): { DATA(UserSessionExtendedData) SUBS(bool) USID(int64) }.
     POTWIERDZONE (jump table createNotification): UserSessions=0x7802,
     ExtendedDataUpdate = command 1, UserAdded = command 2, UserAuthenticated = command 8."""
     payload = encode_tdf([
-        f_struct("DATA", []),
+        f_extended_data("DATA") if rich_data else f_struct("DATA", []),
         f_int("SUBS", 1),
         f_int("USID", user_id),
     ])
     return build_notification(component, command, payload, seq=seq, msg_type=msg_type)
 
 
-def decode_tdf(buf: bytes, p: int = 0, end: int | None = None) -> list[tuple]:
-    """Dekoduje pola do konca bufora/struktury. Zwraca liste (tag, typ, wartosc).
-    Obsluguje typy, ktore realnie widzimy; nieznane konczy z surowym ogonem."""
-    if end is None:
-        end = len(buf)
+def _dec_value(buf: bytes, p: int, wtype: int, end: int) -> tuple[object, int]:
+    """Dekoduje JEDNA wartosc danego typu; zwraca (wartosc, nowa pozycja).
+    Wartosci bez taga - uzywane tez dla elementow list i par mapy."""
+    if wtype == T_INT:
+        return dec_int(buf, p)
+    if wtype == T_STRING:
+        return dec_str(buf, p)
+    if wtype == T_BLOB:
+        ln, p = dec_int(buf, p)
+        return buf[p:p + ln], p + ln
+    if wtype == T_STRUCT:
+        return _dec_fields(buf, p, end)
+    if wtype == T_UNION:
+        active = buf[p]; p += 1
+        if active == UNION_UNSET:
+            return ("union", "unset"), p
+        member, p = _dec_one_field(buf, p, end)
+        return ("union", active, member), p
+    if wtype == T_LIST:
+        elem = buf[p]; p += 1
+        n, p = dec_int(buf, p)
+        items = []
+        for _ in range(n):
+            v, p = _dec_value(buf, p, elem, end)
+            items.append(v)
+        return items, p
+    if wtype == T_MAP:
+        kt, vt = buf[p], buf[p + 1]; p += 2
+        n, p = dec_int(buf, p)
+        pairs = []
+        for _ in range(n):
+            k, p = _dec_value(buf, p, kt, end)
+            v, p = _dec_value(buf, p, vt, end)
+            pairs.append((k, v))
+        return dict(pairs) if all(isinstance(k, (str, int)) for k, _ in pairs) else pairs, p
+    if wtype == T_OBJTYPE:
+        a, p = dec_int(buf, p)
+        b, p = dec_int(buf, p)
+        return (a, b), p
+    if wtype == T_OBJID:
+        a, p = dec_int(buf, p)
+        b, p = dec_int(buf, p)
+        c, p = dec_int(buf, p)
+        return (a, b, c), p
+    if wtype == T_FLOAT:
+        return struct.unpack_from(">f", buf, p)[0], p + 4
+    raise ValueError(f"nieznany typ TDF 0x{wtype:02x} na offsecie {p - 1}")
+
+
+def _dec_one_field(buf: bytes, p: int, end: int) -> tuple[tuple, int]:
+    tag = dec_tag(buf[p:p + 3])
+    wtype = buf[p + 3]
+    v, p = _dec_value(buf, p + 4, wtype, end)
+    return (tag, wtype, v), p
+
+
+def _dec_fields(buf: bytes, p: int, end: int) -> tuple[list, int]:
+    """Pola az do terminatora struktury (0x00) albo konca bufora."""
     out = []
     while p < end:
-        if buf[p] == 0x00:        # terminator struktury
-            p += 1
-            break
-        tag = dec_tag(buf[p:p + 3]); wtype = buf[p + 3]; p += 4
-        if wtype == T_STRING:
-            v, p = dec_str(buf, p); out.append((tag, "str", v))
-        elif wtype == T_INT:
-            v, p = dec_int(buf, p); out.append((tag, "int", v))
-        elif wtype == T_STRUCT:
-            sub = []
-            while p < end and buf[p] != 0x00:
-                one = decode_tdf(buf, p, end)
-                # decode_tdf zjada do terminatora; tu upraszczamy - patrz nizej
-                break
-            out.append((tag, "struct", "<...>"))
-            # dla diagnostyki nie schodzimy glebiej; wystarcza nam pola plaskie
-            return out
+        if buf[p] == 0x00:                 # terminator zagniezdzonej struktury
+            return out, p + 1
+        f, p = _dec_one_field(buf, p, end)
+        out.append(f)
+    return out, p
+
+
+def decode_tdf(buf: bytes, p: int = 0, end: int | None = None) -> list[tuple]:
+    """Dekoduje payload TDF (heat2) REKURENCYJNIE. Zwraca liste (tag, typ, wartosc);
+    struktury/unie/listy/mapy schodza w glab. Sluzy do weryfikacji round-trip
+    wlasnych odpowiedzi: jesli nasz dekoder gubi sie na naszym pakiecie, gra
+    tym bardziej."""
+    if end is None:
+        end = len(buf)
+    fields, _ = _dec_fields(buf, p, end)
+    return fields
+
+
+def dump_tdf(fields: list[tuple], indent: int = 0) -> str:
+    """Czytelny wydruk drzewa pol (do logu i testow)."""
+    pad = "  " * indent
+    lines = []
+    for tag, wtype, val in fields:
+        if wtype == T_STRUCT:
+            lines.append(f"{pad}{tag} (struct)")
+            lines.append(dump_tdf(val, indent + 1))
+        elif wtype == T_UNION and isinstance(val, tuple) and val[0] == "union":
+            if val[1] == "unset":
+                lines.append(f"{pad}{tag} (union) = UNSET")
+            else:
+                lines.append(f"{pad}{tag} (union, wariant {val[1]})")
+                lines.append(dump_tdf([val[2]], indent + 1))
         else:
-            out.append((tag, f"typ0x{wtype:02x}", buf[p:p + 8].hex()))
-            return out
-    return out
+            lines.append(f"{pad}{tag} = {val!r}")
+    return "\n".join(l for l in lines if l)
