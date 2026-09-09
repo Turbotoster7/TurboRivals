@@ -455,7 +455,7 @@ def _dispatch_blaze(fr, args):
         return blaze.build_preauth_response(
             fr.seq, msg_type=args.reply_msgtype, client_config=conf,
             qos=not args.no_qoss, qos_host=args.redirect_ip,
-            qos_port=args.qos_port)
+            qos_port=args.qos_port, pad_to=args.pad_preauth)
     if fr.component == 9 and fr.command == 2:           # Util.ping
         return blaze.build_ping_response(fr.seq, msg_type=args.reply_msgtype)
     if fr.component == 1 and fr.command == 152:         # Authentication.login (Origin)
@@ -537,6 +537,9 @@ def main() -> int:
     ap.add_argument("--notify-probe", action="store_true",
                     help="po loginie wyslij notyfikacje dla command 1..10 (diagnostyka: "
                          "Frida pokaze, ktory uruchamia dekodowanie)")
+    ap.add_argument("--pad-preauth", type=int, default=0, metavar="N",
+                    help="dopchnij odpowiedz preAuth do ~N bajtow zwyklym stringiem "
+                         "(bez map) - test, czy klienta wywraca ROZMIAR czy TRESC")
     ap.add_argument("--client-config", metavar="K=V,K=V",
                     help="wlasny zestaw kluczy client configu zamiast domyslnego "
                          "(do bisekcji: sprawdzanie klucz po kluczu, ktory wywraca gre)")

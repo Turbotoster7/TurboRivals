@@ -257,5 +257,42 @@ if (!base) {
     console.log("[!] nie znalazlem getaddrinfo");
   }
 
+  // ================= LAPANIE CRASHA =================
+  // Gra pada z 0xc0000005 pod adresem 0x8 (deref NULL) po tym, jak dostanie od
+  // nas niepusty CONF albo QOSS. Handler wyjatkow daje ADRES instrukcji, ktora
+  // pada, i stos wywolan - czyli funkcje, ktora zle przeczytala nasza odpowiedz.
+  // Zwracamy false = przepuszczamy wyjatek dalej (gra i tak sie wywroci, ale my
+  // mamy juz wszystko w logu).
+  let crashLogged = false;
+  Process.setExceptionHandler(function (details) {
+    if (crashLogged) return false;        // pierwszy wyjatek jest ten wazny
+    crashLogged = true;
+    const addr = details.address;
+    const inModule = addr.compare(base) >= 0 && addr.compare(base.add(0x2000000)) < 0;
+    console.log("\n########## WYJATEK ##########");
+    console.log("  typ:    " + details.type);
+    console.log("  adres:  " + addr + (inModule ? "  (base+0x" + addr.sub(base).toString(16) + ")" : "  (POZA modulem gry)"));
+    if (details.memory) {
+      console.log("  pamiec: operacja=" + details.memory.operation +
+                  " adres=" + details.memory.address);
+    }
+    try {
+      const c = details.context;
+      console.log("  rcx=" + c.rcx + " rdx=" + c.rdx + " r8=" + c.r8 + " r9=" + c.r9);
+      console.log("  rax=" + c.rax + " rbx=" + c.rbx + " rsp=" + c.rsp + " rip=" + c.rip);
+    } catch (e) {}
+    try {
+      const bt = Thread.backtrace(details.context, Backtracer.ACCURATE)
+        .map(a => {
+          const inMod = a.compare(base) >= 0 && a.compare(base.add(0x2000000)) < 0;
+          return a + (inMod ? "  (base+0x" + a.sub(base).toString(16) + ")" : "");
+        }).join("\n     ");
+      console.log("  STOS:\n     " + bt);
+    } catch (e) { console.log("  bt err " + e); }
+    console.log("#############################\n");
+    return false;
+  });
+  console.log("[+] handler wyjatkow uzbrojony (pokaze adres crasha)");
+
   console.log("[*] gotowe - wejdz w grze w ONLINE.");
 }

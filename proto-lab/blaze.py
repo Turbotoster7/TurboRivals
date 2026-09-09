@@ -391,7 +391,7 @@ def build_preauth_response(seq: int, *, msg_type: int = MSG_REPLY,
                            client_config: dict[str, str] | None = None,
                            qos: bool = True, qos_host: str = "127.0.0.1",
                            qos_port: int = 17502,
-                           qos_alias: str = "ams") -> bytes:
+                           qos_alias: str = "ams", pad_to: int = 0) -> bytes:
     """Odpowiedz Util.preAuth (component 9, command 7).
 
     Schemat PreAuthResponse (@0x1416c6440, kolejnosc tagow rosnaca):
@@ -410,19 +410,31 @@ def build_preauth_response(seq: int, *, msg_type: int = MSG_REPLY,
         else f_struct("CONF", [])
     qoss = f_qos_settings(alias=qos_alias, host=qos_host, port=qos_port) if qos \
         else f_struct("QOSS", [])
-    fields = [
-        f_str("ASRC", "205604"),                    # authentication source (id)
-        f_list_int("CIDS", component_ids),
-        conf,                                        # ClientConfig{ CONF: mapa }
-        f_str("ESRC", "205604"),                    # entitlement source
-        f_str("INST", service),
-        f_str("NASP", "cem_ea_id"),                  # persona namespace EA
-        f_str("PILD", ""),
-        f_str("PLAT", "pc"),
-        qoss,                                        # QosConfigInfo
-        f_str("RSRC", "205604"),
-        f_str("SVER", "Blaze 3.15.08.0 (CL# 1058939)"),
-    ]
+
+    def fields_with(pild: str) -> list[Field]:
+        return [
+            f_str("ASRC", "205604"),                # authentication source (id)
+            f_list_int("CIDS", component_ids),
+            conf,                                    # ClientConfig{ CONF: mapa }
+            f_str("ESRC", "205604"),                # entitlement source
+            f_str("INST", service),
+            f_str("NASP", "cem_ea_id"),              # persona namespace EA
+            f_str("PILD", pild),
+            f_str("PLAT", "pc"),
+            qoss,                                    # QosConfigInfo
+            f_str("RSRC", "205604"),
+            f_str("SVER", "Blaze 3.15.08.0 (CL# 1058939)"),
+        ]
+
+    fields = fields_with("")
+    if pad_to:
+        # Diagnostyka: dopchnij odpowiedz do ~pad_to bajtow, wydluzajac ZWYKLY
+        # string (PILD). Duza odpowiedz bez ani jednej mapy - izoluje pytanie
+        # "czy klienta wywraca rozmiar, czy zawartosc".
+        base_len = len(encode_tdf(fields)) + FIRE2_HDR
+        missing = pad_to - base_len
+        if missing > 0:
+            fields = fields_with("x" * missing)
     payload = encode_tdf(fields)
     return Fire2(component=9, command=7, payload=payload, error=0, seq=seq,
                  msg_type=msg_type).encode()
