@@ -27,7 +27,53 @@ if (!base) {
 } else {
   console.log("[*] " + MOD + " base = " + base);
 
+  // ================= HANDLER WYJATKOW - PIERWSZY =================
+  // Ustawiany PRZED hookami: gdyby ktorykolwiek hook sie nie zalozyl, handler i
+  // tak dziala. (Wczesniej byl na koncu pliku i nieudany Interceptor.attach
+  // przerywal caly skrypt, wiec crashu nie mial kto zlapac.)
+  let crashLogged = false;
+  const MOD_SPAN = 0x2000000;
+  function inMod(a) {
+    return a.compare(base) >= 0 && a.compare(base.add(MOD_SPAN)) < 0;
+  }
+  Process.setExceptionHandler(function (details) {
+    if (crashLogged) return false;        // pierwszy wyjatek jest ten wazny
+    crashLogged = true;
+    const addr = details.address;
+    console.log("\n########## WYJATEK ##########");
+    console.log("  typ:    " + details.type);
+    console.log("  adres:  " + addr +
+                (inMod(addr) ? "  (base+0x" + addr.sub(base).toString(16) + ")"
+                             : "  (POZA modulem gry)"));
+    if (details.memory) {
+      console.log("  pamiec: operacja=" + details.memory.operation +
+                  " adres=" + details.memory.address);
+    }
+    try {
+      const c = details.context;
+      console.log("  rcx=" + c.rcx + " rdx=" + c.rdx + " r8=" + c.r8 + " r9=" + c.r9);
+      console.log("  rax=" + c.rax + " rbx=" + c.rbx + " rsp=" + c.rsp + " rip=" + c.rip);
+    } catch (e) {}
+    try {
+      const bt = Thread.backtrace(details.context, Backtracer.ACCURATE)
+        .map(a => a + (inMod(a) ? "  (base+0x" + a.sub(base).toString(16) + ")" : ""))
+        .join("\n     ");
+      console.log("  STOS:\n     " + bt);
+    } catch (e) { console.log("  bt err " + e); }
+    console.log("#############################\n");
+    return false;                          // przepusc dalej - gra i tak padnie
+  });
+  console.log("[+] handler wyjatkow uzbrojony (pokaze adres crasha)");
+
   function hookLogger(rva) {
+    try {
+      hookLoggerUnsafe(rva);
+    } catch (e) {
+      console.log("[!] nie podpialem loggera @ base+0x" + rva.toString(16) +
+                  " (" + e.message + ")");
+    }
+  }
+  function hookLoggerUnsafe(rva) {
     const addr = base.add(rva);
     Interceptor.attach(addr, {
       onEnter() {
@@ -50,6 +96,17 @@ if (!base) {
   // Dodatkowo: kluczowe funkcje auth/online - sygnalizacja wejscia + wynik.
   let btDone = false;
   function hookFn(rva, name, backtrace) {
+    // Kazdy hook w try/catch: Frida potrafi odmowic ("unable to intercept
+    // function"), gdy podepniemy sie zanim gra rozpakuje kod. Bez tego JEDEN
+    // nieudany hook przerywal caly skrypt i reszta sond nie powstawala.
+    try {
+      hookFnUnsafe(rva, name, backtrace);
+    } catch (e) {
+      console.log("[!] nie podpialem " + name + " @ base+0x" + rva.toString(16) +
+                  " (" + e.message + ")");
+    }
+  }
+  function hookFnUnsafe(rva, name, backtrace) {
     const addr = base.add(rva);
     Interceptor.attach(addr, {
       onEnter() {
@@ -256,43 +313,6 @@ if (!base) {
   } else {
     console.log("[!] nie znalazlem getaddrinfo");
   }
-
-  // ================= LAPANIE CRASHA =================
-  // Gra pada z 0xc0000005 pod adresem 0x8 (deref NULL) po tym, jak dostanie od
-  // nas niepusty CONF albo QOSS. Handler wyjatkow daje ADRES instrukcji, ktora
-  // pada, i stos wywolan - czyli funkcje, ktora zle przeczytala nasza odpowiedz.
-  // Zwracamy false = przepuszczamy wyjatek dalej (gra i tak sie wywroci, ale my
-  // mamy juz wszystko w logu).
-  let crashLogged = false;
-  Process.setExceptionHandler(function (details) {
-    if (crashLogged) return false;        // pierwszy wyjatek jest ten wazny
-    crashLogged = true;
-    const addr = details.address;
-    const inModule = addr.compare(base) >= 0 && addr.compare(base.add(0x2000000)) < 0;
-    console.log("\n########## WYJATEK ##########");
-    console.log("  typ:    " + details.type);
-    console.log("  adres:  " + addr + (inModule ? "  (base+0x" + addr.sub(base).toString(16) + ")" : "  (POZA modulem gry)"));
-    if (details.memory) {
-      console.log("  pamiec: operacja=" + details.memory.operation +
-                  " adres=" + details.memory.address);
-    }
-    try {
-      const c = details.context;
-      console.log("  rcx=" + c.rcx + " rdx=" + c.rdx + " r8=" + c.r8 + " r9=" + c.r9);
-      console.log("  rax=" + c.rax + " rbx=" + c.rbx + " rsp=" + c.rsp + " rip=" + c.rip);
-    } catch (e) {}
-    try {
-      const bt = Thread.backtrace(details.context, Backtracer.ACCURATE)
-        .map(a => {
-          const inMod = a.compare(base) >= 0 && a.compare(base.add(0x2000000)) < 0;
-          return a + (inMod ? "  (base+0x" + a.sub(base).toString(16) + ")" : "");
-        }).join("\n     ");
-      console.log("  STOS:\n     " + bt);
-    } catch (e) { console.log("  bt err " + e); }
-    console.log("#############################\n");
-    return false;
-  });
-  console.log("[+] handler wyjatkow uzbrojony (pokaze adres crasha)");
 
   console.log("[*] gotowe - wejdz w grze w ONLINE.");
 }

@@ -50,7 +50,7 @@ def find_pid(name: str) -> int | None:
     return None
 
 
-def attach(proc: str, wait_seconds: int):
+def attach(proc: str, wait_seconds: int, settle: int = 0):
     """Podpina sie do gry; z --wait czeka, az proces wstanie.
 
     frida.attach(nazwa) rzuca ProcessNotFoundError, gdy gra jeszcze nie dziala -
@@ -61,6 +61,10 @@ def attach(proc: str, wait_seconds: int):
     while True:
         pid = find_pid(proc)
         if pid is not None:
+            if settle:
+                print(f"[*] znalazlem PID {pid} - czekam {settle} s, az gra "
+                      f"rozpakuje kod")
+                time.sleep(settle)
             print(f"[*] lacze z PID {pid}")
             return frida.attach(pid)
         if time.monotonic() >= deadline:
@@ -94,21 +98,40 @@ def main() -> int:
                     metavar="SEK",
                     help="czekaj az gra wstanie (domyslnie 120 s) zamiast konczyc "
                          "bledem - odpal to PRZED uruchomieniem gry")
+    ap.add_argument("--duration", type=int, default=0, metavar="SEK",
+                    help="trzymaj podpiecie przez N sekund i wyjdz, zamiast czekac "
+                         "na Ctrl+C (do uruchamiania w tle z logiem do pliku)")
+    ap.add_argument("--settle", type=int, default=0, metavar="SEK",
+                    help="odczekaj N s po znalezieniu procesu, zanim wstrzykniesz "
+                         "skrypt - swiezo wystartowana gra nie ma jeszcze "
+                         "rozpakowanego kodu i czesc hookow sie nie zaklada")
     args = ap.parse_args()
 
     js = Path(args.script).read_text(encoding="utf-8")
 
     print(f"[*] frida {frida.__version__} - lacze z {args.proc} ...")
-    session = attach(args.proc, args.wait)
+    session = attach(args.proc, args.wait, args.settle)
     if session is None:
         return 1
 
     script = session.create_script(js)
     script.on("message", on_message)
     script.load()
-    print("[*] skrypt zaladowany. Wejdz w grze w ONLINE. Ctrl+C konczy.\n")
+    print("[*] skrypt zaladowany. Wejdz w grze w ONLINE.\n")
+
+    # Czekamy na logi ze skryptu. sys.stdin.read() konczy sie natychmiast, gdy
+    # wejscie nie jest terminalem (uruchomienie w tle) - a isatty() potrafi w
+    # takim wypadku sklamac, wiec nie zgadujemy: --duration wprost mowi, ze mamy
+    # czekac na czasie.
     try:
-        sys.stdin.read()
+        if args.duration:
+            print(f"    (trzymam {args.duration} s)")
+            end = time.monotonic() + args.duration
+            while time.monotonic() < end:
+                time.sleep(1)
+        else:
+            print("    (Ctrl+C konczy)")
+            sys.stdin.read()
     except KeyboardInterrupt:
         pass
     return 0
