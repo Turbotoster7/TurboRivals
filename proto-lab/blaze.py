@@ -257,6 +257,17 @@ def f_list_int(tag: str, values: list[int]) -> Field:
     return Field(tag, T_LIST, body)
 
 
+def f_map_str(tag: str, items: dict[str, str]) -> Field:
+    """Mapa heat2 string->string: typ klucza(1) + typ wartosci(1) + licznik +
+    pary (klucz, wartosc) BEZ naglowkow tagow. Format wg TdfEncoder BlazeSDK
+    (potwierdzony na emulatorze BF3 - ten sam silnik): keyType, valType, count,
+    potem dla kazdej pary enc_str(key)+enc_str(val)."""
+    body = bytes((T_STRING, T_STRING)) + enc_int(len(items))
+    for k, v in items.items():
+        body += enc_str(k) + enc_str(v)
+    return Field(tag, T_MAP, body)
+
+
 # Komponenty Blaze, ktore zwykle sa hostowane (CIDS). Klient dowiaduje sie z tego,
 # jakie komponenty ma serwer. Zestaw orientacyjny - do korekty wg reakcji gry.
 DEFAULT_COMPONENT_IDS = [1, 4, 5, 7, 9, 11, 15, 21, 25, 30, 63, 2000]
@@ -343,17 +354,102 @@ def build_ping_response(seq: int, *, msg_type: int = MSG_REPLY) -> bytes:
                  msg_type=msg_type).encode()
 
 
-def build_postauth_response(seq: int, *, msg_type: int = MSG_REPLY) -> bytes:
+def _telemetry_fields(ip: str = "127.0.0.1", *, locale: int = 1701729619) -> list[Field]:
+    """Pola TelemetryServer (tag rosnaco) - wspolne dla TELE (postAuth) i
+    getTelemetryServer (9/5). Wzor z emulatora BF3 (ten sam silnik), typy
+    zweryfikowane ze zrzutem NFS (klasa @0x1416c7510): ADRS/DISA/FILT/NOOK/SESS/
+    SKEY/STIM = string; ANON/LOC/PORT/SDLY/SPCT = int. Telemetria wskazana na nas
+    (127.0.0.1) i praktycznie wylaczona (SPCT nieistotne - i tak nie mamy serwera
+    telemetrii; klient tylko zapisuje te dane)."""
+    return [
+        f_str("ADRS", ip),
+        f_int("ANON", 0),
+        f_str("DISA", ""),                 # kraje z wylaczona telemetria - puste
+        f_str("FILT", ""),
+        f_int("LOC", locale),
+        f_str("NOOK", "US,CA,MX"),
+        f_int("PORT", 9988),
+        f_int("SDLY", 15000),
+        f_str("SESS", "telemetry_session"),
+        f_str("SKEY", "telemetry_key"),
+        f_int("SPCT", 0),                  # 0% probek - nic nie wysylamy
+        f_str("STIM", "Default"),
+    ]
+
+
+def build_postauth_response(seq: int, *, msg_type: int = MSG_REPLY,
+                            ip: str = "127.0.0.1",
+                            user_id: int = REDACTED_EA_USER_ID) -> bytes:
     """Odpowiedz Util.postAuth (component 9, command 8) = PostAuthResponse.
-    Struktura (@0x1416c3b50): { PSS TELE TICK UROP (struct) ... }. Na start puste."""
-    payload = encode_tdf([
-        f_struct("PSS", []),
-        f_struct("TELE", []),
-        f_struct("TICK", []),
-        f_struct("UROP", []),
+    Struktura (@0x1416c3b50): { PSS TELE TICK UROP } - 4 zagniezdzone struktury.
+
+    WCZESNIEJ pusto: puste STRUKTURY crashowaly (gra uzywa pol), a caly pusty
+    payload nie crashowal, ale gra utykala na "Laczenie". Teraz WYPELNIAMY wg
+    emulatora Blaze dla BF3 (ten sam silnik Fire2/heat2) - pola i typy pokrywaja
+    sie ze zrzutem NFS:
+      PSS (PssConfig)   = { ADRS CSIG PJID PORT RPRT TIID }
+      TELE (Telemetry)  = _telemetry_fields()
+      TICK (Ticker)     = { ADRS PORT SKEY }
+      UROP (UserOptions)= { TMOP UID }
+    Wszystko wskazane na nas / neutralne, by klient dokonczyl polaczenie."""
+    pss = f_struct("PSS", [
+        f_str("ADRS", ip),
+        f_blob("CSIG", b""),
+        f_str("PJID", "123071"),
+        f_int("PORT", 8443),
+        f_int("RPRT", 9),
+        f_int("TIID", 0),
     ])
+    tele = f_struct("TELE", _telemetry_fields(ip))
+    tick = f_struct("TICK", [
+        f_str("ADRS", ip),
+        f_int("PORT", 8999),
+        f_str("SKEY", f"{user_id}_tick"),
+    ])
+    urop = f_struct("UROP", [
+        f_int("TMOP", 1),
+        f_int("UID", user_id),
+    ])
+    payload = encode_tdf([pss, tele, tick, urop])       # PSS < TELE < TICK < UROP
     return Fire2(component=9, command=8, payload=payload, error=0, seq=seq,
                  msg_type=msg_type).encode()
+
+
+def build_telemetry_response(seq: int, *, msg_type: int = MSG_REPLY,
+                             ip: str = "127.0.0.1") -> bytes:
+    """Odpowiedz Util.getTelemetryServer (component 9, command 5) =
+    GetTelemetryServerResponse (te same pola co TELE w postAuth)."""
+    payload = encode_tdf(_telemetry_fields(ip))
+    return Fire2(component=9, command=5, payload=payload, error=0, seq=seq,
+                 msg_type=msg_type).encode()
+
+
+def build_fetch_client_config_response(seq: int, *, msg_type: int = MSG_REPLY,
+                                       config: dict[str, str] | None = None) -> bytes:
+    """Odpowiedz Util.fetchClientConfig (component 9, command 1) = { CONF map<str,str> }.
+    Klient prosi o sekcje konfiguracji (CFID w zadaniu) i cache'uje odpowiedz.
+    Pusta mapa = "brak wpisow dla tej sekcji" -> klient idzie dalej. Konkretne
+    sekcje (np. listy achievementow) dopelnimy, jesli gra bez nich utknie."""
+    payload = encode_tdf([f_map_str("CONF", config or {})])
+    return Fire2(component=9, command=1, payload=payload, error=0, seq=seq,
+                 msg_type=msg_type).encode()
+
+
+def build_user_settings_load_all_response(seq: int, *, msg_type: int = MSG_REPLY,
+                                          settings: dict[str, str] | None = None) -> bytes:
+    """Odpowiedz Util.userSettingsLoadAll (component 9, command 0xC) =
+    { SMAP map<str,str> } - zapisane ustawienia usera. Pusto na start."""
+    payload = encode_tdf([f_map_str("SMAP", settings or {})])
+    return Fire2(component=9, command=0xC, payload=payload, error=0, seq=seq,
+                 msg_type=msg_type).encode()
+
+
+def build_empty_reply(component: int, command: int, seq: int, *,
+                      msg_type: int = MSG_REPLY) -> bytes:
+    """Pusta odpowiedz-potwierdzenie (np. userSettingsSave 9/0xB). Sam naglowek
+    Fire2 z error=0 - klient wie, ze RPC sie powiodlo i idzie dalej."""
+    return Fire2(component=component, command=command, payload=b"", error=0,
+                 seq=seq, msg_type=msg_type).encode()
 
 
 MSG_NOTIFY_BYTE = 0x20        # bajt msgType dla notyfikacji (typ 2 w gornym nibble)
@@ -366,13 +462,46 @@ def build_notification(component: int, command: int, payload: bytes, *,
                  error=0, seq=seq, msg_type=msg_type).encode()
 
 
-def build_usersession_update(user_id: int = REDACTED_EA_USER_ID, *, component: int = 30,
-                             command: int = 5, seq: int = 0,
+def build_useradded_notify(user_id: int = REDACTED_EA_USER_ID, persona: str = "PayTonkaaa",
+                           session_key: str | None = None, *, component: int = 0x7802,
+                           command: int = 2, seq: int = 0,
+                           msg_type: int = MSG_NOTIFY_BYTE,
+                           email: str = "player@nfsrivals.local") -> bytes:
+    """UserSessions notyfikacja UserAdded (cmd 1) = Blaze::NotifyUserAdded.
+    Struktura (@0x1416d87d0): { DATA(UserSessionExtendedData) USER(mUserInfo) }.
+    USER wypelniamy jako UserSessionLoginInfo (tozsamosc+sesja lokalnego usera).
+    To najpewniejszy trigger: gra tworzy lokalnego usera i idzie do postAuth."""
+    import time
+    now = int(time.time())
+    if session_key is None:
+        session_key = f"1_{user_id}_sess"
+    user = f_struct("USER", [                # UserSessionLoginInfo (tagi rosnaco)
+        f_int("ALOC", 1701729619),           # locale (~enUS)
+        f_int("BUID", user_id),              # blaze user id
+        f_str("DSNM", persona),              # display name
+        f_int("FRST", 0),
+        f_str("KEY", session_key),
+        f_int("LAST", now),
+        f_int("LLOG", now),
+        f_str("MAIL", email),
+        f_int("PID", user_id),               # persona id
+        f_int("PLAT", 4),                    # pc
+        f_int("UID", user_id),
+        f_int("USTP", 0),
+        f_int("XREF", 0),
+    ])
+    data = f_struct("DATA", [])              # UserSessionExtendedData - puste na start
+    payload = encode_tdf([data, user])       # DATA < USER
+    return build_notification(component, command, payload, seq=seq, msg_type=msg_type)
+
+
+def build_usersession_update(user_id: int = REDACTED_EA_USER_ID, *, component: int = 0x7802,
+                             command: int = 1, seq: int = 0,
                              msg_type: int = MSG_NOTIFY_BYTE) -> bytes:
     """UserSessions notyfikacja UserSessionExtendedDataUpdate.
     Struktura (@0x1416d81c0): { DATA(UserSessionExtendedData) SUBS(bool) USID(int64) }.
-    DATA na start puste. component/command UserSessions do potwierdzenia empirycznie
-    (standard Blaze: UserSessions=30; command notyfikacji 1/5 do proby)."""
+    POTWIERDZONE (jump table createNotification): UserSessions=0x7802,
+    ExtendedDataUpdate = command 1, UserAdded = command 2, UserAuthenticated = command 8."""
     payload = encode_tdf([
         f_struct("DATA", []),
         f_int("SUBS", 1),

@@ -417,6 +417,18 @@ def _dispatch_blaze(fr, args):
         return blaze.build_login_response(fr.seq, msg_type=args.reply_msgtype)
     if fr.component == 9 and fr.command == 8:           # Util.postAuth
         return blaze.build_postauth_response(fr.seq, msg_type=args.reply_msgtype)
+    # --- komendy Util wolane PO postAuth (numeracja z emulatora BF3, ten sam
+    #     silnik; NFS uzywa component 9 dla Util). Brak odpowiedzi na ktoras z
+    #     nich najpewniej trzymal gre na "Laczenie" (RPC klienta nie konczyl sie).
+    if fr.component == 9 and fr.command == 1:           # Util.fetchClientConfig
+        return blaze.build_fetch_client_config_response(fr.seq, msg_type=args.reply_msgtype)
+    if fr.component == 9 and fr.command == 5:           # Util.getTelemetryServer
+        return blaze.build_telemetry_response(fr.seq, msg_type=args.reply_msgtype,
+                                              ip=args.redirect_ip)
+    if fr.component == 9 and fr.command == 0xB:         # Util.userSettingsSave
+        return blaze.build_empty_reply(9, 0xB, fr.seq, msg_type=args.reply_msgtype)
+    if fr.component == 9 and fr.command == 0xC:         # Util.userSettingsLoadAll
+        return blaze.build_user_settings_load_all_response(fr.seq, msg_type=args.reply_msgtype)
     return None
 
 
@@ -425,14 +437,16 @@ def _after_reply(fr, args):
     out = []
     if fr.component == 1 and fr.command == 152:         # po loginie
         if args.notify_probe:
-            # wyslij notyfikacje dla wielu command ID - Frida pokaze, ktory
-            # uruchamia dekodowanie UserSessionExtendedDataUpdate.
             for cmd in range(1, 11):
                 out.append(blaze.build_usersession_update(
                     component=args.notify_comp, command=cmd))
         else:
-            out.append(blaze.build_usersession_update(
-                component=args.notify_comp, command=args.notify_cmd))
+            # Kolejnosc jak w Blaze po loginie: UserAdded (cmd 2, tworzy usera),
+            # ExtendedDataUpdate (cmd 1, dane sesji), UserAuthenticated (cmd 8,
+            # sygnal "zalogowany" -> trigger postAuth; pusty payload).
+            out.append(blaze.build_useradded_notify(component=args.notify_comp, command=2))
+            out.append(blaze.build_usersession_update(component=args.notify_comp, command=1))
+            out.append(blaze.build_notification(args.notify_comp, 8, b""))
     return out
 
 
@@ -465,11 +479,10 @@ def main() -> int:
                          "ServerAddressInfo; do prob, jesli klient nie laczy sie)")
     ap.add_argument("--addr-only", action="store_true",
                     help="odpowiedz tylko z polem ADDR (izolacja unii, diagnostyka)")
-    ap.add_argument("--notify-comp", type=lambda x: int(x, 0), default=30,
-                    help="component notyfikacji UserSessions po loginie (std 30)")
+    ap.add_argument("--notify-comp", type=lambda x: int(x, 0), default=0x7802,
+                    help="component notyfikacji UserSessions (POTWIERDZONE 0x7802)")
     ap.add_argument("--notify-cmd", type=lambda x: int(x, 0), default=5,
-                    help="command notyfikacji po loginie (UserSessionExtendedDataUpdate; "
-                         "sprobuj 1/2/5 jesli gra nie rusza)")
+                    help="command notyfikacji (5=UserSessionExtendedDataUpdate)")
     ap.add_argument("--notify-probe", action="store_true",
                     help="po loginie wyslij notyfikacje dla command 1..10 (diagnostyka: "
                          "Frida pokaze, ktory uruchamia dekodowanie)")

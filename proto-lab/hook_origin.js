@@ -73,6 +73,53 @@ if (!base) {
   }
   hookFn(ptr("0xebd140"), "OriginRequestTicket");
 
+  // ================= KROK A: sledzenie dekodera TDF (heat2) =================
+  // Cel: logowac KAZDY tag, ktory dekoder czyta z naszej odpowiedzi. Ostatni
+  // tag przed bledem = brakujace/zle pole. Teraz crasha nie ma, wiec sluzy do
+  // potwierdzenia, KTORE pola gra realnie czyta z postAuth/login.
+  //
+  // Dekoder jest wolany posrednio (vtable), wiec jego adres ustalamy z BACKTRACE
+  // sondy decode (nizej). Gdy go poznamy, wpisujemy RVA tutaj i skrypt zacznie
+  // logowac tagi. Do tego czasu backtrace z sond decode wskaze wlasciwa funkcje.
+  const TDF_READER_RVA = null;   // np. ptr("0xf8a200") - ustaw z backtrace
+
+  function decodeTag(raw) {
+    // 24-bitowy tag -> 4 znaki (6 bitow/znak, 0=spacja). Lustro pe_probe.
+    let s = "";
+    for (const sh of [18, 12, 6, 0]) {
+      const c = (raw >>> sh) & 0x3f;
+      s += (c === 0) ? " " : String.fromCharCode(c + 0x20);
+    }
+    return s;
+  }
+  function tagFromU32(v) {
+    // Tag na drucie to 3 bajty; w rejestrze bywa surowy (0x00TTTTTT) albo <<8.
+    const a = decodeTag(v & 0xffffff);
+    const b = decodeTag((v >>> 8) & 0xffffff);
+    const ok = t => /^[ -~]{4}$/.test(t) && t.trim().length > 0;
+    if (ok(a)) return a + "  (raw)";
+    if (ok(b)) return b + "  (<<8)";
+    return "?(" + v.toString(16) + ")";
+  }
+  function traceTdfReader(rva) {
+    const addr = base.add(rva);
+    Interceptor.attach(addr, {
+      onEnter(a) {
+        // Nie znamy sygnatury - logujemy kandydatow na tag z rejestrow arg.
+        const cands = [];
+        for (const [nm, reg] of [["rcx", this.context.rcx], ["rdx", this.context.rdx],
+                                 ["r8", this.context.r8], ["r9", this.context.r9]]) {
+          const lo = reg.toUInt32();
+          const t = tagFromU32(lo);
+          if (t.indexOf("?(") !== 0) cands.push(nm + "=" + t);
+        }
+        console.log("[TDF tag] " + (cands.length ? cands.join("  ") : "brak czytelnego taga"));
+      }
+    });
+    console.log("[+] TDF reader trace @ " + addr);
+  }
+  if (TDF_READER_RVA !== null) traceTdfReader(TDF_READER_RVA);
+
   // Sonda przeplywu redirectora: getTypeDescription klas zadania i odpowiedzi.
   // Jesli "ServerInstanceInfo::getTypeDescr" sie odpala -> gra DEKODUJE nasza
   // odpowiedz (framing Fire2 OK). Jesli nie -> odrzuca juz na ramce/msgId.
@@ -81,10 +128,15 @@ if (!base) {
   hookFn(ptr("0xf8a0c0"), "ServerInstance (decode?)");
   hookFn(ptr("0xf8a0d0"), "ServerInstanceError (decode?)");
   hookFn(ptr("0xf8a090"), "ServerAddressInfo (decode?)");
-  // login / postAuth / notyfikacja po loginie
-  hookFn(ptr("0xf0c0a0"), "FullLoginResponse (decode odp. login)");
+  // login / postAuth / notyfikacja po loginie.
+  // backtrace=true na FullLoginResponse decode: stos ujawni GENERYCZNY dekoder
+  // heat2 (funkcja tuz nad ta w stosie, w module NFS14). Jej RVA wpisz do
+  // TDF_READER_RVA powyzej, by logowac kazdy tag.
+  hookFn(ptr("0xf0c0a0"), "FullLoginResponse (decode odp. login) <- BACKTRACE do dekodera", true);
   hookFn(ptr("0xf211d0"), "PostAuthRequest (encode -> gra wysyla postAuth!)");
+  hookFn(ptr("0xf211e0"), "PostAuthResponse (decode naszej odp. postAuth?)");
   hookFn(ptr("0xf66220"), "UserSessionExtendedDataUpdate (decode notyfikacji)");
+  hookFn(ptr("0xf65f90"), "NotifyUserAdded (decode UserAdded)");
 
   // --- podsluch polaczen sieciowych: pokaz KAZDY adres:port, do ktorego gra
   //     sie laczy (redirector, Blaze). To ujawni, dokad idzie po zdobyciu tokenu.
