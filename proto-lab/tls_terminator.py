@@ -166,7 +166,13 @@ class Wire:
         head = self._recv_exact(5)
         rtype, ver, rlen = head[0], struct.unpack(">H", head[1:3])[0], \
             struct.unpack(">H", head[3:5])[0]
-        frag = self._recv_exact(rlen)
+        try:
+            frag = self._recv_exact(rlen)
+        except socket.timeout:
+            # Timeout w SRODKU rekordu: oddaj naglowek do bufora, zeby kolejne
+            # recv_record wznowilo od tego samego miejsca, a nie od polowy.
+            self.buf = head + self.buf
+            raise
         if self.rx is not None:                       # stan szyfru aktywny
             frag = self._decrypt(rtype, ver, frag)
         return rtype, ver, frag
@@ -351,20 +357,34 @@ def handle(conn: socket.socket, addr, args, out_dir: Path,
 
         out_dir.mkdir(parents=True, exist_ok=True)
 
-        # 10. Petla serwera Blaze: dekoduj kazde zadanie Fire2 i odpowiadaj.
-        #     Pierwszy pakiet juz mamy w `app`; kolejne czytamy w petli.
-        conn.settimeout(20)
-        pkt, pktno = app, 0
+        # 10. Petla serwera Blaze: dekoduj KAZDE zadanie Fire2 i odpowiadaj.
+        #     UWAGA: granica rekordu TLS != granica ramki Fire2. Klient Blaze
+        #     potrafi wyslac kilka RPC w jednym rekordzie (i rozbic jedno RPC na
+        #     dwa rekordy). Dlatego sklejamy strumien w buforze i wycinamy z niego
+        #     wszystkie KOMPLETNE ramki (12 B naglowka + size). Wczesniej brano
+        #     tylko pierwsza ramke z rekordu, a ogon leciał do kosza -> RPC klienta
+        #     nigdy sie nie konczylo (ekran "Laczenie").
+        conn.settimeout(args.idle_timeout)
+        buf = bytearray(app)
+        frameno = 0
+        notify_seq = 0                                # licznik msgId notyfikacji
         try:
             while True:
-                pktno += 1
-                (out_dir / f"blaze-{tag}-{pktno:02d}.bin").write_bytes(pkt)
-                try:
-                    fr = blaze.Fire2.decode(pkt)
-                except Exception as e:                # noqa: BLE001
-                    print(f"  [!] nie zdekodowalem Fire2: {e}")
-                    print(hexdump(pkt, 256)); fr = None
-                if fr is not None:
+                # a) obsluz wszystko, co juz mamy w buforze
+                while len(buf) >= blaze.FIRE2_HDR:
+                    size = struct.unpack_from(">H", buf, 0)[0]
+                    total = blaze.FIRE2_HDR + size
+                    if len(buf) < total:              # ramka jeszcze niekompletna
+                        break
+                    pkt = bytes(buf[:total])
+                    del buf[:total]
+                    frameno += 1
+                    (out_dir / f"blaze-{tag}-{frameno:02d}.bin").write_bytes(pkt)
+                    try:
+                        fr = blaze.Fire2.decode(pkt)
+                    except Exception as e:            # noqa: BLE001
+                        print(f"  [!] nie zdekodowalem Fire2: {e}")
+                        print(hexdump(pkt, 256)); continue
                     print(f"\n  <- Fire2 comp={fr.component} cmd={fr.command} "
                           f"err={fr.error} type=0x{fr.msg_type:02x} seq={fr.seq} "
                           f"payload={len(fr.payload)}B")
@@ -373,23 +393,34 @@ def handle(conn: socket.socket, addr, args, out_dir: Path,
                         w.send_record(RT_APPDATA, resp)
                         print(f"  -> odpowiedz comp={fr.component} cmd={fr.command} "
                               f"({len(resp)} B)")
-                        for note in _after_reply(fr, args):
+                        for note in _after_reply(fr, args, notify_seq):
+                            notify_seq += 1
                             w.send_record(RT_APPDATA, note)
-                            print(f"  -> async NOTIFY comp={args.notify_comp} "
-                                  f"cmd={args.notify_cmd} ({len(note)} B)")
+                            nfr = blaze.Fire2.decode(note)
+                            print(f"  -> async NOTIFY comp={nfr.component} "
+                                  f"cmd={nfr.command} seq={nfr.seq} ({len(note)} B)")
                     else:
                         print("  *** brak handlera - zrzut (kolejny etap do zbudowania) ***")
                         print(hexdump(pkt, 384))
-                rtype, ver, pkt = w.recv_record()
+                if buf:
+                    print(f"  (ogon {len(buf)} B - czekam na reszte ramki)")
+
+                # b) dobierz kolejny rekord ze strumienia
+                try:
+                    rtype, ver, rec = w.recv_record()
+                except socket.timeout:
+                    # Cisza != koniec sesji. Gra trzyma polaczenie Blaze otwarte
+                    # i moze dlugo nic nie wysylac - NIE zamykamy go.
+                    print(f"  (cisza {args.idle_timeout} s - polaczenie trzymane, czekam)")
+                    continue
                 while rtype == RT_HANDSHAKE:
-                    rtype, ver, pkt = w.recv_record()
+                    rtype, ver, rec = w.recv_record()
                 if rtype == RT_ALERT:
-                    _drain_alert(rtype, pkt); break
+                    _drain_alert(rtype, rec); break
                 if rtype != RT_APPDATA:
                     print(f"  po odpowiedzi dostalem typ {rtype}, nie ApplicationData")
                     break
-        except socket.timeout:
-            print("  (koniec okna 20 s - brak dalszych pakietow)")
+                buf += rec
         except ConnectionError:
             print("  (klient zamknal polaczenie)")
 
@@ -432,8 +463,10 @@ def _dispatch_blaze(fr, args):
     return None
 
 
-def _after_reply(fr, args):
-    """Async notyfikacje wysylane PO odpowiedzi (np. po loginie: UserSessions)."""
+def _after_reply(fr, args, seq0: int = 0):
+    """Async notyfikacje wysylane PO odpowiedzi (np. po loginie: UserSessions).
+    `seq0` = pierwszy msgId do nadania; kolejne notyfikacje dostaja seq0+1, ...
+    (wlasna sekwencja serwera, niezalezna od messageId zadan klienta)."""
     out = []
     if fr.component == 1 and fr.command == 152:         # po loginie
         if args.notify_probe:
@@ -447,7 +480,8 @@ def _after_reply(fr, args):
             out.append(blaze.build_useradded_notify(component=args.notify_comp, command=2))
             out.append(blaze.build_usersession_update(component=args.notify_comp, command=1))
             out.append(blaze.build_notification(args.notify_comp, 8, b""))
-    return out
+    # nadaj rosnace msgId (buildery domyslnie daja 0 dla kazdej notyfikacji)
+    return [blaze.reseq(n, seq0 + i) for i, n in enumerate(out)]
 
 
 def _drain_alert(rtype: int, body: bytes) -> None:
@@ -486,6 +520,9 @@ def main() -> int:
     ap.add_argument("--notify-probe", action="store_true",
                     help="po loginie wyslij notyfikacje dla command 1..10 (diagnostyka: "
                          "Frida pokaze, ktory uruchamia dekodowanie)")
+    ap.add_argument("--idle-timeout", type=int, default=300,
+                    help="ile sekund ciszy zanim wypiszemy 'czekam' (polaczenia NIE "
+                         "zamykamy - gra trzyma sesje Blaze otwarta)")
     ap.add_argument("--reply-msgtype", type=lambda x: int(x, 0), default=0x10,
                     help="bajt msgType w naglowku Fire2 odpowiedzi. 0x10 = REPLY "
                          "(potwierdzone: gra dekoduje ServerInstanceInfo)")

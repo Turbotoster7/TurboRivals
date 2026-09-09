@@ -462,6 +462,12 @@ def build_notification(component: int, command: int, payload: bytes, *,
                  error=0, seq=seq, msg_type=msg_type).encode()
 
 
+def reseq(frame: bytes, seq: int) -> bytes:
+    """Podmienia messageId (uint16 na offsecie 10) w gotowej ramce Fire2.
+    Uzywane do nadania notyfikacjom wlasnej rosnacej sekwencji serwera."""
+    return frame[:10] + struct.pack(">H", seq & 0xFFFF) + frame[12:]
+
+
 def build_useradded_notify(user_id: int = REDACTED_EA_USER_ID, persona: str = "PayTonkaaa",
                            session_key: str | None = None, *, component: int = 0x7802,
                            command: int = 2, seq: int = 0,
