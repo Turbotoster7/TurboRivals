@@ -446,7 +446,11 @@ def _dispatch_blaze(fr, args):
             addr_index=args.addr_index, minimal=args.addr_only,
             msg_type=args.reply_msgtype, host=args.blaze_host)
     if fr.component == 9 and fr.command == 7:           # Util.preAuth
-        return blaze.build_preauth_response(fr.seq, msg_type=args.reply_msgtype)
+        return blaze.build_preauth_response(
+            fr.seq, msg_type=args.reply_msgtype,
+            client_config=None if not args.no_client_config else {},
+            qos=not args.no_qoss, qos_host=args.redirect_ip,
+            qos_port=args.qos_port)
     if fr.component == 9 and fr.command == 2:           # Util.ping
         return blaze.build_ping_response(fr.seq, msg_type=args.reply_msgtype)
     if fr.component == 1 and fr.command == 152:         # Authentication.login (Origin)
@@ -528,6 +532,15 @@ def main() -> int:
     ap.add_argument("--notify-probe", action="store_true",
                     help="po loginie wyslij notyfikacje dla command 1..10 (diagnostyka: "
                          "Frida pokaze, ktory uruchamia dekodowanie)")
+    ap.add_argument("--no-client-config", action="store_true",
+                    help="odsylaj PUSTE CONF w preAuth (stare zachowanie; klient "
+                         "prosi o config przez FCCR{CFID='BlazeSDK'})")
+    ap.add_argument("--no-qoss", action="store_true",
+                    help="odsylaj PUSTE QOSS w preAuth (stare zachowanie)")
+    ap.add_argument("--qos-port", type=int, default=17502,
+                    help="port ping-site'u QoS podawany w QOSS i nasluchiwany po UDP")
+    ap.add_argument("--no-qos-responder", action="store_true",
+                    help="nie uruchamiaj respondera UDP QoS")
     ap.add_argument("--plain-session-data", action="store_true",
                     help="wysylaj PUSTE UserSessionExtendedData w notyfikacjach po "
                          "loginie (stare zachowanie - do porownania A/B)")
@@ -572,8 +585,36 @@ def main() -> int:
                                    rsa, cert_der),
                              daemon=True).start()
 
+    def serve_qos(port: int) -> None:
+        """Responder QoS: odbija kazdy pakiet UDP z powrotem do nadawcy.
+
+        Klient Blaze po preAuth sonduje ping-site'y z QOSS. Wskazujemy je na
+        siebie, wiec musimy odpowiadac - bez odpowiedzi test QoS nigdy sie nie
+        konczy. Echo wystarczy do zmierzenia RTT; jesli klient oczekuje
+        konkretnej tresci, zobaczymy to w zrzucie pierwszych pakietow.
+        """
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        s.bind(("0.0.0.0", port))
+        print(f"nasluch UDP 0.0.0.0:{port} (QoS echo)")
+        n = 0
+        while True:
+            try:
+                data, peer = s.recvfrom(4096)
+            except OSError:
+                return
+            n += 1
+            if n <= 5:                      # pierwsze pakiety pokazujemy w calosci
+                print(f"\n  [QoS UDP #{n}] {len(data)} B od {peer[0]}:{peer[1]}")
+                print(hexdump(data, 64))
+            elif n % 25 == 0:
+                print(f"  [QoS UDP #{n}] {len(data)} B od {peer[0]}:{peer[1]}")
+            s.sendto(data, peer)
+
     for p in ports[1:]:
         threading.Thread(target=serve, args=(p,), daemon=True).start()
+    if not args.no_qos_responder:
+        threading.Thread(target=serve_qos, args=(args.qos_port,), daemon=True).start()
     print(f"oddajemy grze adres Blaze: {args.redirect_ip}:{args.blaze_port}. "
           f"Ctrl+C konczy.\n")
     try:

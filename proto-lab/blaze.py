@@ -257,6 +257,15 @@ def f_list_int(tag: str, values: list[int]) -> Field:
     return Field(tag, T_LIST, body)
 
 
+def f_map_struct(tag: str, items: dict[str, list[Field]]) -> Field:
+    """Mapa heat2 string -> struktura: typ klucza, typ wartosci, licznik, potem
+    pary (klucz, pola struktury + terminator) BEZ tagow (tak jak f_map_str)."""
+    body = bytes((T_STRING, T_STRUCT)) + enc_int(len(items))
+    for k, fields in items.items():
+        body += enc_str(k) + b"".join(f.encode() for f in fields) + b"\x00"
+    return Field(tag, T_MAP, body)
+
+
 def f_map_empty(tag: str, key_wtype: int, val_wtype: int) -> Field:
     """Pusta mapa heat2: typ klucza + typ wartosci + licznik 0. Klient dostaje
     poprawnie otagowane, ale puste pole zamiast braku pola."""
@@ -337,28 +346,80 @@ def f_map_str(tag: str, items: dict[str, str]) -> Field:
 DEFAULT_COMPONENT_IDS = [1, 4, 5, 7, 9, 11, 15, 21, 25, 30, 63, 2000]
 
 
+# Klucze client configu obecne w binarce (@0x016d2d80 i okolice: pingPeriod,
+# defaultRequestTimeout, connIdleTimeout; @0x016ea7c8 associationListSkipInitialSet;
+# @0x016eaac8 voipHeadsetUpdateRate). Wartosci sa nasze - klient parsuje je jako
+# tekst, wiec liczby ida stringami.
+DEFAULT_CLIENT_CONFIG = {
+    "associationListSkipInitialSet": "1",
+    "connIdleTimeout": "90",
+    "defaultRequestTimeout": "30",
+    "pingPeriod": "15000",                 # ms; gra i tak pinguje co ~15 s
+    "voipHeadsetUpdateRate": "500",
+}
+
+
+def f_qos_ping_site(alias: str, host: str, port: int) -> list[Field]:
+    """Pola QosPingSiteInfo (@0x1417065c0, potwierdzone z binarki):
+    PSA(adres) PSP(port) SNA(nazwa site) - tagi rosnaco."""
+    return [f_str("PSA", host), f_int("PSP", port), f_str("SNA", alias)]
+
+
+def f_qos_settings(tag: str = "QOSS", *, alias: str = "ams",
+                   host: str = "127.0.0.1", port: int = 17502,
+                   service_id: int = 0) -> Field:
+    """QosConfigInfo - ustawienia testu QoS.
+
+    Sam QosConfigInfo nie ma tablicy pol w naszym zrzucie .rdata, ale zawarty w
+    nim QosPingSiteInfo zgadza sie z emulatorem BF3 pole w pole (PSA/PSP/SNA),
+    wiec bierzemy z BF3 tez uklad opakowania:
+        BWPS(struct) LNP(int) LTPS(map alias->struct) SVID(int).
+    Ping-site wskazuje na nas - inaczej klient sonduje martwe serwery EA.
+    """
+    site = f_qos_ping_site(alias, host, port)
+    return f_struct(tag, [
+        f_struct("BWPS", site),                      # bandwidth ping site
+        f_int("LNP", 1),                             # liczba sond latencji
+        f_map_struct("LTPS", {alias: site}),         # ping sites po aliasie
+        f_int("SVID", service_id),
+    ])
+
+
 def build_preauth_response(seq: int, *, msg_type: int = MSG_REPLY,
                            service: str = "nfs-rivals-pc",
-                           component_ids: list[int] | None = None) -> bytes:
+                           component_ids: list[int] | None = None,
+                           client_config: dict[str, str] | None = None,
+                           qos: bool = True, qos_host: str = "127.0.0.1",
+                           qos_port: int = 17502,
+                           qos_alias: str = "ams") -> bytes:
     """Odpowiedz Util.preAuth (component 9, command 7).
 
-    Schemat PreAuthResponse (z binarki, kolejnosc tagow rosnaca):
+    Schemat PreAuthResponse (@0x1416c6440, kolejnosc tagow rosnaca):
       ASRC(str) CIDS(list int) CONF(struct) ESRC(str) INST(str) MINR(?) NASP(str)
       PILD(str) PLAT(str) QOSS(struct) RSRC(str) SVER(str).
-    Pierwsza proba: wypelniamy stringi + CIDS + puste CONF/QOSS. Reszta opcjonalna.
+
+    CONF to ClientConfig (@0x1416c5870) = JEDNO pole CONF typu MAPA. Wczesniej
+    szla tu pusta struktura, czyli struktura BEZ mapy w srodku - a klient prosi o
+    config wprost: request preAuth zawiera FCCR{CFID='BlazeSDK'}.
     """
     if component_ids is None:
         component_ids = DEFAULT_COMPONENT_IDS
+    if client_config is None:
+        client_config = DEFAULT_CLIENT_CONFIG
+    conf = f_struct("CONF", [f_map_str("CONF", client_config)]) if client_config \
+        else f_struct("CONF", [])
+    qoss = f_qos_settings(alias=qos_alias, host=qos_host, port=qos_port) if qos \
+        else f_struct("QOSS", [])
     fields = [
         f_str("ASRC", "205604"),                    # authentication source (id)
         f_list_int("CIDS", component_ids),
-        f_struct("CONF", []),                        # config map - pusto na start
+        conf,                                        # ClientConfig{ CONF: mapa }
         f_str("ESRC", "205604"),                    # entitlement source
         f_str("INST", service),
         f_str("NASP", "cem_ea_id"),                  # persona namespace EA
         f_str("PILD", ""),
         f_str("PLAT", "pc"),
-        f_struct("QOSS", []),                        # QoS settings - pusto na start
+        qoss,                                        # QosConfigInfo
         f_str("RSRC", "205604"),
         f_str("SVER", "Blaze 3.15.08.0 (CL# 1058939)"),
     ]
