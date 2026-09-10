@@ -174,3 +174,64 @@ Czy PRAWDZIWY ProtoSSL Rivals przyjmie patchowany cert i uzyje tej krypto -
 pytanie otwarte 3, rozstrzygane dopiero podaniem certu zywemu klientowi
 (`hosts` -> `127.0.0.1`, uruchomic terminator, wystartowac gre). Sukces =
 powstaje `blaze-first-*.bin` z czytelnym pierwszym pakietem Blaze.
+
+---
+
+## 2026-09-10 - QoS: zla hipoteza formatu, naprawiona dezasemblacja
+
+### Objaw
+
+Gra przechodzila cala sekwencje logowania (redirector -> preAuth z CONF+QOSS ->
+ping -> login -> notyfikacje UserSessions -> postAuth) i **sama** wolala nasz
+ping-site po HTTP: `GET /qos/qos?vers=1&qtyp=1&prpt=3659`. Odpowiedz odczytywala
+w calosci (130 B, widac w hookach `recv`), ale **nie wysylala ani jednej sondy
+UDP** - dalej tylko `Util.ping`, ekran "Laczenie".
+
+### Co bylo zle
+
+Klucze `.numprobes`, `.probesize`, `.qosport`, `.requestid`, `.reqsecret`
+wyciagniete ze stringow binarki sa prawdziwe, ale zinterpretowalismy je jako
+pary `klucz=wartosc` w formacie TagField (`qos.numprobes=1 qos.probesize=64 ...`).
+To byl domysl z nazwy funkcji, nie z kodu.
+
+Dezasemblacja rozstrzygnela: funkcja brana za `TagFieldFind` (`0xfee910`) to
+**`XmlFind`** z `xmlparse` DirtySDK. Dowod w samym kodzie: skanuje do znaku `<`,
+pomija `<?..?>` i `<!..>`, przerywa na `</`, a maska dopuszczalnych terminatorow
+nazwy to `0x40008001FFFFFFFF` = `{0x00-0x20, '/', '>'}` - **nie ma w niej `=`**,
+wiec dopasowywane sa nazwy ELEMENTOW, a nie klucze przypisan ani atrybuty.
+Towarzyszaca jej `0xfee6a0` to `XmlContentGetInteger` (po `<` skacze do `>`).
+
+Nasza odpowiedz nie zawierala ani jednego `<`, wiec wszystkie trzy `XmlFind`
+(`"firewall"`, `"firetype"`, `"qos"`) zwracaly NULL i
+`_QosApiParseResponse` @`0xfdb070` konczyl sie kodem `-2`, nie robiac nic. Stad
+cisza na UDP przy poprawnie odczytanej odpowiedzi.
+
+### Wniosek metodyczny
+
+Dwa razy z rzedu (uklad `QosConfigInfo` wziety z BF3, teraz format odpowiedzi
+QoS) kosztowal nas domysl przez analogie. Zrzut pamieci z odszyfrowana `.text` +
+capstone daja odpowiedz w kilka minut - **gdy istnieje kod do przeczytania, nie
+zgadujemy**. Ta sama zasada dala przy okazji numery komend UserSessions z
+tablicy skokow `getCommandName` (`updateNetworkInfo` = `0x14`), zamiast czekac,
+az komenda pojawi sie w logu jako "brak handlera".
+
+### Zmiany
+
+- `_qos_body` w `tls_terminator.py` odpowiada teraz XML-em dla `/qos/qos`,
+  `/qos/firetype`, `/qos/firewall`; `Content-Type: text/xml`. Flagi A/B:
+  `--qos-numprobes`, `--qos-probesize`, `--qos-firetype`.
+- `hook_origin.js`: hook na `0xfdb070` wypisuje bufor odpowiedzi i kod powrotu
+  (`0` / `-1` / `-2`) oraz odczytany stan QoS - diagnoza bez domyslow.
+- `_dispatch_blaze`: puste potwierdzenia dla `0x7802` cmd `0x14`
+  (updateNetworkInfo), `0x08` (updateHardwareFlags), `0x1A`
+  (setUserInfoAttribute).
+- Format, reguly walidacji, uklad sondy UDP i tablica komend: `docs/protocol.md`
+  sekcja 9.
+
+### Czego ta zmiana nie przesadza
+
+Responder UDP zostaje zwyklym echem - z kodu wynika, ze to wystarcza (odbior
+sondy porownuje `requestid`/`reqsecret`/`numprobes` odczytane z pakietu, a echo
+zwraca je niezmienione), ale **nie bylo jeszcze testowane na zywo**. Nieznana
+zostaje tez semantyka `<firetype>` (typ NAT): wartosc trafia do `[conn+0x1b0]`,
+a `== 5` wylacza callback, wiec 5 to sentinel "nieznany"; domyslnie odsylamy 1.

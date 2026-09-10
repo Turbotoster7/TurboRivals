@@ -1,8 +1,8 @@
 # Metadane TDF wyciagniete z NFS14.exe
 
-- Znalezionych par (tag, pole): **2,864**
-- Unikalnych tagow: **1,152**
-- Ciaglych blokow (kandydaci na klasy): **121**
+- Znalezionych par (tag, pole): **4,046**
+- Unikalnych tagow: **1,459**
+- Ciaglych blokow (kandydaci na klasy): **129**
 
 Tag to 24-bitowa wartosc rozpakowywana na 4 znaki po 6 bitow (0 = spacja). To dokladnie te tagi, ktore leca po drucie.
 
@@ -14,18 +14,22 @@ Tag to 24-bitowa wartosc rozpakowywana na 4 znaki po 6 bitow (0 = spacja). To do
 | `ACC ` | mAccept |
 | `ACCL` | mAccoladeReports |
 | `ACCR` | mAccuracy |
+| `ACEF` | mAcceptanceFlags |
 | `ACFG` | mAdminConfig |
 | `ACHS` | mAchievements, mHistory |
 | `ACID` | mAccountID |
-| `ACNT` | mAchievements |
+| `ACMS` | mAcceptanceMask |
+| `ACNT` | mAchievements, mRecordCountByCategory |
 | `ACPT` | mAccepted |
 | `ACTT` | mActivationTime |
 | `ACTV` | mIsActive |
 | `ADDR` | mAddress, mIpAddress, mRecordAddress |
-| `ADMN` | mAdminEmail |
-| `ADRS` | mAddress |
+| `ADID` | mAnyDomain |
+| `ADMN` | mAdminEmail, mAdminPlayerList |
+| `ADRS` | mAddress, mAddresses |
+| `AFTR` | mAfter |
 | `AGAM` | mAvoidGamesRuleCriteria |
-| `AGGR` | mAggrFlags, mEntityAggrList |
+| `AGGR` | mAggrFlags, mAggrValues, mEntityAggrList |
 | `AGKY` | mAggregateKeyValue |
 | `AGN ` | mNumOfActiveGame |
 | `AGUP` | mCanAgeUp |
@@ -35,18 +39,22 @@ Tag to 24-bitowa wartosc rozpakowywana na 4 znaki po 6 bitow (0 = spacja). To do
 | `ALIA` | mAlias |
 | `ALLE` | mAllRecordsEditable |
 | `ALOC` | mAccountLocale |
-| `ALST` | mAdminList, mAvoidList, mListInfoVector |
+| `ALST` | mAdminList, mAdminPlayerId, mAvoidList, mListInfoVector |
 | `AMAP` | mAddressRemaps |
 | `AMAX` | mMaxAchievEnumSize, mMaxUEDAccepted |
 | `AMIN` | mMinUEDAccepted |
 | `AMOA` | mWeaponAAmmo |
 | `AMOB` | mWeaponBAmmo |
+| `AMRP` | mAllowMemberToRetrievePassword |
 | `AMSA` | mAssociatedMaxSizeAllowed |
+| `AMU ` | mAnonymousUser |
 | `ANAM` | mAttributeName |
+| `ANME` | mAttributeName |
 | `ANON` | mAnonymousPid, mIsAnonymous |
 | `ANVP` | mAttributeMap |
 | `APLR` | mAvoidPlayersRuleCriteria |
 | `AREM` | mAutoRemove |
+| `ARPT` | mArtPackageType |
 | `ASC ` | mSmallerIsBetter |
 | `ASCD` | mAscending |
 | `ASIL` | mMatchmakingAsyncStatusList |
@@ -54,7 +62,7 @@ Tag to 24-bitowa wartosc rozpakowywana na 4 znaki po 6 bitow (0 = spacja). To do
 | `ASST` | mAssists |
 | `ASTS` | mAvoidListIds |
 | `ATHL` | mOffensiveAthletes |
-| `ATID` | mKey |
+| `ATID` | mAnyTeamId, mKey |
 | `ATKN` | mAuthToken |
 | `ATMP` | mAttempts |
 | `ATOK` | mAccessToken, mAuthToken |
@@ -63,7 +71,8 @@ Tag to 24-bitowa wartosc rozpakowywana na 4 znaki po 6 bitow (0 = spacja). To do
 | `ATTR` | mAttrMap, mAttributeMap, mAttributes, mAttrs, mGameAttribs, mGameAttributes, mGameSettings, mMemberAttributes, mPlayerAttribs, mPlayerAttributes, mPlaygroupAttributes, mRoomAttributes |
 | `ATTS` | mAdditionalAttributesList, mNumAttempts |
 | `ATTV` | mAttributeBits, mAttributevalue |
-| `AUTH` | mAuthCode, mAuthCredentials, mAuthToken, mLastAuthDate |
+| `ATYP` | mAttributeType |
+| `AUTH` | mAuthCode, mAuthCredentials, mAuthToken, mContentAuthorBlazeId, mLastAuthDate |
 | `AUXA` | mAuxAuth |
 | `AVG ` | mAverageRecordSize |
 | `AWCN` | mAwardCount |
@@ -79,38 +88,49 @@ Tag to 24-bitowa wartosc rozpakowywana na 4 znaki po 6 bitow (0 = spacja). To do
 | `BANU` | mBanUser |
 | `BASE` | mBaseName |
 | `BDAY` | mBirthDay |
+| `BEFR` | mBefore |
 | `BEST` | mBlazeIdToPlayedAgainstStatus |
 | `BID ` | mBlazeId, mMemberBlazeId, mOwnerBlazeId, mOwnerId |
 | `BIDL` | mListMemberIdVector, mRemovedUserList |
 | `BIDS` | mBlazeIds |
 | `BILL` | mBillboardId, mDefaultBillingAddressUri |
+| `BIND` | mBindType |
 | `BITS` | mPublicKeyBits |
-| `BLID` | mBlazeId, mNewsId, mPlayerId, mUserId |
-| `BLIS` | mBlazeIDs, mBlazeId, mFriendRecommendations |
+| `BLID` | mBlazeId, mContentReporterBlazeId, mNewsId, mPlayerId, mUserId |
+| `BLIS` | mBlazeIDs, mBlazeId, mFriendRecommendations, mSpecialGuests |
 | `BLKS` | mBlocks |
+| `BLOB` | mCustomData |
 | `BLOC` | mBlocks |
 | `BLST` | mBanList, mBannedList, mBannedUsers, mUnlockBoolList |
-| `BLUS` | mBlazeUser, mRivalBlazeUser |
+| `BLUS` | mBlazeUser, mRivalBlazeUser, mTargetBlazeUser |
 | `BMON` | mBirthMonth |
 | `BNAM` | mBoardName |
+| `BNID` | mBannerId |
 | `BNTY` | mBestBounty, mBounty, mBountyTag |
 | `BODY` | mEntitlement, mEntitlementInfo, mEntitlements, mPayload, mPersonaInfo, mPid, mPidProfilePostRequest |
 | `BOID` | mBlazeObjId |
 | `BOTT` | mShowAtBottomIfNotFound |
 | `BPS ` | mBestPingSiteAlias |
+| `BSDK` | mBlazeSDKVersion |
 | `BTGT` | mBuildTarget |
-| `BTIM` | mBuildTime |
+| `BTIM` | mBlazeSDKBuildDate, mBuildTime |
+| `BTPL` | mGroupId |
 | `BUID` | mBlazeUserId, mOnline, mUserId |
 | `BURL` | mBannerUrl |
 | `BUST` | mBusts |
+| `BVAL` | mMatchedHostBalanceValue |
+| `BWPS` | mBandwidthPingSiteInfo |
 | `BYR ` | mBirthYear |
 | `BZID` | mBlazeId, mUserId |
+| `CADM` | mDataAdmins |
 | `CAP ` | mCapacity, mMaxPlayerCapacity, mMaxResultCount, mSlotCapacities |
 | `CAPA` | mCapacity |
-| `CAT ` | mCategory, mCategoryName |
+| `CASF` | mClubArtSettingsFlags |
+| `CAT ` | mCategory, mCategoryName, mContentCategory |
 | `CATE` | mCategory |
 | `CATG` | mCategory |
 | `CATS` | mCategories, mCategoryData |
+| `CATT` | mCategoryType |
 | `CAUS` | mCause |
 | `CAWI` | mCount |
 | `CBD ` | mNumOfClubsByDomain |
@@ -118,19 +138,23 @@ Tag to 24-bitowa wartosc rozpakowywana na 4 znaki po 6 bitow (0 = spacja). To do
 | `CBTY` | mCopBounty |
 | `CCAT` | mCategory, mContentCategory, mSrcCatalog |
 | `CCDT` | mCreateDate |
+| `CCON` | mCurrentConnections |
 | `CCTP` | mCurrencyType |
 | `CCUY` | mCurrency |
-| `CDAT` | mCategoryData, mClientData, mCustomData |
+| `CDAT` | mCategoryData, mClientData, mCreateDate, mCustomData |
 | `CDKY` | mIsCdKey |
 | `CDSC` | mDescription |
 | `CENT` | mCenter |
 | `CERT` | mCertificateList |
 | `CFID` | mConfigSection |
-| `CGID` | mId |
+| `CFLG` | mFlags |
+| `CFLI` | mClubFilterList |
+| `CGID` | mConnectionGroupObjectId, mId |
 | `CGNM` | mCategoryName |
 | `CGS ` | mCreateGameStatus |
 | `CGVS` | mConfigVersion |
 | `CHAL` | mChallenge, mChallenges |
+| `CHAN` | mChannel |
 | `CHDE` | mNext2Last |
 | `CHDS` | mFirstChild |
 | `CID ` | mCategoryId, mClubId, mContentId |
@@ -141,18 +165,31 @@ Tag to 24-bitowa wartosc rozpakowywana na 4 znaki po 6 bitow (0 = spacja). To do
 | `CIMC` | mMemberCount |
 | `CINF` | mClientInfo |
 | `CIST` | mClubInvList, mClubPetitionsList |
+| `CITY` | mCity |
+| `CJPS` | mClubJoinOrPetitionStatus |
 | `CKEY` | mConsumableKey, mKey |
+| `CLAF` | mAcceptanceFlags |
 | `CLBS` | mGroupReports, mGroups |
 | `CLCN` | mClubsCount |
+| `CLCS` | mCustClubSettings |
+| `CLD2` | mMetaData2 |
 | `CLDM` | mClubsByDomain |
-| `CLDS` | mClubDivisionSize |
-| `CLID` | mClubId, mRivalClubId |
+| `CLDS` | mClubDivisionSize, mDescription |
+| `CLID` | mAssociateClubId, mClubId, mClubIdList, mRivalClubId |
 | `CLIN` | mClubInfo, mClubsComponentInfo |
-| `CLNM` | mCatalogMap, mCatalogName, mCategoryMap |
+| `CLMD` | mMetaData |
+| `CLMT` | mMetaDataType |
+| `CLNM` | mCatalogMap, mCatalogName, mCategoryMap, mClubName |
+| `CLNT` | mClientName |
 | `CLR ` | mClearBannerUrl |
+| `CLRG` | mRegion |
 | `CLRL` | mClubRecordList |
 | `CLST` | mClubList, mClubSettings, mConsumableList |
+| `CLT2` | mMetaDataType2 |
 | `CLTG` | mTagList |
+| `CLTI` | mIncludeClubTags |
+| `CLTO` | mTagSearchOperation |
+| `CLTP` | mClientType, mClientTypes |
 | `CLUB` | mClub, mClubId, mClubReports |
 | `CMAC` | mMacAddress |
 | `CMAP` | mSpecMap |
@@ -160,14 +197,17 @@ Tag to 24-bitowa wartosc rozpakowywana na 4 znaki po 6 bitow (0 = spacja). To do
 | `CMET` | mClientMetaData |
 | `CMLS` | mClubMemberList |
 | `CMSL` | mClubMembershipList |
+| `CMTP` | mMembershipStatus |
 | `CNAM` | mCatName, mCategoryName, mCreatorPersonaName, mName |
 | `CNOU` | mNumOfUsersByRegion |
 | `CNSU` | mConsumable |
-| `CNT ` | mCount |
+| `CNT ` | mCnt, mCount |
 | `CNTX` | mContext, mPlayerRemovedTitleContext |
 | `CNTY` | mCountry |
-| `CODE` | mResultCode |
-| `COID` | mContentId, mCorrelationId, mExternalSessionCorrelationId |
+| `CO  ` | mCountry |
+| `CODE` | mCode, mResponse, mResultCode |
+| `CODR` | mClubsOrder |
+| `COID` | mContentId, mContextId, mCorrelationId, mExternalSessionCorrelationId |
 | `COLS` | mColumnKeyList, mColumns |
 | `COMM` | mComment |
 | `COMP` | mComparisons, mComponent |
@@ -176,31 +216,37 @@ Tag to 24-bitowa wartosc rozpakowywana na 4 znaki po 6 bitow (0 = spacja). To do
 | `CONG` | mConnectionGroupId |
 | `CONN` | mIsConnected |
 | `CONS` | mIsConsumable |
-| `CONT` | mCount |
+| `CONT` | mContentType, mCount |
 | `COP1` | mCustOpt1 |
 | `COP2` | mCustOpt2 |
 | `COP3` | mCustOpt3 |
 | `COP4` | mCustOpt4 |
 | `COP5` | mCustOpt5 |
 | `COTY` | mComplaintType, mContextType |
-| `COUN` | mCount, mCountry |
+| `COUN` | mCount, mCountry, mUseCount |
 | `CPAY` | mCustomPayload |
 | `CPCM` | mConnectedPlayerCounts |
 | `CPDN` | mProductName |
+| `CPEN` | mClearPending |
+| `CPFT` | mPlatform |
 | `CPJN` | mProjectNumber |
+| `CPLT` | mClientPlatform |
 | `CPRD` | mSrcProductId |
 | `CPWD` | mCurrentPassword |
-| `CREA` | mDateCreated |
-| `CREG` | mClubRegion, mClubregion |
+| `CRDA` | mCreatedDate |
+| `CREA` | mCreation, mCreationTime, mDateCreated |
+| `CREG` | mClubRegion, mClubregion, mRegion |
 | `CREQ` | mCreateAccountParameters |
 | `CRET` | mCreatorUserId |
-| `CRIT` | mEntryCriteria, mEntryCriteriaMap, mFailedCriteria, mRoleCriteriaMap, mRoleEntryCriteriaMap |
+| `CRIT` | mCriteriaData, mEntryCriteria, mEntryCriteriaMap, mFailedCriteria, mRoleCriteriaMap, mRoleEntryCriteriaMap |
 | `CRTI` | mCreationTime |
 | `CRTM` | mCreationTime |
 | `CSER` | mExternalRef |
 | `CSET` | mClubSettings |
 | `CSFN` | mFileName |
 | `CSID` | mConnectionSlotId |
+| `CSKU` | mClientSkuId |
+| `CSLT` | mNewHostConnectionSlotId |
 | `CSN ` | mName |
 | `CST ` | mType |
 | `CSTA` | mStatus |
@@ -211,25 +257,39 @@ Tag to 24-bitowa wartosc rozpakowywana na 4 znaki po 6 bitow (0 = spacja). To do
 | `CTRY` | mCountry, mIsoCountryCode |
 | `CTXT` | mContext |
 | `CTY ` | mCity, mCountry |
-| `CTYP` | mContextType, mType |
+| `CTYP` | mCategoryType, mContextType, mType |
 | `CUNT` | mCount |
 | `CUR ` | mCurrent |
 | `CURI` | mUri |
+| `CURT` | mTc |
 | `CUST` | mCustomAsynStatus, mCustomReports, mCustomRulePrefs |
 | `CVAL` | mClientUEDSearchValue |
 | `CVAR` | mClientData, mVariableCustomAsyncStatus, mVariableCustomRulePrefs |
-| `CVER` | mCompatibleClientVersions |
+| `CVER` | mClientVersion, mCompatibleClientVersions |
+| `CVSF` | mContentVisible |
+| `CWD ` | mCurrentWorkingDirectory |
 | `CYCL` | mManagedLifecycle |
+| `DADM` | mDevAdmins |
 | `DAFO` | mDataFormat |
 | `DATA` | mBlob, mCustomData, mData, mExtendedData, mGameData, mGameEventData |
+| `DATE` | mExpirationDate |
+| `DATF` | mDateFinished |
+| `DATS` | mDateStarted |
 | `DBG ` | mShowDebug |
+| `DBPS` | mDownstreamBitsPerSecond |
 | `DBSP` | mDoubleSP |
 | `DBUF` | mDailyBuffer |
+| `DCNT` | mDeletedRecordCountByCategory, mDeletedRecordCountByName |
 | `DCRE` | mDateCreated |
+| `DCTX` | mSetupContext |
 | `DDAT` | mDownDate |
 | `DDRV` | mDistDriven |
+| `DEC ` | mDecoder |
 | `DEFS` | mDefensiveAthleteReports, mDefensivePlayerStats |
+| `DEID` | mDeviceId |
+| `DEL ` | mDeleted |
 | `DELE` | mCacheDeletes |
+| `DELT` | mDeletedTime, mDeletionTime |
 | `DEPO` | mDepotLocation |
 | `DERV` | mCustomReport |
 | `DESC` | mDesc, mDescription, mDescriptionText |
@@ -238,14 +298,18 @@ Tag to 24-bitowa wartosc rozpakowywana na 4 znaki po 6 bitow (0 = spacja). To do
 | `DESS` | mDesiredTotalPlayerSlots |
 | `DETH` | mDeaths |
 | `DEUC` | mDecrementCount |
+| `DEVI` | mDeviceUri |
 | `DFLT` | mDefaultValue |
+| `DFMT` | mDataFormat |
 | `DHOU` | mDailyHour |
+| `DIRT` | mResult |
 | `DISA` | mDisable |
 | `DISP` | mDisplay, mDisplayName |
 | `DISR` | mRoomDisplayName |
 | `DIST` | mMaxDistance |
 | `DIVN` | mDivision |
 | `DLOC` | mDefaultLocale |
+| `DLTS` | mNumOfDeletedRecords |
 | `DLY ` | mCurrentDailyPeriodId |
 | `DMAL` | mDiscoverableEmail |
 | `DMAP` | mDataMap |
@@ -253,45 +317,66 @@ Tag to 24-bitowa wartosc rozpakowywana na 4 znaki po 6 bitow (0 = spacja). To do
 | `DMNS` | mDomainList |
 | `DMOD` | mDateModified |
 | `DMSG` | mDownMessage |
-| `DNAM` | mDisplayName, mListConfigName |
+| `DNAM` | mDisplayName, mDomainName, mListConfigName |
 | `DNF ` | mDNFRulePrefs, mMaxDNFValue |
 | `DNFS` | mDNFRuleStatus |
 | `DOB ` | mDOB, mDob |
 | `DONE` | mIsFinalUpdate |
+| `DPID` | mDeviceProfileId |
+| `DPIT` | mIdType |
+| `DPPT` | mPlatformType |
 | `DPRT` | mDstPort |
 | `DPSC` | mDeploySuccess |
 | `DRET` | mDailyRetention |
 | `DRVD` | mDerived |
+| `DSDK` | mDirtySDKVersion |
 | `DSEC` | mSecToDrain |
+| `DSNM` | mDisplayName |
 | `DSOO` | mDistanceToUnlockOverwatch |
 | `DSPF` | mDistancePerFuel |
+| `DTCR` | mDateCreated |
 | `DTOK` | mXBLToken |
 | `DTRG` | mDateRange |
 | `DTYP` | mType |
-| `DUR ` | mDurationSec |
+| `DUED` | mTrackMembershipInUED |
+| `DUR ` | mDurationSec, mMinValidDuration, mSessionDurationMS |
 | `DURA` | mDuration, mDurationLeft |
 | `DURI` | mDeviceUri |
 | `DVID` | mDeviceId |
+| `DXGM` | mMaxGMsPerClub |
+| `DXIA` | mMaxInactiveDaysPerClub |
+| `DXIV` | mMaxInvitationsPerUserOrClub |
+| `DXMB` | mMaxMembersPerClub |
+| `DXMS` | mMaxMembershipsPerUser |
+| `DXNW` | mMaxNewsItemsPerClub |
 | `EAMC` | mEaMayContact |
 | `EAPU` | mEntAuthPersonaUri |
-| `EDAT` | mExtendedData |
+| `ECRI` | mEntryCriteriaMap |
+| `EDAT` | mExpireDate, mExtendedData |
 | `EDCT` | mEnableDisconnectTelemetry |
 | `EDIT` | mEditableRecordNames |
+| `EFPF` | mEmailFormatPref |
+| `EGDA` | mEndGrantDate |
 | `EGRT` | mEndGrantDate |
 | `EID ` | mBlazeId, mEntitlementId, mEntityId, mEntityIds |
+| `EIDS` | mReservedExternalPlayers |
+| `ELEM` | mProfileInfoElementsByCategory |
 | `EMAX` | mMaxExpandedRooms |
 | `ENAB` | mEnableKillswitch, mEnabled |
 | `ENAG` | mEnableAggregation |
 | `ENAM` | mEntityName |
 | `ENBL` | mReceiveNotifications |
-| `END ` | mEnd |
+| `ENBV` | mEnableVoIP |
+| `ENC ` | mEncoder |
+| `END ` | mEnd, mEndDate |
+| `ENDP` | mEndpoints |
 | `ENID` | mEntityId, mEntityIds |
 | `ENTI` | mEntitlementInfo, mEntityId |
 | `ENTL` | mEntitlements |
 | `ENTR` | mX509EntryMap |
 | `ENTS` | mEntitlement, mEntries |
 | `ENTY` | mEntityType |
-| `ENUM` | mRoomNumber |
+| `ENUM` | mRegularEnum, mRoomNumber |
 | `ENV ` | mEnvironment |
 | `EPCT` | mExpandThresholdPercent |
 | `EPSN` | mPageNo |
@@ -300,15 +385,17 @@ Tag to 24-bitowa wartosc rozpakowywana na 4 znaki po 6 bitow (0 = spacja). To do
 | `ERKM` | mEntityRankMap |
 | `EROR` | mBlazeError |
 | `ERR ` | mError, mErrorStatus, mJoinErr |
+| `ERST` | mExternalPlayerRoleJoinRoster, mExternalPlayerRoleRosters |
 | `ESCP` | mEscapes |
 | `ESNM` | mExternalSessionName |
 | `ESRC` | mEntitlementSource |
 | `ESTS` | mEmailStatus |
 | `ETAG` | mEntitlementTag |
+| `ETDA` | mEndTerminationDate |
 | `ETOK` | mCachedExternalSessionToken |
 | `ETP ` | mEntityType |
 | `ETRM` | mEndTerminationDate |
-| `ETYP` | mEntitlementType, mEntityType |
+| `ETYP` | mEntitlementType, mEntityObjectId, mEntityType |
 | `EURI` | mEntitlementUri |
 | `EURL` | mExternalURL |
 | `EVBY` | mBounty |
@@ -323,15 +410,20 @@ Tag to 24-bitowa wartosc rozpakowywana na 4 znaki po 6 bitow (0 = spacja). To do
 | `EVTS` | mEventIds |
 | `EXBB` | mExternalBlob |
 | `EXBL` | mExternalBlob |
+| `EXDA` | mExpirationDate |
 | `EXID` | mExternalId |
 | `EXIP` | mExternalAddress |
 | `EXPD` | mExpandResults |
+| `EXPE` | mExpirationPeriod |
+| `EXPI` | mTermination |
 | `EXPR` | mExpression |
+| `EXRF` | mExtRef |
 | `EXTB` | mExternalBlob |
 | `EXTI` | mExternalId |
 | `EXTT` | mExternalRefType |
 | `EXTV` | mExternalRefValue |
 | `EXUI` | mExcludeUserId |
+| `FAIL` | mFailure |
 | `FCAP` | mFlagsCaptured, mFuelCap |
 | `FCCR` | mFetchClientConfig |
 | `FCRI` | mFailedCriteria |
@@ -341,31 +433,40 @@ Tag to 24-bitowa wartosc rozpakowywana na 4 znaki po 6 bitow (0 = spacja). To do
 | `FGS ` | mFindGameStatus |
 | `FID ` | mFinanceId |
 | `FILD` | mField |
+| `FILM` | mMemberType |
 | `FILT` | mFilter, mFilterList, mIncludeStatlessEntities |
 | `FIT ` | mFitScore |
 | `FLAG` | mEntitlementSearchFlag, mFlags |
+| `FLD ` | mField |
 | `FLDS` | mDescription, mFolderDescriptors |
-| `FLGS` | mStatusFlags |
+| `FLGS` | mPlayerNetConnectionFlags, mStatusFlags |
 | `FLID` | mFolderId |
 | `FLNM` | mName |
 | `FLTP` | mFloatParamList |
+| `FLTR` | mFilters |
 | `FNL ` | mFinalResult |
+| `FNSH` | mFinishedStatus |
+| `FPID` | mFirstPartyId |
 | `FRDS` | mNumFriends |
 | `FRES` | mFreePlayerSlotsRuleCriteria |
 | `FRID` | mFriendBlazeId |
 | `FRMT` | mFormat |
 | `FRND` | mBlazeId, mFriendStory, mGenerateFriendStories, mGetFriendStory |
 | `FRST` | mFriendStories, mIsFirstLogin |
+| `FTCH` | mFetchContent |
 | `FULS` | mFuelToSpend |
 | `FUNA` | mFullName |
 | `GACD` | mGameAttributesData |
 | `GAM ` | mGameData |
 | `GAME` | mGame, mGameAttributes, mGameAttrs, mGameData, mGames, mReport |
+| `GCTR` | mGamePingSiteAlias |
 | `GDAT` | mGameData |
+| `GDAY` | mGrantDate |
 | `GECI` | mGeoCity |
 | `GECO` | mGeoCountry |
 | `GEN ` | mGenerator |
 | `GENS` | mBillboardLeaderResponseList, mGenerators |
+| `GENT` | mGameEntryType |
 | `GEO ` | mGeoLocationRuleCriteria |
 | `GEOS` | mGeoLocationRuleStatus |
 | `GETP` | mFriendBlazeIdList |
@@ -383,11 +484,13 @@ Tag to 24-bitowa wartosc rozpakowywana na 4 znaki po 6 bitow (0 = spacja). To do
 | `GMRG` | mGameModRegister |
 | `GMRS` | mGameReportList |
 | `GNAM` | mGameName, mGameNameRuleCriteria, mGroupName, mGroupNames |
+| `GNDR` | mGender |
 | `GNLS` | mGroupNameList |
 | `GNUM` | mNumOfGames |
 | `GOPT` | mGlobalOptin |
 | `GPID` | mGroupId |
 | `GPRP` | mProgressPercentage |
+| `GPVH` | mGameProtocolVersionHash |
 | `GPVS` | mGameProtocolVersionString |
 | `GRDA` | mGenericRuleStatusMap |
 | `GREQ` | mCreateGameRequest |
@@ -398,74 +501,94 @@ Tag to 24-bitowa wartosc rozpakowywana na 4 znaki po 6 bitow (0 = spacja). To do
 | `GRPS` | mGroups |
 | `GRTS` | mGameReportTypes |
 | `GSET` | mGameSettings |
+| `GSID` | mGameReportingId |
 | `GSNA` | mGameSettingsName |
 | `GSPT` | mGlickoSkillPoints |
 | `GSRD` | mGameSizeRuleStatus |
+| `GSTA` | mGameState, mNewGameState |
 | `GSVA` | mOpenToBrowsing |
 | `GTAG` | mGamerTag, mGamertag |
 | `GTNA` | mGameTypeName |
 | `GTYP` | mGameTypeName, mTypeName |
 | `GUID` | mPetitionGuid, mResponseGUID |
+| `GURL` | mGameStatusUrl, mGetURL |
 | `GUTY` | mGuestType |
 | `GVER` | mGameProtocolVersionString |
 | `HAP ` | mHasAuthorizedPersona |
 | `HASH` | mMemberHash |
+| `HAUP` | mHasAuthorizedPersona |
 | `HBRD` | mHostBalanceRuleStatus |
-| `HCID` | mNewHostConnectionGroupId |
-| `HCSD` | mNewHostConnectionSlotId |
+| `HCID` | mHostConnectionGroupId, mNewHostConnectionGroupId |
+| `HCSD` | mHostConnectionSlotId, mNewHostConnectionSlotId |
 | `HEAL` | mHealthLevel |
-| `HIDE` | mHide |
+| `HIDE` | mHide, mIsHidden |
 | `HIST` | mHistoryTables, mIncludeHistory |
 | `HITS` | mHits |
 | `HNAM` | mHostPersonaName |
-| `HOST` | mHostUserId, mHostname, mNewHostPlayer |
+| `HNET` | mHostNetworkAddress, mHostNetworkAddressList |
+| `HOST` | mHostId, mHostUserId, mHostname, mNewHostId, mNewHostPlayer |
 | `HOTS` | mHotRecommendationsData |
 | `HOWT` | mHowto |
 | `HPID` | mPlayerId |
-| `HSID` | mNewHostSlotId |
+| `HSES` | mTopologyHostSessionId |
+| `HSID` | mHostSlotId, mNewHostSlotId |
 | `HSLT` | mSlotId |
+| `HSPW` | mHasPassword |
 | `HTBA` | mUserPassword |
 | `HVAR` | mHasVariable |
 | `HVRD` | mHostViabilityRuleStatus |
 | `HWFG` | mHardwareFlags |
 | `IADM` | mIncludeAdminServers |
-| `ID  ` | mBlazeId, mId, mUserId |
+| `ID  ` | mBlazeId, mId, mInstanceId, mUserId |
 | `IDLS` | mListOfIds |
 | `IDLT` | mBlazeIdList |
+| `IDS ` | mUserIds |
 | `IEXP` | mIncludeExpired |
 | `IGNO` | mIgnoreEntryCriteriaWithInvite, mIgnoreGameEntryCriteria |
-| `IID ` | mItemId |
+| `IID ` | mInstanceId, mItemId |
+| `IITO` | mIgnoreInactivityTimeout |
 | `IKEY` | mItemKey |
 | `ILST` | mItemKeyList, mUnlockIndexList |
 | `IMCS` | mAwardImgCheckSum |
 | `IMG ` | mImg |
+| `INAM` | mInstanceName |
+| `INDX` | mParamIndex |
 | `INFO` | mAccountInfo, mContentInfo, mEntitlementSearchParams, mInfo, mPlaygroupInfo, mViewInfo |
-| `INID` | mInvitationId, mInviterId, mPetitionId |
+| `INID` | mInvitationId, mInviterId, mMessageId, mPetitionId |
 | `INIP` | mInternalAddress |
-| `INST` | mInstanceName, mInstances |
+| `INST` | mInstance, mInstanceName, mInstances |
 | `INTL` | mIntList |
 | `INTP` | mInt32ParamList |
 | `INUI` | mIncludeUserId |
-| `INVT` | mInventoryContents, mIsUserInvited |
-| `IP  ` | mIp |
+| `INVT` | mInventoryContents, mInvitationsType, mIsUserInvited, mMessageType, mPetitionsType |
+| `IP  ` | mAdminIp, mIp |
 | `IPRE` | mIsProgressionEvent |
 | `IRAT` | mBytesIn |
 | `IRES` | mReserved |
+| `ISCO` | mIsConsumable |
 | `ISEN` | mIsEnabled |
 | `ISGR` | mIsGranted |
 | `ISHD` | mIsHidden |
 | `ISIM` | mIsSim |
-| `ISSE` | mIsSet |
+| `ISSE` | mIsSearch, mIsSet |
 | `ISSG` | mIsSingleGroupMatch |
 | `ISSP` | mIsItemSpecial |
 | `ISSU` | mIsSubscribed |
+| `ITLI` | mItemKeyList |
 | `IVER` | mIncompatibleClientVersions |
 | `IVIS` | mIsVisible |
-| `JOIN` | mJoinIfExists |
+| `JFPS` | mHasJoinFirstPartyGameSessionPermission |
+| `JGS ` | mJoinState |
+| `JITV` | mClubJumpingInterval |
+| `JLOA` | mPayload |
+| `JMET` | mJoinMethod |
+| `JOAC` | mJoinAcceptance |
+| `JOIN` | mJoinIfExists, mPlaygroupJoinability |
+| `JONA` | mJoinAcceptance |
 | `JPN ` | mNumOfJoinedPlayer |
 | `JTIM` | mJoinTime |
-| `KEY ` | mCode, mKey, mKeyString, mSessionKey |
-| `KEYS` | mColumns |
+| `KEY ` | mCode, mKey, mKeyCode, mKeyString, mSessionKey |
+| `KEYS` | mColumns, mKeyScopes |
 | `KILL` | mKills |
 | `KIND` | mKind |
 | `KSIT` | mKeyScopesMap |
@@ -478,12 +601,15 @@ Tag to 24-bitowa wartosc rozpakowywana na 4 znaki po 6 bitow (0 = spacja). To do
 | `KSVL` | mKeyScopeValues |
 | `LABL` | mLabel |
 | `LACT` | mLastActivationTime |
+| `LADT` | mLastAuthenticated |
 | `LAHE` | mLastAuthError |
 | `LAMP` | mAttribs, mLocaleAttributeMap |
-| `LANG` | mIsoLanguageCode, mLanguage, mLanguageCode, mLocale |
+| `LANG` | mIsoLanguage, mIsoLanguageCode, mLanguage, mLanguageCode, mLocale |
 | `LAST` | mLast, mLastAuthenticated, mLastNode |
 | `LAT ` | mLatitude |
+| `LATH` | mLastAuth |
 | `LATI` | mLastActiveTime, mLastUpdateTime |
+| `LB  ` | mLeaderboardType |
 | `LBID` | mBoardId, mMembersBlazeIds, mOwnersBlazeIds |
 | `LBRD` | mLeaderboard |
 | `LBRW` | mTopNList |
@@ -495,35 +621,42 @@ Tag to 24-bitowa wartosc rozpakowywana na 4 znaki po 6 bitow (0 = spacja). To do
 | `LDVC` | mLegalDocVersion |
 | `LEAG` | mLeagueId |
 | `LEFT` | mSecLeft |
+| `LEKY` | mEventKeyType |
+| `LEPV` | mEventParams |
 | `LEVE` | mLevel |
 | `LEVL` | mLevel |
 | `LFPJ` | mIsLockableForPreferredJoins, mLockedForPreferredJoins |
 | `LGAM` | mGames, mSwapPlayers, mSwapPlayersTeam |
 | `LGID` | mLeagueId |
 | `LGRC` | mColumnValues, mColumns |
-| `LGTM` | mLastGameTime |
+| `LGTM` | mLastGameTime, mLastGameTimeOffset |
 | `LICE` | mResult |
 | `LICN` | mLicenseReports |
 | `LID ` | mBlazeId, mId, mListIdentification, mNewLeaderId |
 | `LIDS` | mListIdentificationVector |
+| `LIMI` | mLimit |
 | `LIMT` | mLimit |
 | `LIPA` | mClosedImagePath |
-| `LIST` | mAdminChangeEventList, mCategories, mCategorySummaries, mChallengeList, mContexts, mLeaderboardSummaries, mList, mRecords, mServers, mStatKeyColumns |
+| `LIST` | mAdminChangeEventList, mCategories, mCategorySummaries, mChallengeList, mContexts, mLeaderboardSummaries, mList, mMyList, mRecords, mServers, mSpecialGuestList, mStatKeyColumns, mViewColumns |
 | `LKRS` | mContentInfo, mContentInfoList, mContentInfoMap |
 | `LLOG` | mLastLoginDateTime |
 | `LLUD` | mLastLocaleUsed |
 | `LMAP` | mListMembersVector, mMachineLoadCapacityMap |
 | `LMID` | mListMemberId, mListMemberInfoVector |
 | `LMS ` | mMaxSize |
+| `LN  ` | mLanguage |
 | `LNM ` | mListName |
-| `LOAD` | mPayload |
-| `LOC ` | mAccountLocale, mLocale, mLocation |
+| `LNP ` | mNumLatencyProbes |
+| `LOAD` | mLoad, mPayload |
+| `LOC ` | mAccountLocale, mClientLocale, mLocale, mLocation |
 | `LOCL` | mLocale |
 | `LOCN` | mBuildLocation |
+| `LOID` | mLogoId |
 | `LON ` | mLongitude |
 | `LOSE` | mLoser |
 | `LOSR` | mLoser |
 | `LOSS` | mLosses |
+| `LOTP` | mLogoutType |
 | `LPMP` | mClubPetitionListMap |
 | `LSDT` | mListsInfo |
 | `LSGR` | mLastGameResult |
@@ -532,17 +665,24 @@ Tag to 24-bitowa wartosc rozpakowywana na 4 znaki po 6 bitow (0 = spacja). To do
 | `LSOP` | mLastOppo |
 | `LSPT` | mLobbySkillPoints |
 | `LTAL` | mLongestTimeAlive |
+| `LTPS` | mPingSiteInfoByAliasMap |
+| `LTYP` | mLookupType |
 | `LUDT` | mLastUpdateTime |
+| `LUPD` | mLastSeasonLevelUpdate |
 | `LVL ` | mLevel |
 | `LVLI` | mLevelId, mLevelSpId |
 | `LVLS` | mLevelSpTargets |
 | `MAC ` | mMacAddress |
 | `MACI` | mMachineId |
-| `MAIL` | mEmail |
-| `MAP ` | mAdminTypeListByContextMap, mMap, mMapId, mMapName |
+| `MAIL` | mEmail, mEmailOrOriginPersona |
+| `MALI` | mManagedLifecycle |
+| `MAMC` | mMaxMemberCount |
+| `MAP ` | mAdminTypeListByContextMap, mMap, mMapId, mMapName, mMyMap |
 | `MAPR` | mMapRotation |
+| `MAPS` | mMapList |
 | `MASA` | mMaxSizeAllowed |
 | `MASK` | mMaskBits, mNetMask |
+| `MATR` | mMeshAttribs |
 | `MAX ` | mMax, mMaximumRecordSize |
 | `MAXA` | mMaxAllowed |
 | `MAXF` | mMaxPossibleFitScore |
@@ -556,26 +696,33 @@ Tag to 24-bitowa wartosc rozpakowywana na 4 znaki po 6 bitow (0 = spacja). To do
 | `MBER` | mClubMember |
 | `MBID` | mUserId |
 | `MBMA` | mMaxBookmarksAllowed |
+| `MBOS` | mOnlineStatus |
 | `MBUF` | mMonthlyBuffer |
+| `MCAP` | mMaxPlayerCapacity |
 | `MCMP` | mCountMap |
-| `MCNT` | mCount |
+| `MCNT` | mCount, mMaxResultCount, mMultiUseCount |
+| `MCON` | mMaxConnections |
 | `MDAT` | mMemberData |
 | `MDAY` | mMonthlyDay |
 | `MDNF` | mMyDNFValue |
+| `MDTY` | mMetaDataType |
 | `MEDL` | mTargetMedal |
 | `MEID` | mMeBlazeId |
 | `MEMB` | mPlaygroupMemberInfoList |
 | `MEML` | mListMemberInfoVector |
 | `MESG` | mMessage |
-| `MESS` | mResponseMessage |
+| `MESS` | mMessage, mResponseMessage |
 | `META` | mClientMetaData, mIncludeMetadata, mMeta, mMetaData, mMetadata |
+| `METD` | mMetaData |
 | `METR` | mMetricName |
+| `MFLG` | mMultiUseFlag |
 | `MGID` | mMessageId |
 | `MGRR` | mMaxGameReport |
 | `MHOU` | mMonthlyHour |
-| `MID ` | mMachineId, mMatchId |
+| `MID ` | mMachineId, mMapRotationId, mMatchId |
 | `MIDS` | mMessageIds |
 | `MILE` | mMilestoneReports |
+| `MIMC` | mMinMemberCount |
 | `MIME` | mContentType |
 | `MIN ` | mMin, mMinimumRecordSize |
 | `MIND` | mMinDigits |
@@ -585,15 +732,18 @@ Tag to 24-bitowa wartosc rozpakowywana na 4 znaki po 6 bitow (0 = spacja). To do
 | `MINS` | mMinFreePlayerSlots, mMinLength, mMinTotalPlayerSlots |
 | `MINU` | mMinUpperCharacters |
 | `MISS` | mMisses |
-| `MLST` | mMachineIdList, mMapRotations, mMaps, mPlaygroupMemberInfoList, mRegisteredMachineList |
+| `MLIM` | mMaxMembers |
+| `MLMT` | mMultiUseLimit |
+| `MLST` | mBlazeIds, mMachineIdList, mMapRotations, mMaps, mPlaygroupMemberInfoList, mRegisteredMachineList |
 | `MLY ` | mCurrentMonthlyPeriodId |
 | `MMAP` | mMembershipMap |
 | `MMBR` | mClubMember |
+| `MMSC` | mMinMemberOnlineStatusCounts |
 | `MMSN` | mNumOfMatchmakingSession |
 | `MNAP` | mVariableValueMap |
 | `MOD ` | mCustomModRuleCriteria |
 | `MODC` | mModsCount |
-| `MODE` | mGameMode, mMode |
+| `MODE` | mGameMode, mMode, mSessionMode |
 | `MODR` | mModRuleCriteria |
 | `MODS` | mDesiredModRegister, mMod, mMods |
 | `MODU` | mModsUsed |
@@ -603,8 +753,10 @@ Tag to 24-bitowa wartosc rozpakowywana na 4 znaki po 6 bitow (0 = spacja). To do
 | `MOSC` | mMemberOnlineStatusSum |
 | `MOSL` | mMemberOnlineStatusFilter |
 | `MOSM` | mStatus |
+| `MOST` | mMemberOnlineStatus |
 | `MRET` | mMonthlyRetention |
 | `MRID` | mMapRotationId |
+| `MRMX` | mMaxMapRotationEntries |
 | `MSCO` | mMemberOnlineStatusCounts |
 | `MSET` | mMailSettings |
 | `MSG ` | mErrMessage, mMessage |
@@ -614,23 +766,28 @@ Tag to 24-bitowa wartosc rozpakowywana na 4 znaki po 6 bitow (0 = spacja). To do
 | `MSLI` | mMsgList |
 | `MSLT` | mMessages |
 | `MSSS` | mStatus |
+| `MSST` | mMembershipStatus |
+| `MSTM` | mMembershipSinceTime |
 | `MSTR` | mMasterInstance |
-| `MSTY` | mMessageId |
+| `MSTY` | mMessageId, mMessageType |
 | `MTDF` | mVariableTdfs |
 | `MTPL` | mPurpose |
+| `MTYP` | mHostMigrationType |
 | `MUBF` | mMutualFriends |
 | `MUED` | mMyUEDValue |
 | `MUTA` | mMutualAction |
 | `MXEV` | mMaxEvents |
-| `MXRC` | mMaxResultCount |
+| `MXRC` | mLimit, mMaxResultCount |
 | `MXRM` | mMaxUserRooms |
 | `MXRV` | mMaxRivalsPerClub |
-| `NAME` | mBoardName, mClubName, mEntityName, mEntityNames, mFolderName, mGroupName, mHostName, mName, mNodeName, mOptInName, mRecord, mRuleName, mServiceName, mSourceName, mStatNames |
+| `NAME` | mBoardName, mClubName, mEntityName, mEntityNames, mFolderName, mGroupName, mHostName, mInstanceName, mName, mNodeName, mOptInName, mParamName, mPlayerName, mRecord, mRuleName, mServiceName, mSourceName, mStatNames |
 | `NASP` | mPersonaNamespace |
 | `NAT ` | mHostBalancingRulePrefs |
 | `NATN` | mNationReports |
+| `NATT` | mNatType |
 | `NDID` | mNodeId |
 | `NEXP` | mNumExpandedRooms |
+| `NEXT` | mTn |
 | `NGD ` | mNumberOfGamesToBeDownloaded |
 | `NITR` | mNitrousLevel |
 | `NLMP` | mLocalizedNewsListMap, mPingSiteLatencyByAliasMap |
@@ -648,35 +805,52 @@ Tag to 24-bitowa wartosc rozpakowywana na 4 znaki po 6 bitow (0 = spacja). To do
 | `NOMM` | mNumOfMatchmakingSessions |
 | `NOMP` | mNumOfMatchedPlayers |
 | `NOOK` | mNoToggleOk |
+| `NPRL` | mParamList |
 | `NPSI` | mNpSessionId |
 | `NQOS` | mNetworkQosData, mQosData |
+| `NRES` | mServerNotResetable |
+| `NSIS` | mStringId |
+| `NSNM` | mNameSpaceName |
+| `NSOT` | mSortType |
 | `NSPC` | mNamespaceName |
 | `NSUG` | mNumberSuggestions |
 | `NTID` | mNewTeamId |
 | `NTIE` | mTie |
+| `NTOP` | mNetworkTopology |
 | `NTOS` | mNeedsLegalDoc |
+| `NTXT` | mText |
 | `NUID` | mNucleusId |
 | `NUM ` | mCompletedEventCount, mNum, mNumNotifications |
 | `NUMP` | mNumPlayers |
 | `NUMR` | mNumRecords |
 | `NUQN` | mNonUniqueName |
+| `NWCC` | mContentCreator |
+| `NWFL` | mFlags |
+| `NWID` | mNewsId |
 | `NWIN` | mWin |
 | `NWLI` | mClubNews, mLocalizedNewsList |
+| `NWTY` | mType |
 | `OCAT` | mOnlineCategory |
 | `OCD ` | mNumOfOnlineClubsByDomain |
 | `OCM ` | mNumOfOnlineClubMembers |
+| `ODMD` | mOrderMode |
 | `OFFL` | mLoadOfflineUED |
 | `OFFS` | mAthleteReports, mOffendingString, mOffensiveAthleteReports, mOffensivePlayerStats, mOffset |
 | `OFRC` | mOffset |
-| `OID ` | mBlazeObjectId |
+| `OFST` | mOffSet |
+| `OGHI` | mGameCreatorId |
+| `OID ` | mBlazeObjectId, mOwnerId |
 | `OIDS` | mOfferIds |
+| `OJID` | mObjectId |
 | `OLBD` | mOnlineLeaderboard |
 | `OMAX` | mMaxOfferEnumSize |
 | `OMD ` | mNumOfOnlineClubMembersByDomain |
 | `ONL ` | mUseOnlineStats |
 | `ONLI` | mOnline |
+| `OOSN` | mExOwnersNewStatus |
 | `OP  ` | mOperator |
-| `OPER` | mRemove |
+| `OPEN` | mPlaygroupJoinability |
+| `OPER` | mOperation, mRemove |
 | `OPID` | mOppoClubId |
 | `OPNM` | mLastOppoName |
 | `OPT ` | mOptIn |
@@ -684,6 +858,8 @@ Tag to 24-bitowa wartosc rozpakowywana na 4 znaki po 6 bitow (0 = spacja). To do
 | `OPT3` | mThirdPartyEmailAllowed, mThirdPartyOptin |
 | `OPTF` | mEmailOptInFlags |
 | `ORAT` | mBytesOut |
+| `ORDM` | mOrderMode |
+| `ORDT` | mOrderType |
 | `ORIG` | mOriginPersonaId |
 | `OTHR` | mOthers |
 | `OTID` | mOldTeamId |
@@ -694,19 +870,19 @@ Tag to 24-bitowa wartosc rozpakowywana na 4 znaki po 6 bitow (0 = spacja). To do
 | `OWDS` | mDescription |
 | `OWID` | mFolderId |
 | `OWNM` | mName |
-| `OWNR` | mOwner, mOwners |
+| `OWNR` | mOwner, mOwnerBlazeId, mOwners |
 | `PAD ` | mPad |
 | `PARM` | mContentParams, mParameters, mStoryParamsMap |
 | `PART` | mOfflineParticipantList |
 | `PASS` | mPassed, mPassword |
-| `PATT` | mAttribs |
+| `PATT` | mAttribs, mHostPlayerAttribs, mPlayerAttribs |
 | `PBST` | mPb |
 | `PCAP` | mMaxPlayerCapacity, mMaxPlayerCount, mSlotCapacities |
 | `PCAT` | mPresetSettingsCategories, mProductCatalog, mProfileInfoCategory |
 | `PCD ` | mPurchasingComponentData |
 | `PCID` | mPurchasingComponentId |
 | `PCLS` | mPlayerClass |
-| `PCNT` | mDesiredPlayerCount, mPlayerCountRuleCriteria, mProductCount, mTeamMinSize, mTeamMinSizeAccepted |
+| `PCNT` | mDesiredPlayerCount, mPlayerCountRuleCriteria, mPlayerCounts, mProductCount, mTeamMinSize, mTeamMinSizeAccepted |
 | `PCTF` | mPlayerSlotUtilizationRuleCriteria |
 | `PCTK` | mPCLoginToken |
 | `PCTP` | mCurrencyType |
@@ -719,29 +895,36 @@ Tag to 24-bitowa wartosc rozpakowywana na 4 znaki po 6 bitow (0 = spacja). To do
 | `PDRL` | mProductVector |
 | `PDRN` | mQuantity |
 | `PDTL` | mPersonaDetails |
+| `PEAC` | mPetitionAcceptance |
 | `PEID` | mPersonaId |
 | `PELM` | mPermissionsByComponent |
-| `PENA` | mRivalName |
-| `PERM` | mAccessPermission, mOriginPermissions, mPermissionByActionTypeMap, mPermissions, mPermissionsByAdminTypeMap |
-| `PERS` | mExtName, mPersona |
+| `PENA` | mPersonaName, mRivalName |
+| `PEND` | mIncludePending |
+| `PERM` | mAccessPermission, mOriginPermissions, mPermission, mPermissionByActionTypeMap, mPermissionFlag, mPermissions, mPermissionsByAdminTypeMap |
+| `PERP` | mPersonaNamePattern |
+| `PERS` | mExtName, mPersona, mWithPersona |
 | `PF  ` | mPf |
 | `PGID` | mId, mPersistedGameId, mPlaygroupId |
 | `PGKY` | mPlaygroupKey |
 | `PGN ` | mNumOfPlaygroup |
 | `PGPS` | mPlaygroupInfoList |
 | `PGRP` | mPlaygroupInfo |
+| `PGSC` | mPersistedGameIdSecret |
+| `PGSR` | mPersistedGameIdSecret |
 | `PHID` | mPlatformHostId |
-| `PHST` | mPlatformHostSlotId |
-| `PID ` | mAdminPlayerId, mBlazeId, mId, mPackId, mPackKey, mPersonaId, mPid, mPidId, mPlayerId, mProductId, mPurchaseId |
+| `PHST` | mPlatformHostInfo, mPlatformHostSlotId |
+| `PID ` | mAdminPlayerId, mBlazeId, mId, mPackId, mPackKey, mPersonaId, mPid, mPidId, mPlayerId, mPresetId, mProductId, mPurchaseId |
 | `PIDI` | mPidId |
 | `PIDL` | mPackKeyErrorList, mPackKeyList, mPersistedGameIdList, mPlayerIdList |
+| `PIDX` | mPageIndex |
 | `PIJF` | mPetitionIfJoinFails |
 | `PILD` | mLegalDocGameIdentifier |
 | `PINF` | mList, mPersona, mPersonaInfo, mPersonas |
 | `PIPN` | mNumOfPlayersInPlaygroup |
 | `PJID` | mProjectId |
 | `PKEY` | mPackKey, mPrimaryKey |
-| `PLAT` | mDoubleSP, mPlates, mPlatform |
+| `PKLS` | mPackKeyList |
+| `PLAT` | mClientPlatform, mDoubleSP, mExternalSystemId, mPlates, mPlatform |
 | `PLAY` | mNumPlayers, mPlaylist, mPlaylistSimplified |
 | `PLCN` | mPlayerCountRuleStatus |
 | `PLEN` | mPrefixLength |
@@ -750,16 +933,19 @@ Tag to 24-bitowa wartosc rozpakowywana na 4 znaki po 6 bitow (0 = spacja). To do
 | `PLID` | mPlatformUserID, mPlayerBlazeIdList |
 | `PLOC` | mPlatformLocale |
 | `PLSC` | mPlayerScore |
-| `PLST` | mPackList, mPersonaDetailsList, mPingSites, mPlayerIds, mPlaygroupIdList, mPlaylist, mPreferredList, mPresets, mProductAssociationList, mPurchaseList |
+| `PLST` | mAdditionalPlayerIdList, mPackList, mPersonaDetailsList, mPingSites, mPlayerIdList, mPlayerIds, mPlaygroupIdList, mPlaylist, mPreferredList, mPresets, mProductAssociationList, mPurchaseList |
 | `PLUT` | mPlayerSlotUtilizationRuleStatus |
+| `PLVL` | mPreviousSeasonLevel |
 | `PLYR` | mPlayerReports, mPlayers |
 | `PLYT` | mPlayTime |
 | `PMAL` | mParentalEmail |
-| `PMAX` | mMaxPercentFullAccepted, mMaxPlayerCountAccepted, mMaxTotalPlayerSlotsAccepted |
+| `PMAX` | mMaxPercentFullAccepted, mMaxPlayerCapacity, mMaxPlayerCountAccepted, mMaxTotalPlayerSlotsAccepted |
 | `PMC ` | mPartnersMayContact |
+| `PMIG` | mMigrationType |
 | `PMIN` | mMinPercentFullAccepted, mMinPlayerCount, mMinPlayerCountAccepted, mMinTotalPlayerSlotsAccepted |
+| `PML ` | mParentalEmail |
 | `PNAM` | mName, mPairName, mPersonaName |
-| `PNET` | mNetworkAddress |
+| `PNET` | mNetworkAddress, mPlayerNetworkAddress |
 | `PNID` | mIsBindPersona |
 | `PNTS` | mPoints |
 | `POFF` | mPeriodOffset |
@@ -783,13 +969,15 @@ Tag to 24-bitowa wartosc rozpakowywana na 4 znaki po 6 bitow (0 = spacja). To do
 | `PPSR` | mPingSiteRule |
 | `PPSZ` | mPageSize |
 | `PPT ` | mPriceType |
+| `PRCA` | mProductCatalog |
 | `PREF` | mPrefixName |
-| `PRES` | mPreset, mSessionChanging, mUsesPresence |
+| `PRES` | mNewPresenceMode, mPresenceMode, mPreset, mSessionChanging, mUsesPresence |
 | `PRID` | mPairId, mParentId, mPeriodId, mPresenceId, mProductId |
 | `PRIO` | mPriority |
 | `PRIV` | mPrivacyPolicyUri |
 | `PRMF` | mFloatParamList |
 | `PRMI` | mInt32ParamList |
+| `PRMN` | mProductName |
 | `PRMS` | mParams, mStringParamList |
 | `PRMU` | mUint64ParamList |
 | `PRNT` | mParentalEmail |
@@ -798,13 +986,16 @@ Tag to 24-bitowa wartosc rozpakowywana na 4 znaki po 6 bitow (0 = spacja). To do
 | `PROF` | mConnectionProfile, mProofKey, mUserProfileInfo, mUserProfiles |
 | `PROG` | mProgress |
 | `PROS` | mGameRoster |
+| `PROT` | mProtocol |
 | `PRPO` | mProgressionPosition |
+| `PRVT` | mPrivateReport |
 | `PSA ` | mAddress |
 | `PSAL` | mPingSiteAlias |
 | `PSAS` | mPingSiteAlias |
 | `PSCM` | mPosterComparisons |
 | `PSET` | mPreferredListId, mPresetSettings |
-| `PSID` | mBlazeId |
+| `PSID` | mBlazeId, mPersistedGameId |
+| `PSIZ` | mPageSize |
 | `PSLM` | mLatencyList |
 | `PSLS` | mPingSites |
 | `PSP ` | mPort |
@@ -812,17 +1003,21 @@ Tag to 24-bitowa wartosc rozpakowywana na 4 znaki po 6 bitow (0 = spacja). To do
 | `PSRS` | mPingSiteRuleStatus |
 | `PSS ` | mPssConfig |
 | `PSTR` | mStrength |
-| `PSWD` | mPassword |
+| `PSWD` | mPassword, mPasswordOption |
 | `PTDE` | mPetitionDetail |
+| `PTFM` | mPlatform |
+| `PTNA` | mPetitionAcceptance |
 | `PTPE` | mType |
 | `PTS ` | mPoints |
-| `PTYP` | mPeriodType, mPeriodTypes |
+| `PTYP` | mPeriodType, mPeriodTypes, mType |
 | `PUHR` | mPurgeHour |
 | `PUR ` | mPurchase |
 | `PURI` | mPersonaUri, mPidUri |
 | `PVAL` | mPresetSettingsRanges, mPseudoValue |
 | `PYLD` | mPayload |
 | `QANT` | mQuantity |
+| `QCAP` | mQueueCapacity |
+| `QCNT` | mQueueCount |
 | `QDAT` | mQosData |
 | `QNAM` | mName, mQueryName |
 | `QOSS` | mQosSettings |
@@ -831,29 +1026,36 @@ Tag to 24-bitowa wartosc rozpakowywana na 4 znaki po 6 bitow (0 = spacja). To do
 | `QUEU` | mGameQueue |
 | `QVAR` | mQueryVarValues |
 | `RANK` | mRank, mRankedGameRulePrefs |
-| `RATE` | mDataRates, mRating, mRatings |
+| `RATE` | mDataRates, mRate, mRating, mRatings |
 | `RATG` | mRating |
 | `RATM` | mDataRatesPerCategoryPerContext, mErrorsPerCategoryPerContext |
 | `RBTY` | mRacerBounty |
+| `RC  ` | mReasonCode |
 | `RCAP` | mCapacity, mRoleCapacity |
+| `RCDC` | mRecordDescription |
 | `RCID` | mRecordId, mRecordIdList |
 | `RCIN` | mRecord |
 | `RCNA` | mRecordName |
-| `RCNT` | mMaxRecordsPerUser |
+| `RCNM` | mRecordName |
+| `RCNT` | mMaxRecordsPerUser, mRecordCountByName, mRecordNamesCountByCategory, mTotalRatingCount |
 | `RCRE` | mResourceCreated |
 | `RCRT` | mMultiRoleCriteria, mRoleEntryCriteriaMap |
 | `RDAT` | mRoomData |
 | `RDID` | mRoadId |
-| `REAS` | mGameSetupReason, mReasonCode, mStatusReasonCode |
+| `RDU ` | mRetrieveTokenUsing |
+| `REAS` | mDestructionReason, mGameSetupReason, mKickedReason, mPlayerRemovedReason, mReason, mReasonCode, mStatusReasonCode |
 | `REBS` | mRebs |
 | `REC ` | mRecordName |
 | `RECM` | mRecommendationsList |
-| `RECU` | mRecurrence |
+| `RECS` | mNumOfRecords |
+| `RECU` | mRecurrence, mRecursiveSearch |
+| `RECV` | mReceiverId |
+| `REFF` | mReferenceFlag |
 | `REM ` | mRemovedListMemberIdVector |
 | `REMV` | mRemovedGameList |
 | `REP ` | mReputationRulePrefs |
 | `REPO` | mTdf |
-| `REPR` | mReports |
+| `REPR` | mReports, mReputationRequirement |
 | `REPS` | mAccoladeReports, mLicenseReports, mMilestoneReports |
 | `REQ ` | mSpeedwalls |
 | `REQP` | mRequirePreferredPlayer |
@@ -861,7 +1063,10 @@ Tag to 24-bitowa wartosc rozpakowywana na 4 znaki po 6 bitow (0 = spacja). To do
 | `RES ` | mBountyScores |
 | `RESP` | mInGameRealtimePresenceResponseList, mInGameRichPresenceResponseList, mSuccess |
 | `REST` | mRecordSettings |
+| `RETU` | mRetrieveUsing |
+| `RETY` | mRecommendationType |
 | `REX ` | mJoinedReservedExternalPlayers |
+| `RGID` | mReservedDynamicDSGameId |
 | `RIBL` | mRivalBlazeId |
 | `RID ` | mRowId |
 | `RILI` | mRivalList |
@@ -879,24 +1084,29 @@ Tag to 24-bitowa wartosc rozpakowywana na 4 znaki po 6 bitow (0 = spacja). To do
 | `RNFO` | mRoleInformation |
 | `RNME` | mRuleName |
 | `ROAD` | mRoad |
-| `ROLE` | mPlayerRole |
+| `ROLE` | mPlayerRole, mRoleName |
 | `ROLL` | mRollover |
+| `ROST` | mGameRoster |
 | `ROWS` | mPlaylist, mSpeedWall, mSpeedwall, mSpeedwalls |
-| `RPRT` | mInitialReportTypes |
+| `RPRS` | mReceiverPersona |
+| `RPRT` | mGameReport, mInitialReportTypes |
 | `RPTS` | mRewardPoints, mRivalPoints, mRp |
 | `RPVC` | mRequiresClientVersionCheck |
 | `RQST` | mParams |
 | `RRDA` | mRankRuleStatus |
+| `RRST` | mRoleJoinRoster, mRoleRosters |
 | `RSIZ` | mMaxRecordPayloadSize |
-| `RSLT` | mResults |
+| `RSLT` | mCreateResult, mMatchmakingResult, mResults |
 | `RSMP` | mResultMap |
+| `RSN ` | mReason |
 | `RSRC` | mRegistrationSource |
-| `RSTA` | mRankedStat |
+| `RSTA` | mPlayerRosterA, mRankedStat |
+| `RSTB` | mPlayerRosterB |
 | `RSTR` | mTeamRoster |
 | `RSZR` | mRosterSizeRulePrefs |
 | `RTIE` | mRivalTies |
 | `RTNM` | mRootName |
-| `RTYP` | mRowTypeName |
+| `RTYP` | mReturnType, mRowTypeName |
 | `RULE` | mRoadRules |
 | `RVAL` | mMatchedRankFlags |
 | `RVCN` | mRivalCount |
@@ -909,41 +1119,66 @@ Tag to 24-bitowa wartosc rozpakowywana na 4 znaki po 6 bitow (0 = spacja). To do
 | `RWOT` | mOtherRawStats |
 | `RWSP` | mRewardSp |
 | `RWST` | mRankedRawStat |
+| `SALT` | mPasswordSalt |
+| `SAMX` | mMaxServerAdmins |
 | `SBID` | mSandboxId |
+| `SBLB` | mSettingsBlob |
+| `SBMX` | mMaxServerBans |
+| `SCAT` | mCategory |
+| `SCG ` | mSourceGroupId |
 | `SCHS` | mScheduledSpec |
 | `SCID` | mItemScopeValue, mScid |
 | `SCOR` | mBestAccolade, mPlayerScores, mScore |
 | `SCRE` | mScore |
 | `SCRI` | mSubscribe |
 | `SCRS` | mScores |
+| `SCTX` | mTitleContextString |
 | `SDAT` | mBlob |
 | `SDES` | mShortDesc |
 | `SDIF` | mMaxTeamSizeDifferenceAccepted, mMaxTeamSizeDifferenceAllowed |
 | `SDLY` | mSendDelay |
+| `SDR ` | mDisconnectReason |
 | `SDSC` | mShortDesc |
+| `SEAL` | mSeasonLevel |
+| `SEAT` | mReservedPlayerSeats |
 | `SECU` | mSecure, mSecurePut |
+| `SEED` | mSharedSeed |
+| `SEID` | mUserSessionId |
+| `SEND` | mSenderId |
+| `SEOP` | mOptions |
 | `SERV` | mServer, mServes |
 | `SESS` | mSessionID, mSessionInfo |
 | `SETT` | mServerSettings, mWriteBest |
+| `SEXP` | mServerExpiredPeriod |
+| `SEXT` | mServerExtensionPeriod |
+| `SFLG` | mFlags |
+| `SGDA` | mStartGrantDate |
 | `SGRT` | mStartGrantDate |
 | `SHIP` | mDefaultShippingAddressUri |
 | `SHOT` | mShotsFired |
 | `SHOW` | mShow, mShowPersona |
-| `SID ` | mServerId, mServiceId, mSlotId, mUsersessionidList |
+| `SID ` | mExternalSessionId, mServerId, mServiceId, mSlotId, mUsersessionidList |
 | `SIGN` | mSignature |
 | `SIP ` | mHostname, mSrcIp |
 | `SIPA` | mOpenImagePath |
 | `SIR ` | mRequest |
 | `SITE` | mSiteName |
-| `SIZE` | mGameSizeRulePrefs, mMaxSize, mSize |
+| `SIZE` | mGameSizeRulePrefs, mMaxSize, mPayloadSize, mSize |
+| `SKCT` | mSkipCalcDbRows |
+| `SKDS` | mSkillValueOverride |
 | `SKEY` | mKey, mSecretKey, mSessionKey |
 | `SKIP` | mSkipMigration |
 | `SKLZ` | mSkillRulePrefsList |
+| `SKMD` | mSkipMetadata |
 | `SKMN` | mMinSkillAccepted |
 | `SKMX` | mMaxSkillAccepted |
+| `SKRN` | mRuleName |
 | `SKRP` | mSkippedReport |
 | `SKRS` | mSkillRuleStatusMap |
-| `SLST` | mSubCategoryList |
+| `SLEN` | mSessionLength |
+| `SLID` | mRequestedSlotId |
+| `SLOT` | mJoiningSlotType, mNewHostSlotId, mRequestedSlotType, mSlotType |
+| `SLST` | mServerList, mSettings, mSubCategoryList |
 | `SLVL` | mSeasonLevel |
 | `SMAL` | mShowEmail |
 | `SMAP` | mDataMap, mLocalizedStrings, mStringMap |
@@ -952,61 +1187,90 @@ Tag to 24-bitowa wartosc rozpakowywana na 4 znaki po 6 bitow (0 = spacja). To do
 | `SNAM` | mServiceName, mStatName |
 | `SNET` | mSubNet |
 | `SNMS` | mServiceNames |
+| `SNSA` | mSideAName |
+| `SNSB` | mSideBName |
 | `SOID` | mScheduledId |
+| `SORT` | mOrderBy |
+| `SOUR` | mSource |
 | `SOVR` | mSeasonRolloverTime |
 | `SP  ` | mSp |
 | `SPAM` | mIsOfLegalContactAge |
+| `SPCA` | mSkipPasswordCheckAcceptance |
+| `SPCL` | mSpeedwallColumn |
+| `SPCR` | mSplashScreen |
 | `SPCT` | mSendPercentage |
 | `SPDF` | mIsDefault |
+| `SPGN` | mSpecialGroupName, mSpecialGuestGroupName |
+| `SPGT` | mSpecialGuestType |
 | `SPID` | mSpecialEventId |
+| `SPLA` | mSplashScreenFileName |
+| `SPNM` | mSpeedwallName |
 | `SPRQ` | mLevelSpRequired |
+| `SPRS` | mSenderPersona |
 | `SPRT` | mSrcPort |
 | `SPWA` | mSpeedWallIDToSpeedWallMap, mSpeedwalls |
 | `SPWL` | mSpeedwall |
 | `SQID` | mSequenceID |
 | `SRCE` | mSource |
+| `SREM` | mServerReminderPeriod |
 | `SRNK` | mStartingRank |
 | `SRSN` | mStatusReasonCode |
 | `SRVR` | mServerReports |
 | `SSID` | mSourceSessionIds |
+| `SSTE` | mSeasonRolloverState |
 | `ST  ` | mStateRegion |
-| `STAF` | mStatsFlt |
-| `STAI` | mStatsInt |
+| `STAF` | mMiscFlt, mStatsFlt |
+| `STAI` | mMiscInt, mSpecialGuestRealNames, mStatsInt |
 | `STAR` | mStart |
-| `STAS` | mStatsStr |
-| `STAT` | mEntityStatsList, mOtherStats, mStatDescs, mStatNames, mStatValues, mStats, mStatus |
+| `STAS` | mMiscStr, mStatsStr, mStatus |
+| `STAT` | mEmailStatus, mEntityStatsList, mNewStatus, mOnlineStatus, mOtherStats, mPlayerNetConnectionStatus, mPlayerState, mRecordStat, mStatDescs, mStatNames, mStatValues, mState, mStats, mStatus |
+| `STDA` | mStartTerminationDate |
 | `STIL` | mTitles |
 | `STIM` | mServerTime, mUseServerTime |
 | `STMN` | mExternalSessionTemplateName |
+| `STOB` | mStoryStringBottomID |
 | `STOR` | mPosterStories, mStories, mStory |
+| `STOT` | mStoryStringTopID |
 | `STRC` | mStatusReasonCode |
+| `STRE` | mStatusReasonCode |
 | `STRL` | mStringstoVerify |
 | `STRM` | mStartTerminationDate, mVerifyStringResult |
 | `STRP` | mStringParamList |
-| `STRT` | mRankStart, mSeasonStartTime, mStart |
+| `STRT` | mRankStart, mSeasonStartTime, mSessionStart, mStart, mStartDate, mStreet |
 | `STS ` | mStatValues |
+| `STST` | mUploadStatus |
 | `STTE` | mGameStateField |
-| `STTS` | mOverwatchStats |
+| `STTS` | mOverwatchStats, mStatus |
+| `STYP` | mRecordStatType, mServerType, mSlotType |
 | `SUBJ` | mSubject |
-| `SUBL` | mSubContentNames |
+| `SUBL` | mSubContentInfos, mSubContentNames |
 | `SUBR` | mSubrecord, mSubrecordUpdate |
 | `SUBS` | mSearchString, mSubscribed |
 | `SUCC` | mMbSuccess, mPlayerOnlineList, mSuccess |
 | `SUCD` | mSuicides |
 | `SUGG` | mSuggestions |
+| `SVC ` | mInService |
+| `SVCN` | mServiceName |
 | `SVER` | mServerVersion |
-| `SVID` | mDefaultServiceId, mSid |
+| `SVID` | mDefaultServiceId, mServiceId, mSid |
 | `SVMP` | mStatValueScope |
+| `SVMX` | mMaxServerVips |
 | `SVNM` | mTelemetryServiceName |
+| `SVOR` | mUseSkillValueOverride |
 | `SWID` | mSpeedWallId |
 | `SWIS` | mSpeedWallId, mSpeedWallIds |
+| `TABL` | mTargetBlazeId |
 | `TABN` | mTable |
-| `TAG ` | mTag |
+| `TAG ` | mEntitlementTag, mTag, mTags |
 | `TAGS` | mTags, mTagsIncluded |
+| `TAGU` | mTag |
 | `TALV` | mLongestTimeAlive |
+| `TANA` | mTargetName |
 | `TARG` | mTarget |
 | `TBR ` | mTeamBalanceRulePrefs |
 | `TBRS` | mTeamBalanceRuleStatus |
+| `TCAP` | mTeamCapacity |
+| `TCG ` | mTargetGroupId |
 | `TCKT` | mPS3Ticket |
 | `TCM ` | mNumOfClubMembers |
 | `TCNR` | mTeamCountRulePrefs |
@@ -1015,46 +1279,60 @@ Tag to 24-bitowa wartosc rozpakowywana na 4 znaki po 6 bitow (0 = spacja). To do
 | `TCON` | mTotalCount |
 | `TCOT` | mLegalDocContent |
 | `TCTE` | mIsFree, mIsTopCategory |
+| `TDAY` | mTerminationDate |
 | `TDF ` | mTdf |
 | `TDFL` | mCensusDataList |
 | `TEAM` | mTeam, mTeamSizeRulePrefs |
 | `TELE` | mTelemetryServer |
 | `TERM` | mTerminationDate |
-| `TEXT` | mText |
+| `TEXT` | mContentType, mText |
+| `TFIL` | mTypeFilters |
+| `TGEN` | mTimeGenerated |
 | `TGID` | mTagId |
+| `TGSO` | mTagSearchOperation |
 | `THLD` | mMinFitThresholdName, mRangeOffsetListName, mThresholdName |
 | `THLS` | mThresholdNames |
+| `THST` | mTopologyHostInfo |
 | `TICK` | mTickerServer, mTicketBlob |
 | `TID ` | mTeamId |
-| `TIDS` | mTargetIds |
-| `TIDX` | mPlayerTeamIndex, mTeamIndex |
+| `TIDS` | mTargetIds, mTeamIds |
+| `TIDX` | mJoiningTeamIndex, mPlayerTeamIndex, mTeamIndex |
+| `TIER` | mTi |
 | `TIES` | mTies |
 | `TIID` | mTitleId |
 | `TIMA` | mTimeAnimate, mTimeItemAdded |
 | `TIMD` | mMetadata |
-| `TIME` | mBestTimeMs, mReplayTimes, mSeconds, mTime, mTimeAdded, mTimeMs, mTimeMsTag, mTimestamp |
+| `TIME` | mBestTimeMs, mCurrentTime, mJoinedGameTimestamp, mReplayTimes, mSeconds, mTime, mTimeAdded, mTimeMs, mTimeMsTag, mTimeSent, mTimeout, mTimestamp |
 | `TIML` | mTimestampList |
 | `TIMX` | mTimeItemExpires |
+| `TINF` | mGameBrowserTeamInfoVector |
 | `TIST` | mTimeStampMs |
+| `TITL` | mTitleStringID |
 | `TITX` | mText |
 | `TKDS` | mTakedownStreak |
 | `TKDW` | mTakedowns |
 | `TLPG` | mTotalPages |
 | `TLST` | mFilteredTextList, mTeamDetailsList, mTeamIdVector |
 | `TMAX` | mMaxTeamSizeAccepted |
+| `TMID` | mTeamId |
 | `TMIN` | mMinTeamSizeAccepted |
+| `TMOP` | mTelemetryOpt |
 | `TMSK` | mTouchStatusMask |
 | `TMSR` | mTeamMinSizeRulePrefs |
 | `TMSS` | mTeamMinSizeRuleStatus |
+| `TMST` | mTimestamp |
 | `TMZO` | mTimeZone |
 | `TNC ` | mNumOfClubs |
 | `TOC ` | mNumOfOnlineClubs |
 | `TOCT` | mTotalCount |
-| `TOKN` | mAccessToken, mAuthToken, mXblToken |
+| `TOKN` | mAccessToken, mAuthToken, mToken, mXblToken |
 | `TOPT` | mThirdPartyOptin |
+| `TOSV` | mTosVersion |
 | `TOTB` | mTotalBounty |
 | `TOTL` | mTotalCount, mTotalTimeMs |
 | `TOTS` | mTotalPlayerSlotsRuleCriteria, mTotalPlayerSlotsRuleStatus |
+| `TOTT` | mTt |
+| `TPOT` | mThirdPartyOptin |
 | `TRCH` | mTorchings |
 | `TRGT` | mTargetUsers |
 | `TRM ` | mTableRowMap |
@@ -1065,33 +1343,53 @@ Tag to 24-bitowa wartosc rozpakowywana na 4 znaki po 6 bitow (0 = spacja). To do
 | `TSTM` | mOldestTimestamp, mTimestamp |
 | `TSUI` | mTermsOfServiceUri |
 | `TSZE` | mTeamSize |
-| `TTYP` | mTargetType |
+| `TTYP` | mTargetType, mTokenType |
 | `TUID` | mTargetUserSessionIds |
 | `TURI` | mLegalDocUri |
+| `TVAL` | mSuspendTime, mTimeCreated |
 | `TVER` | mTosVersion |
-| `TYPE` | mAdmin, mBlazeObjectType, mEntityTypeName, mItemType, mListType, mMessageType, mOptinType, mStringType, mType, mUpdateType |
+| `TYPE` | mAction, mActionType, mAdmin, mBlazeObjectType, mClientType, mEntitlementType, mEntityTypeName, mInstanceType, mItemType, mListType, mMessageType, mOptinType, mServerType, mStringType, mTokenType, mType, mUpdateType |
+| `TYPL` | mTypeList |
 | `UAGE` | mIncludeUnderage, mIsUnderage, mUnderagePid |
+| `UAMX` | mMaxAdminServersPerUser |
 | `UATT` | mAttribute, mUserInfoAttribute |
+| `UBFL` | mBlazeFlags |
+| `UBPS` | mUpstreamBitsPerSecond |
 | `UCNT` | mUseCount |
 | `UCRT` | mIsUserCreated |
 | `UCTC` | mUseCountConsumed |
 | `UCTR` | mUseCountRemain |
+| `UDAT` | mUpdateDate |
+| `UDEV` | mDeviceInfo |
+| `UDU ` | mUnderageUser |
 | `UED ` | mUEDRuleCriteriaMap |
 | `UEDS` | mUEDRuleStatusMap |
 | `UFAT` | mUserFirstAuthTime |
-| `UID ` | mAdminUserId, mBlazeId, mId, mUserId |
+| `UFLG` | mFlags |
+| `UFLI` | mMemberFilterList |
+| `UGID` | mUserGroupId |
+| `UID ` | mAdminUserId, mBlazeId, mId, mPlayerSessionId, mUpdaterPlayerId, mUserId |
 | `UINF` | mUserInfo |
 | `UINP` | mUint64ParamList |
 | `UIOP` | mBlazeUserIdOrPersonaName |
 | `UKEY` | mUniqueKey |
 | `ULAT` | mUserLastAuthTime |
+| `ULRC` | mLastRsltCode |
 | `ULST` | mBlazeObjectIdList, mUnlockStringList, mUserDataList, mUserIdList, mUserIdentificationList |
+| `UNAT` | mNatType |
 | `UNDR` | mIsUnderage, mIsUnderageSupported |
 | `UNKV` | mUnknownValue |
-| `UPDT` | mAttributes, mCacheUpdates, mGameList, mStatUpdates, mUpdatedGames, mUpdatedTimestamp, mUpdates |
+| `UOMX` | mMaxOwnedServersPerUser |
+| `UPBY` | mUpdatedBy |
+| `UPDA` | mUpdatedDate |
+| `UPDT` | mAttributes, mCacheUpdates, mGameList, mLastUpdate, mLastUpdateTime, mStatUpdates, mUpdatedGames, mUpdatedTimestamp, mUpdates |
+| `UPRE` | mReason, mUpdateReason |
+| `UPRS` | mHasPresence |
+| `URAT` | mMyRating |
 | `UREA` | mUpdateReason |
 | `URID` | mUserIds |
 | `UROP` | mUserOptions |
+| `URTY` | mRelationType |
 | `USAG` | mUsage |
 | `USCM` | mUserComparisons |
 | `USER` | mJoiningBlazeIds, mUser, mUserInfo, mUserStory |
@@ -1100,15 +1398,20 @@ Tag to 24-bitowa wartosc rozpakowywana na 4 znaki po 6 bitow (0 = spacja). To do
 | `USID` | mUserId, mUserIds, mUserSessionId, mUserSetId |
 | `USPG` | mUseSpecialGuests |
 | `USRM` | mNumUserRooms |
-| `UTXT` | mText, mTextList |
+| `USTA` | mStatus |
+| `USTP` | mUserSessionType |
+| `UTXT` | mFilteredText, mText, mTextList |
 | `UUID` | mUUID |
+| `UURL` | mUploadURL |
+| `UWAN` | mWanIpAddr |
 | `V   ` | mDirtySDKVersion |
 | `VAL ` | mValue |
 | `VALD` | mValid, mValidateDelete |
-| `VALU` | mDesiredValues, mMatchedValues, mOptInValue, mValue, mValues |
+| `VALU` | mAccountId, mBlazeUserId, mDatalessSetupContext, mDesiredRankedGameValue, mDesiredValues, mDesiredVirtualGameValue, mExternalId, mFloatValue, mHostNameAddress, mIndirectJoinGameSetupContext, mIndirectMatchmakingSetupContext, mIntValue, mIpAddress, mIpPairAddress, mMatchedValues, mMatchmakingSetupContext, mOptInValue, mPS3Ticket, mPersona, mPersonaId, mPersonaName, mResetDedicatedServerSetupContext, mStringValue, mValue, mValues, mXboxClientAddress, mXboxId, mXboxServerAddress |
 | `VDAT` | mViewData |
 | `VDCH` | mValidCharacters |
 | `VEHI` | mVehicle |
+| `VER ` | mVersion |
 | `VERS` | mDirtyCertVersion, mMapVersion, mVersion |
 | `VETY` | mVehicleType |
 | `VGRS` | mVirtualGameRuleStatus |
@@ -1121,8 +1424,9 @@ Tag to 24-bitowa wartosc rozpakowywana na 4 znaki po 6 bitow (0 = spacja). To do
 | `VLST` | mVipList |
 | `VMAP` | mSpecMap |
 | `VNAM` | mName, mViewName, mVisualName |
+| `VOIP` | mVoipNetwork, mVoipTopology |
 | `VSTR` | mGameProtocolVersionString |
-| `VVAL` | mMatchedVirtualizedFlags |
+| `VVAL` | mMatchedHostViabilityValue, mMatchedVirtualizedFlags |
 | `VWID` | mViewId |
 | `WBAL` | mBalance |
 | `WBUF` | mWeeklyBuffer |
@@ -1154,14 +1458,17 @@ Tag to 24-bitowa wartosc rozpakowywana na 4 znaki po 6 bitow (0 = spacja). To do
 | `XDDR` | mXnAddr |
 | `XDNF` | mMaxDNFValue |
 | `XDNS` | mDefaultDnsAddress |
+| `XID ` | mXrefId |
 | `XMST` | mAuxMasters |
 | `XNNC` | mXnetNonce |
 | `XP  ` | mXp |
+| `XPAC` | mXpack |
 | `XPTS` | mXp |
-| `XREF` | mExtId |
+| `XREF` | mExtId, mExternalId |
 | `XSES` | mXnetSession |
 | `XSLV` | mAuxSlaves |
 | `XUID` | mXuid |
+| `ZIP ` | mZipCode |
 
 ## Bloki w kolejnosci adresow
 
@@ -4590,4 +4897,1226 @@ COMM  05 20 58 00  mComment
 GRP   05 20 10 00  mGroup
 OWNR  05 20 20 00  mOwner
 SNET  0a 00 30 00  mSubNet
+```
+
+### blok 121 @ 0x000141a2a740 (149 pol)
+
+```
+DPID  16 18 10 00  mDeviceProfileId
+DPIT  04 20 1c 00  mIdType
+DPPT  04 20 18 00  mPlatformType
+DTCR  05 00 20 00  mDateCreated
+DSNM  05 20 18 00  mDisplayName
+DTCR  05 20 40 00  mDateCreated
+LADT  15 18 50 00  mLastAuthenticated
+NSNM  05 20 28 00  mNameSpaceName
+PID   16 18 10 00  mPersonaId
+STAS  04 20 38 00  mStatus
+STRC  04 00 3c 00  mStatusReasonCode
+AMU   0f 18 c0 00  mAnonymousUser
+ASRC  05 20 a0 00  mAuthenticationSource
+CO    05 20 40 00  mCountry
+DOB   05 20 30 00  mDOB
+DTCR  05 20 b0 00  mDateCreated
+GOPT  10 18 88 00  mGlobalOptin
+LATH  05 20 90 00  mLastAuth
+LN    05 20 50 00  mLanguage
+MAIL  05 20 18 00  mEmail
+PML   05 20 70 00  mParentalEmail
+RC    04 20 84 00  mReasonCode
+STAS  04 20 80 00  mStatus
+STAT  04 20 28 00  mEmailStatus
+TOSV  05 20 60 00  mTosVersion
+TPOT  10 18 89 00  mThirdPartyOptin
+UDU   0f 18 c1 00  mUnderageUser
+UID   16 00 10 00  mUserId
+CITY  05 20 28 00  mCity
+CTRY  05 20 48 00  mCountry
+ELEM  01 18 70 00  mProfileInfoElementsByCategory
+GNDR  04 20 68 00  mGender
+STAT  05 20 38 00  mState
+STRT  05 20 18 00  mStreet
+UID   16 18 10 00  mUserId
+ZIP   05 00 58 00  mZipCode
+DSNM  05 20 18 00  mDisplayName
+LAST  15 18 34 00  mLastAuthenticated
+PID   16 18 10 00  mPersonaId
+PLAT  04 20 30 00  mClientPlatform
+STAS  04 20 38 00  mStatus
+XREF  17 00 28 00  mExtId
+ERR   04 20 14 00  mError
+FLD   04 00 10 00  mField
+EXRF  05 20 20 00  mExtRef
+KEY   05 20 10 00  mKeyCode
+MCNT  16 18 68 00  mMultiUseCount
+MFLG  10 18 60 00  mMultiUseFlag
+MLMT  16 18 70 00  mMultiUseLimit
+PRID  05 20 30 00  mProductId
+PRMN  05 20 40 00  mProductName
+STAT  04 20 50 00  mStatus
+UID   16 00 58 00  mUserId
+CTRY  05 20 10 00  mIsoCountryCode
+PTFM  04 00 20 00  mPlatform
+CPFT  04 20 20 00  mPlatform
+CTRY  05 20 10 00  mIsoCountryCode
+FTCH  0f 18 3c 00  mFetchContent
+LANG  05 20 28 00  mIsoLanguage
+TEXT  04 00 38 00  mContentType
+AUTH  05 20 10 00  mAuthToken
+TYPE  04 00 20 00  mTokenType
+RSLT  04 20 10 00  mCreateResult
+SESS  0a 00 18 00  mSessionInfo
+MAIL  05 20 10 00  mEmailOrOriginPersona
+PLAT  04 20 28 00  mClientPlatform
+XREF  17 00 20 00  mExtId
+DEID  15 18 54 00  mDeviceId
+GNAM  05 20 30 00  mGroupName
+PERS  0f 18 58 00  mWithPersona
+PJID  05 20 20 00  mProjectId
+PRID  05 20 10 00  mProductId
+STAT  04 20 50 00  mStatus
+TAG   05 00 40 00  mEntitlementTag
+BUID  18 18 10 00  mUserId
+COUN  05 20 70 00  mUseCount
+DEID  05 20 98 00  mDeviceId
+EXPI  05 20 60 00  mTermination
+GDAY  05 20 a8 00  mGrantDate
+GNAM  05 20 38 00  mGroupName
+ISSE  0f 18 80 00  mIsSearch
+MALI  0f 18 8c 00  mManagedLifecycle
+PERS  0f 18 5c 00  mWithPersona
+PJID  05 20 28 00  mProjectId
+PRCA  04 20 84 00  mProductCatalog
+PRID  05 20 18 00  mProductId
+STAT  04 20 58 00  mStatus
+STRE  04 20 88 00  mStatusReasonCode
+TAG   05 20 48 00  mEntitlementTag
+TYPE  04 00 90 00  mEntitlementType
+BUID  18 18 10 00  mUserId
+COUN  05 20 38 00  mUseCount
+EID   16 18 18 00  mEntitlementId
+EXPI  05 20 28 00  mTermination
+STAT  04 20 20 00  mStatus
+STRC  04 20 48 00  mStatusReasonCode
+VERS  15 00 4c 00  mVersion
+DEVI  05 20 a0 00  mDeviceUri
+GDAY  05 20 60 00  mGrantDate
+GNAM  05 20 28 00  mGroupName
+ID    17 18 10 00  mId
+ISCO  0f 18 90 00  mIsConsumable
+PID   16 18 88 00  mPersonaId
+PJID  05 20 38 00  mProjectId
+PRCA  04 20 98 00  mProductCatalog
+PRID  05 20 50 00  mProductId
+STAT  04 20 80 00  mStatus
+STRC  04 20 94 00  mStatusReasonCode
+TAG   05 20 18 00  mEntitlementTag
+TDAY  05 20 70 00  mTerminationDate
+TYPE  04 20 84 00  mEntitlementType
+UCNT  15 18 4c 00  mUseCount
+VER   15 00 48 00  mVersion
+BUID  18 18 10 00  mUserId
+EGDA  05 20 d0 00  mEndGrantDate
+EPSN  13 18 5a 00  mPageNo
+EPSZ  13 18 58 00  mPageSize
+ETAG  05 20 68 00  mEntitlementTag
+ETDA  05 20 a8 00  mEndTerminationDate
+GNLS  02 18 18 00  mGroupNameList
+HAUP  0f 18 e0 00  mHasAuthorizedPersona
+PJID  05 20 88 00  mProjectId
+PRID  05 20 78 00  mProductId
+RECU  0f 18 b8 00  mRecursiveSearch
+SGDA  05 20 c0 00  mStartGrantDate
+STAT  04 20 5c 00  mStatus
+STDA  05 20 98 00  mStartTerminationDate
+TYPE  04 00 60 00  mEntitlementType
+EGDA  05 20 d0 00  mEndGrantDate
+EPSN  13 18 52 00  mPageNo
+EPSZ  13 18 50 00  mPageSize
+ETAG  05 20 60 00  mEntitlementTag
+ETDA  05 20 a0 00  mEndTerminationDate
+GNLS  02 18 10 00  mGroupNameList
+PID   16 18 b0 00  mPersonaId
+PJID  05 20 80 00  mProjectId
+PRID  05 20 70 00  mProductId
+RECU  0f 18 b8 00  mRecursiveSearch
+SGDA  05 20 c0 00  mStartGrantDate
+STAT  04 20 54 00  mStatus
+STDA  05 20 90 00  mStartTerminationDate
+TYPE  04 00 58 00  mEntitlementType
+VALU  00 00 00 00  mBlazeUserId
+VALU  00 00 00 00  mPersonaName
+ID    16 18 10 00  mId
+TYPE  04 00 18 00  mType
+CNT   15 18 58 00  mCnt
+CURT  10 18 b0 00  mTc
+DESC  05 20 80 00  mDesc
+```
+
+### blok 122 @ 0x000141a2b8d8 (6 pol)
+
+```
+HOWT  05 20 90 00  mHowto
+IMG   05 20 60 00  mImg
+META  05 20 a0 00  mMeta
+NAME  05 20 70 00  mName
+NEXT  02 18 b8 00  mTn
+RPTS  16 18 48 00  mRp
+```
+
+### blok 123 @ 0x000141a2b9d0 (3 pol)
+
+```
+TOTT  10 18 b1 00  mTt
+XPAC  0a 18 10 01  mXpack
+XPTS  16 00 50 00  mXp
+```
+
+### blok 124 @ 0x000141a2bae0 (436 pol)
+
+```
+RPTS  16 18 60 00  mRp
+TIER  10 18 78 00  mTi
+XPAC  0a 18 80 00  mXpack
+XPTS  16 00 58 00  mXp
+AUXA  0a 18 58 00  mAuxAuth
+LANG  05 20 40 00  mLanguage
+LIMI  04 20 54 00  mLimit
+META  0e 18 50 00  mIncludeMetadata
+PROD  05 20 30 00  mProductId
+USER  0a 00 10 00  mUser
+BLID  18 18 10 00  mBlazeId
+EXBB  08 10 28 00  mExternalBlob
+PLAT  04 20 18 00  mExternalSystemId
+PNAM  05 20 40 00  mPersonaName
+XREF  17 00 20 00  mExternalId
+DSNM  05 20 18 00  mDisplayName
+PID   16 18 10 00  mPersonaId
+PLAT  04 00 28 00  mClientPlatform
+VALU  00 00 00 00  mAccountId
+VALU  00 00 00 00  mPersonaId
+DUR   0d 18 38 00  mMinValidDuration
+RETU  09 00 10 00  mRetrieveUsing
+VALU  00 00 00 00  mPersonaId
+VALU  00 00 00 00  mExternalId
+DUR   0d 18 38 00  mMinValidDuration
+RDU   09 00 10 00  mRetrieveTokenUsing
+NAME  05 20 10 00  mName
+SOUR  04 00 20 00  mSource
+INDX  15 18 24 00  mParamIndex
+NAME  05 20 10 00  mParamName
+TYPE  04 00 20 00  mType
+BLID  18 18 10 00  mBlazeId
+VETY  04 00 18 00  mVehicleType
+NAME  05 20 10 00  mName
+SOUR  04 20 20 00  mSource
+SPCL  05 20 50 00  mSpeedwallColumn
+SPNM  05 20 40 00  mSpeedwallName
+TAGU  15 18 38 00  mTag
+VALU  05 00 28 00  mValue
+AUTH  18 18 10 00  mContentAuthorBlazeId
+CONT  04 00 18 00  mContentType
+LIST  02 18 38 00  mSpecialGuestList
+SPCR  05 20 10 00  mSplashScreen
+SPGN  05 20 28 00  mSpecialGuestGroupName
+SPGT  04 00 20 00  mSpecialGuestType
+ID    16 18 10 00  mId
+TYPE  04 00 18 00  mType
+BLIS  18 18 10 00  mBlazeId
+PENA  05 20 18 00  mPersonaName
+URTY  04 00 28 00  mRelationType
+CLID  17 18 18 00  mClubId
+STAT  04 00 10 00  mNewStatus
+BLIS  02 18 10 00  mSpecialGuests
+SPGN  05 20 d0 00  mSpecialGroupName
+SPGT  04 20 c8 00  mSpecialGuestType
+SPLA  05 20 b8 00  mSplashScreenFileName
+STAI  01 00 68 00  mSpecialGuestRealNames
+BLUS  0a 18 58 01  mTargetBlazeUser
+RETY  04 20 50 01  mRecommendationType
+STAF  01 18 60 00  mMiscFlt
+STAI  01 18 10 00  mMiscInt
+STAS  01 18 b0 00  mMiscStr
+STOB  05 20 38 01  mStoryStringBottomID
+STOT  05 20 28 01  mStoryStringTopID
+SWID  15 18 00 01  mSpeedWallId
+TABL  18 18 48 01  mTargetBlazeId
+TANA  05 20 08 01  mTargetName
+TITL  05 00 18 01  mTitleStringID
+BLID  18 18 10 00  mBlazeId
+EVNT  15 18 28 00  mEvent
+TYPE  05 20 18 00  mType
+VETY  04 00 2c 00  mVehicleType
+BLID  18 18 10 00  mBlazeId
+TYPE  05 20 18 00  mType
+VETY  04 00 28 00  mVehicleType
+CLID  17 18 10 00  mClubId
+MSTY  04 00 18 00  mMessageType
+EVNT  15 18 10 00  mEvent
+TYPE  05 20 18 00  mType
+UINF  15 18 28 00  mUserInfo
+VETY  04 00 14 00  mVehicleType
+AUTH  18 18 10 00  mContentAuthorBlazeId
+BLID  18 18 18 00  mContentReporterBlazeId
+CATT  04 20 20 00  mCategoryType
+CONT  04 00 24 00  mContentType
+AUTH  18 18 10 00  mContentAuthorBlazeId
+CONT  04 20 18 00  mContentType
+SHOW  0e 00 1c 00  mShow
+ENUM  04 20 b8 00  mRegularEnum
+LIST  02 18 78 00  mMyList
+MAP   01 18 10 00  mMyMap
+MSG   05 00 c0 00  mMessage
+CAT   05 20 10 00  mCategoryName
+CONF  0a 18 30 00  mConfiguration
+CREA  0d 18 d0 01  mCreationTime
+DCNT  01 18 80 01  mDeletedRecordCountByName
+DEL   0e 18 e0 01  mDeleted
+DESC  05 20 20 00  mDescription
+DLTS  16 18 28 01  mNumOfDeletedRecords
+RCNT  01 18 30 01  mRecordCountByName
+RECS  16 18 20 01  mNumOfRecords
+TRST  02 18 e0 00  mTrustedSources
+UPDT  0d 00 d8 01  mLastUpdateTime
+CIDL  02 18 10 00  mClubIdList
+MSTY  04 00 50 00  mMessageType
+ACNT  01 18 20 01  mRecordCountByCategory
+CADM  02 18 80 00  mDataAdmins
+CREA  0d 18 c0 01  mCreationTime
+DADM  02 18 40 00  mDevAdmins
+DCNT  01 18 70 01  mDeletedRecordCountByCategory
+DEL   0e 18 d0 01  mDeleted
+DESC  05 20 30 00  mDescription
+DLTS  16 18 c8 00  mNumOfDeletedRecords
+LABL  05 20 20 00  mLabel
+NAME  05 20 10 00  mName
+RCNT  01 18 d0 00  mRecordNamesCountByCategory
+RECS  16 18 c0 00  mNumOfRecords
+UPDT  0d 18 c8 01  mLastUpdateTime
+VERS  15 00 d4 01  mVersion
+CREA  0d 18 40 00  mCreationTime
+OWNR  0a 18 20 00  mOwner
+REC   05 20 10 00  mRecordName
+UPDT  0d 00 48 00  mLastUpdateTime
+CREA  0d 18 40 00  mCreationTime
+DELT  0d 18 50 00  mDeletedTime
+OWNR  0a 18 20 00  mOwner
+REC   05 20 10 00  mRecordName
+UPDT  0d 00 48 00  mLastUpdateTime
+DELT  0d 18 98 00  mDeletedTime
+INFO  0a 18 10 00  mInfo
+LOAD  0a 00 60 00  mPayload
+TOKN  05 20 10 00  mToken
+TTYP  04 20 20 00  mTokenType
+USER  0a 00 28 00  mUser
+CAT   05 20 10 00  mCategoryName
+CONF  0a 18 30 00  mConfiguration
+CREA  0d 18 20 01  mCreationTime
+DEL   0e 18 30 01  mDeleted
+DESC  05 20 20 00  mDescription
+TRST  02 18 e0 00  mTrustedSources
+UPDT  0d 00 28 01  mLastUpdateTime
+CREA  0d 18 40 00  mCreationTime
+DEL   0e 18 50 00  mDeleted
+DESC  05 20 30 00  mDescription
+LABL  05 20 20 00  mLabel
+NAME  05 20 10 00  mName
+UPDT  0d 18 48 00  mLastUpdateTime
+VERS  15 00 54 00  mVersion
+DELT  0d 18 90 00  mDeletedTime
+INFO  0a 18 10 00  mInfo
+JLOA  0a 00 60 00  mPayload
+CREA  0d 18 10 00  mCreation
+LOAD  0a 18 20 00  mPayload
+LOC   05 20 60 00  mLocation
+RMOT  0e 18 58 00  mIsRemoteResource
+UPDT  0d 00 18 00  mLastUpdate
+CREA  0d 18 10 00  mCreation
+LOC   05 20 38 00  mLocation
+MIME  05 20 20 00  mContentType
+RMOT  0e 18 34 00  mIsRemoteResource
+SIZE  15 18 30 00  mPayloadSize
+UPDT  0d 00 18 00  mLastUpdate
+ADDR  0a 18 10 00  mRecordAddress
+AUTH  0a 18 88 00  mAuthCredentials
+DELT  0d 18 70 00  mDeletionTime
+SUBR  05 00 78 00  mSubrecord
+ADMN  05 20 10 00  mAdminEmail
+AUTH  0a 18 70 00  mAuthCredentials
+CAT   05 20 38 00  mCategoryName
+CTXT  05 20 28 00  mContext
+END   0d 18 60 00  mEndDate
+MXRC  15 18 68 00  mMaxResultCount
+OFFS  15 18 6c 00  mOffset
+REC   05 20 48 00  mRecordName
+STRT  0d 18 58 00  mStartDate
+TYPE  04 00 20 00  mAction
+ADMN  05 20 18 00  mAdminEmail
+AFTR  06 10 78 00  mAfter
+BEFR  06 10 60 00  mBefore
+CAT   05 20 50 00  mCategoryName
+CTXT  05 20 40 00  mContext
+IP    05 20 28 00  mAdminIp
+TIME  0d 18 38 00  mTimestamp
+TYPE  04 00 10 00  mActionType
+AMRP  0e 18 37 00  mAllowMemberToRetrievePassword
+DMID  15 18 10 00  mClubDomainId
+DNAM  05 20 18 00  mDomainName
+DUED  0e 18 36 00  mTrackMembershipInUED
+DXGM  13 18 2c 00  mMaxGMsPerClub
+DXIA  13 18 34 00  mMaxInactiveDaysPerClub
+DXIV  13 18 32 00  mMaxInvitationsPerUserOrClub
+DXMB  15 18 28 00  mMaxMembersPerClub
+DXMS  13 18 2e 00  mMaxMembershipsPerUser
+DXNW  13 18 30 00  mMaxNewsItemsPerClub
+JITV  0d 00 38 00  mClubJumpingInterval
+CLID  17 18 60 00  mAssociateClubId
+NPRL  05 20 50 00  mParamList
+NSIS  05 20 40 00  mStringId
+NTXT  05 20 30 00  mText
+NWCC  18 18 10 00  mContentCreator
+NWTY  04 20 28 00  mType
+PERS  05 20 18 00  mPersona
+TMST  15 00 68 00  mTimestamp
+CLID  17 18 40 00  mAssociateClubId
+NTXT  05 20 30 00  mText
+NWCC  18 18 10 00  mContentCreator
+NWFL  07 10 48 00  mFlags
+NWID  0c 10 58 00  mNewsId
+NWTY  04 20 28 00  mType
+PERS  05 20 18 00  mPersona
+TMST  15 00 68 00  mTimestamp
+ARPT  04 20 78 00  mArtPackageType
+BNID  15 18 74 00  mBannerId
+CASF  07 10 48 00  mClubArtSettingsFlags
+CLAF  07 10 38 00  mAcceptanceFlags
+CLCS  0a 18 88 00  mCustClubSettings
+CLD2  05 20 e8 00  mMetaData2
+CLDS  05 20 b8 00  mDescription
+CLMD  05 20 d0 00  mMetaData
+CLMT  04 20 c8 00  mMetaDataType
+CLRG  15 18 b0 00  mRegion
+CLT2  04 20 e0 00  mMetaDataType2
+HSPW  0f 18 58 00  mHasPassword
+JONA  04 20 f8 00  mJoinAcceptance
+LANG  05 20 10 00  mLanguage
+LOID  15 18 70 00  mLogoId
+LUPD  14 18 84 00  mLastSeasonLevelUpdate
+NUQN  05 20 28 00  mNonUniqueName
+PLVL  15 18 80 00  mPreviousSeasonLevel
+PSWD  05 20 60 00  mPassword
+PTNA  04 20 00 01  mPetitionAcceptance
+SLVL  15 18 7c 00  mSeasonLevel
+SPCA  04 20 fc 00  mSkipPasswordCheckAcceptance
+TMID  15 00 20 00  mTeamId
+CLID  02 18 10 00  mClubIdList
+CLTI  0f 18 50 00  mIncludeClubTags
+CODR  04 20 5c 00  mClubsOrder
+MXRC  15 18 54 00  mMaxResultCount
+ODMD  04 20 60 00  mOrderMode
+OFRC  15 18 58 00  mOffset
+SKCT  0f 00 64 00  mSkipCalcDbRows
+BLID  18 18 10 00  mBlazeId
+CMTP  04 20 28 00  mMembershipStatus
+MBOS  04 20 30 00  mOnlineStatus
+META  01 18 38 00  mMetaData
+MSTM  15 18 2c 00  mMembershipSinceTime
+PERS  05 00 18 00  mPersona
+CLID  17 18 18 00  mClubId
+CLNM  05 20 20 00  mClubName
+INID  15 18 10 00  mMessageId
+INVT  04 20 14 00  mMessageType
+RECV  18 18 48 00  mReceiverId
+RPRS  05 20 50 00  mReceiverPersona
+SEND  18 18 30 00  mSenderId
+SPRS  05 20 38 00  mSenderPersona
+TIME  15 00 60 00  mTimeSent
+BLID  18 18 50 00  mBlazeId
+LUDT  15 18 4c 00  mLastUpdateTime
+PERS  05 20 58 00  mPersona
+RCDC  05 20 28 00  mRecordDescription
+RCID  15 18 10 00  mRecordId
+RCNM  05 20 18 00  mRecordName
+STAT  05 20 38 00  mRecordStat
+STYP  04 00 48 00  mRecordStatType
+CLID  17 18 10 00  mClubId
+FILM  04 20 28 00  mMemberType
+MXRC  15 18 18 00  mMaxResultCount
+OFRC  15 18 1c 00  mOffset
+ORDM  04 20 24 00  mOrderMode
+ORDT  04 20 20 00  mOrderType
+PERP  05 20 30 00  mPersonaNamePattern
+SKCT  0f 00 2c 00  mSkipCalcDbRows
+ACEF  07 10 60 00  mAcceptanceFlags
+ACMS  07 10 50 00  mAcceptanceMask
+ADID  0f 18 10 00  mAnyDomain
+ATID  0f 18 38 00  mAnyTeamId
+CFLI  02 18 80 00  mClubFilterList
+CLTG  02 18 60 01  mTagList
+CLTI  0f 18 a0 01  mIncludeClubTags
+CLTO  04 20 58 01  mTagSearchOperation
+CNAM  05 20 18 00  mName
+CODR  04 20 b0 01  mClubsOrder
+CREG  15 18 74 00  mRegion
+DMID  15 18 14 00  mClubDomainId
+JOAC  04 20 c0 01  mJoinAcceptance
+LANG  05 20 28 00  mLanguage
+LGTM  15 18 50 01  mLastGameTimeOffset
+MAMC  15 18 7c 00  mMaxMemberCount
+MIMC  15 18 78 00  mMinMemberCount
+MMSC  01 18 00 01  mMinMemberOnlineStatusCounts
+MXRC  15 18 a8 01  mMaxResultCount
+NUQN  05 20 40 00  mNonUniqueName
+ODMD  04 20 b4 01  mOrderMode
+OFRC  15 18 ac 01  mOffset
+PEAC  04 20 bc 01  mPetitionAcceptance
+PSWD  04 20 a4 01  mPasswordOption
+SEAL  15 18 70 00  mSeasonLevel
+SKCT  0f 18 b8 01  mSkipCalcDbRows
+SKMD  11 18 54 01  mSkipMetadata
+TMID  15 18 3c 00  mTeamId
+UFLI  02 00 c0 00  mMemberFilterList
+CLID  17 18 10 00  mClubId
+INVT  04 20 18 00  mInvitationsType
+NSOT  04 00 1c 00  mSortType
+CLID  17 18 10 00  mClubId
+MCNT  15 18 5c 00  mMaxResultCount
+NSOT  04 20 58 00  mSortType
+OFST  15 18 60 00  mOffSet
+TFIL  02 00 18 00  mTypeFilters
+CLID  17 18 10 00  mClubId
+MDTY  04 20 18 00  mMetaDataType
+METD  05 00 20 00  mMetaData
+MOST  04 20 10 00  mMemberOnlineStatus
+MSST  04 00 14 00  mMembershipStatus
+CLID  17 18 10 00  mClubId
+INVT  04 20 18 00  mPetitionsType
+NSOT  04 00 1c 00  mSortType
+CJPS  04 00 10 00  mClubJoinOrPetitionStatus
+SSTE  04 00 10 00  mSeasonRolloverState
+BLID  18 18 18 00  mUserId
+CLID  17 18 10 00  mClubId
+OOSN  04 00 20 00  mExOwnersNewStatus
+CIDL  02 18 10 00  mClubIdList
+MCNT  15 18 94 00  mMaxResultCount
+NSOT  04 20 90 00  mSortType
+OFST  15 18 98 00  mOffSet
+TFIL  02 00 50 00  mTypeFilters
+CIDL  02 18 10 00  mClubIdList
+INVT  04 20 50 00  mPetitionsType
+NSOT  04 00 54 00  mSortType
+CBID  17 18 10 00  mClubId
+LEKY  04 20 18 00  mEventKeyType
+LEPV  01 00 20 00  mEventParams
+BLID  18 18 18 00  mUserId
+CLID  17 18 10 00  mClubId
+REAS  04 20 24 00  mReason
+STAT  04 00 20 00  mOnlineStatus
+UPRE  04 00 10 00  mUpdateReason
+UPRE  04 20 10 00  mReason
+USID  18 00 18 00  mUserId
+SEID  17 18 18 00  mUserSessionId
+UPRE  04 20 20 00  mUpdateReason
+USID  18 00 10 00  mUserId
+SEID  17 18 28 00  mUserSessionId
+UPRE  04 20 10 00  mUpdateReason
+USID  18 18 20 00  mUserId
+VWID  17 00 18 00  mViewId
+TMOP  04 20 10 00  mTelemetryOpt
+UID   18 00 18 00  mUserId
+IITO  0e 18 18 00  mIgnoreInactivityTimeout
+LANG  15 18 10 00  mLocale
+SVCN  05 20 20 00  mServiceName
+TYPE  04 00 14 00  mClientType
+DIRT  04 20 10 00  mResult
+UTXT  05 00 18 00  mFilteredText
+TVAL  0d 00 10 00  mSuspendTime
+AGGR  02 18 18 00  mAggrValues
+TYPE  04 00 10 00  mType
+MRMX  13 18 1a 00  mMaxMapRotationEntries
+SAMX  13 18 14 00  mMaxServerAdmins
+SBMX  13 18 16 00  mMaxServerBans
+SEXP  0d 18 30 00  mServerExpiredPeriod
+SEXT  0d 18 20 00  mServerExtensionPeriod
+SREM  0d 18 28 00  mServerReminderPeriod
+SVMX  13 18 18 00  mMaxServerVips
+UAMX  13 18 12 00  mMaxAdminServersPerUser
+UOMX  13 00 10 00  mMaxOwnedServersPerUser
+BURL  05 20 a0 00  mBannerUrl
+CRDA  0d 18 40 00  mCreatedDate
+EXDA  0d 18 48 00  mExpirationDate
+GPVS  05 20 80 00  mGameProtocolVersionString
+NAME  05 20 90 00  mName
+OID   18 18 60 00  mOwnerId
+PGID  05 20 18 00  mPersistedGameId
+PGSR  08 10 28 00  mPersistedGameIdSecret
+PSAL  05 20 70 00  mPingSiteAlias
+SID   15 18 10 00  mServerId
+STAT  04 20 68 00  mStatus
+UPBY  18 18 58 00  mUpdatedBy
+UPDA  0d 00 50 00  mUpdatedDate
+BURL  05 20 60 00  mBannerUrl
+DESC  05 20 20 00  mDescription
+MESS  05 20 30 00  mMessage
+MID   11 18 59 00  mMapRotationId
+NAME  05 20 10 00  mName
+PASS  05 20 40 00  mPassword
+PID   11 18 58 00  mPresetId
+SALT  14 18 50 00  mPasswordSalt
+TYPE  04 00 54 00  mServerType
+DESC  05 20 28 00  mDescription
+NAME  05 20 18 00  mName
+PID   11 18 10 00  mPresetId
+PTYP  05 20 90 00  mType
+SLST  02 18 38 00  mSettings
+STYP  04 00 a0 00  mServerType
+DATE  0d 18 18 00  mExpirationDate
+QUAN  15 18 14 00  mQuantity
+SID   15 00 10 00  mServerId
+SLST  02 18 10 00  mServerList
+TIME  0d 00 68 00  mCurrentTime
+ATTR  01 18 38 00  mGameAttribs
+GNAM  05 20 10 00  mGameName
+GSET  07 10 28 00  mGameSettings
+PRES  04 00 20 00  mPresenceMode
+EXDA  0d 18 40 00  mExpirationDate
+EXPE  15 18 38 00  mExpirationPeriod
+GPVS  05 20 28 00  mGameProtocolVersionString
+PSAL  05 20 18 00  mPingSiteAlias
+UID   18 00 10 00  mUserId
+EXDA  0d 18 18 00  mExpirationDate
+EXPE  15 18 14 00  mExpirationPeriod
+SID   15 00 10 00  mServerId
+EXDA  0d 18 28 00  mExpirationDate
+MAPS  05 20 38 00  mMapList
+MID   17 18 30 00  mMatchId
+PGID  05 20 18 00  mPersistedGameId
+RSTA  02 18 58 00  mPlayerRosterA
+RSTB  02 18 98 00  mPlayerRosterB
+SBLB  05 20 48 00  mSettingsBlob
+SNSA  05 20 d8 00  mSideAName
+SNSB  05 20 e8 00  mSideBName
+UID   18 00 10 00  mAdminUserId
+CTYP  04 20 30 00  mCategoryType
+DESC  05 20 20 00  mDesc
+ETYP  0b 10 34 00  mEntityType
+KEYS  02 18 78 00  mKeyScopes
+NAME  05 20 10 00  mName
+PTYP  02 00 38 00  mPeriodTypes
+CAT   05 20 10 00  mCategoryName
+EID   1b 18 20 00  mEntityId
+ETYP  0c 10 28 00  mEntityObjectId
+KSUM  01 18 38 00  mKeyScopeNameValueMap
+OPER  04 00 88 00  mOperation
+VALU  00 00 00 00  mFloatValue
+VALU  00 00 00 00  mIntValue
+VALU  00 00 00 00  mStringValue
+```
+
+### blok 125 @ 0x000141a2ef78 (309 pol)
+
+```
+SDR   04 00 10 00  mDisconnectReason
+LTYP  04 20 10 00  mLookupType
+ULST  02 00 18 00  mUserIdentificationList
+BSDK  05 20 60 00  mBlazeSDKVersion
+BTIM  05 20 70 00  mBlazeSDKBuildDate
+CLNT  05 20 28 00  mClientName
+CPFT  04 20 20 00  mPlatform
+CSKU  05 20 48 00  mClientSkuId
+CVER  05 20 38 00  mClientVersion
+DSDK  05 20 80 00  mDirtySDKVersion
+ENV   05 20 10 00  mEnvironment
+LOC   15 00 58 00  mClientLocale
+GID   17 18 10 00  mGameId
+MTYP  04 00 18 00  mHostMigrationType
+NASP  05 20 18 00  mPersonaNamespace
+PLAT  04 00 10 00  mPlatform
+ALOC  15 18 50 00  mAccountLocale
+BUID  18 18 20 00  mBlazeUserId
+CGID  0c 10 80 00  mConnectionGroupObjectId
+DSNM  05 20 60 00  mDisplayName
+FRST  0f 18 40 00  mIsFirstLogin
+KEY   05 20 10 00  mSessionKey
+LAST  15 18 7c 00  mLastAuthenticated
+LLOG  16 18 48 00  mLastLoginDateTime
+MAIL  05 20 30 00  mEmail
+PID   16 18 58 00  mPersonaId
+PLAT  04 20 78 00  mClientPlatform
+UID   16 18 28 00  mUserId
+USTP  04 20 90 00  mUserSessionType
+XREF  17 00 70 00  mExtId
+BID   18 18 10 00  mBlazeId
+LOTP  04 20 18 00  mLogoutType
+USTP  04 00 1c 00  mUserSessionType
+GID   17 18 10 00  mGameId
+REAS  04 00 18 00  mDestructionReason
+MODE  04 20 14 00  mMode
+STAT  04 00 10 00  mStatus
+BLOB  08 10 68 00  mCustomData
+CONG  17 18 88 01  mConnectionGroupId
+CSID  11 18 90 01  mConnectionSlotId
+EXID  17 18 20 00  mExternalId
+GID   17 18 10 00  mGameId
+JFPS  0e 18 91 01  mHasJoinFirstPartyGameSessionPermission
+LOC   15 18 28 00  mAccountLocale
+NAME  05 20 38 00  mPlayerName
+PATT  01 18 c0 00  mPlayerAttribs
+PID   18 18 18 00  mPlayerId
+PNET  09 10 50 01  mNetworkAddress
+ROLE  05 20 60 01  mRoleName
+SID   11 18 2c 00  mSlotId
+SLOT  04 20 58 01  mSlotType
+STAT  04 20 48 00  mPlayerState
+TIDX  13 18 5c 01  mTeamIndex
+TIME  16 18 80 01  mJoinedGameTimestamp
+UGID  0c 10 70 01  mUserGroupId
+UID   17 18 30 00  mPlayerSessionId
+UUID  05 00 98 01  mUUID
+ADMN  02 18 78 02  mAdminPlayerList
+ATTR  01 18 d8 01  mGameAttribs
+CAP   02 18 b8 02  mSlotCapacities
+COID  05 20 d0 04  mExternalSessionCorrelationId
+CRIT  01 18 08 04  mEntryCriteriaMap
+ESNM  05 20 c0 04  mExternalSessionName
+GID   17 18 20 00  mGameId
+GMRG  15 18 d0 01  mGameModRegister
+GNAM  05 20 10 00  mGameName
+GPVH  17 18 68 00  mGameProtocolVersionHash
+GSET  07 10 c0 01  mGameSettings
+GSID  17 18 40 00  mGameReportingId
+GSTA  04 20 b8 01  mGameState
+GTYP  05 20 48 00  mGameTypeName
+GURL  05 20 90 04  mGameStatusUrl
+HNET  02 18 40 01  mHostNetworkAddressList
+HSES  17 18 38 01  mTopologyHostSessionId
+IGNO  0f 18 58 04  mIgnoreEntryCriteriaWithInvite
+MATR  01 18 28 02  mMeshAttribs
+MCAP  13 18 38 03  mMaxPlayerCapacity
+NPSI  05 20 a8 00  mNpSessionId
+NQOS  0a 18 98 01  mNetworkQosData
+NRES  0f 18 88 04  mServerNotResetable
+NTOP  04 20 b8 00  mNetworkTopology
+OGHI  18 18 30 01  mGameCreatorId
+PGID  05 20 60 04  mPersistedGameId
+PGSR  08 10 70 04  mPersistedGameIdSecret
+PHST  0a 18 00 01  mPlatformHostInfo
+PRES  04 20 70 00  mPresenceMode
+PSAS  05 20 c0 00  mPingSiteAlias
+QCAP  13 18 5a 04  mQueueCapacity
+RNFO  0a 18 40 03  mRoleInformation
+SCID  05 20 a0 04  mScid
+SEED  15 18 38 00  mSharedSeed
+STMN  05 20 b0 04  mExternalSessionTemplateName
+THST  0a 18 d0 00  mTopologyHostInfo
+TIDS  02 18 f8 02  mTeamIds
+UUID  05 20 28 00  mUUID
+VOIP  04 20 bc 00  mVoipNetwork
+VSTR  05 20 58 00  mGameProtocolVersionString
+XNNC  08 10 78 00  mXnetNonce
+XSES  08 00 90 00  mXnetSession
+ADMN  02 18 38 00  mAdminPlayerList
+ATTR  01 18 f0 03  mGameAttribs
+BTPL  0c 10 90 04  mGroupId
+CRIT  01 18 a0 04  mEntryCriteriaMap
+EIDS  02 18 28 05  mReservedExternalPlayers
+ERST  01 18 40 02  mExternalPlayerRoleRosters
+GCTR  05 20 f8 02  mGamePingSiteAlias
+GENT  04 20 24 05  mGameEntryType
+GMRG  15 18 30 00  mGameModRegister
+GNAM  05 20 68 03  mGameName
+GSET  07 10 78 03  mGameSettings
+GTYP  05 20 58 03  mGameTypeName
+GURL  05 20 48 03  mGameStatusUrl
+HNET  02 18 90 03  mHostNetworkAddressList
+IGNO  0f 18 f0 04  mIgnoreEntryCriteriaWithInvite
+MATR  01 18 a8 02  mMeshAttribs
+NRES  0f 18 20 05  mServerNotResetable
+NTOP  04 20 88 03  mNetworkTopology
+PATT  01 18 40 04  mHostPlayerAttribs
+PCAP  02 18 80 00  mSlotCapacities
+PGID  05 20 f8 04  mPersistedGameId
+PGSC  08 10 08 05  mPersistedGameIdSecret
+PMAX  13 18 78 00  mMaxPlayerCapacity
+PRES  04 20 10 00  mPresenceMode
+QCAP  13 18 e8 03  mQueueCapacity
+RGID  17 18 18 00  mReservedDynamicDSGameId
+RNFO  0a 18 10 01  mRoleInformation
+RRST  01 18 d8 01  mRoleRosters
+SEAT  02 18 08 03  mReservedPlayerSeats
+SLOT  04 20 c0 00  mJoiningSlotType
+TIDS  02 18 c8 00  mTeamIds
+TIDX  13 18 08 01  mJoiningTeamIndex
+VOIP  04 20 8c 03  mVoipNetwork
+VSTR  05 00 20 00  mGameProtocolVersionString
+ATTR  01 18 18 00  mPlayerAttribs
+BTPL  0c 10 e0 01  mGroupId
+EIDS  02 18 c0 02  mReservedExternalPlayers
+ERST  01 18 78 01  mExternalPlayerRoleJoinRoster
+GENT  04 20 58 02  mGameEntryType
+GID   17 18 10 00  mGameId
+GVER  05 20 f8 00  mGameProtocolVersionString
+JMET  04 20 68 00  mJoinMethod
+PLST  02 18 60 02  mAdditionalPlayerIdList
+PNET  09 10 70 00  mPlayerNetworkAddress
+RRST  01 18 10 01  mRoleJoinRoster
+SLEN  14 18 bc 02  mSessionLength
+SLID  11 18 0c 01  mRequestedSlotId
+SLOT  04 20 08 01  mRequestedSlotType
+STRT  14 18 b8 02  mSessionStart
+TIDX  13 18 0e 01  mJoiningTeamIndex
+USER  0a 18 f0 01  mUser
+XSES  08 00 a0 02  mXnetSession
+GID   17 18 10 00  mGameId
+GSTA  04 00 18 00  mNewGameState
+ATTR  01 18 18 00  mPlayerAttribs
+EIDS  02 18 20 02  mReservedExternalPlayers
+ERST  01 18 78 01  mExternalPlayerRoleJoinRoster
+GENT  04 20 60 02  mGameEntryType
+GID   17 18 10 00  mGameId
+GVER  05 20 f8 00  mGameProtocolVersionString
+JMET  04 20 68 00  mJoinMethod
+PLST  02 18 e0 01  mPlayerIdList
+PNET  09 10 70 00  mPlayerNetworkAddress
+RRST  01 18 10 01  mRoleJoinRoster
+SLOT  04 20 08 01  mRequestedSlotType
+TIDX  13 00 0c 01  mJoiningTeamIndex
+GID   17 18 10 00  mGameId
+PRES  04 00 18 00  mPresenceMode
+GID   17 18 10 00  mGameId
+JGS   04 20 18 00  mJoinState
+REX   02 00 20 00  mJoinedReservedExternalPlayers
+DCTX  04 00 10 00  mSetupContext
+FIT   15 18 24 00  mFitScore
+MAXF  15 18 28 00  mMaxPossibleFitScore
+MSID  17 18 18 00  mSessionId
+RSLT  04 20 20 00  mMatchmakingResult
+USID  17 00 10 00  mUserSessionId
+FIT   15 18 34 00  mFitScore
+GRID  0c 10 10 00  mUserGroupId
+MAXF  15 18 38 00  mMaxPossibleFitScore
+MSID  17 18 28 00  mSessionId
+RPVC  0f 18 3c 00  mRequiresClientVersionCheck
+RSLT  04 20 30 00  mMatchmakingResult
+USID  17 00 20 00  mUserSessionId
+GID   17 18 10 00  mGameId
+PRES  04 00 18 00  mNewPresenceMode
+VALU  00 00 00 00  mDatalessSetupContext
+VALU  00 00 00 00  mResetDedicatedServerSetupContext
+VALU  00 00 00 00  mIndirectJoinGameSetupContext
+VALU  00 00 00 00  mMatchmakingSetupContext
+VALU  00 00 00 00  mIndirectMatchmakingSetupContext
+GID   17 18 10 00  mGameId
+GSTA  04 00 18 00  mNewGameState
+FLGS  07 10 40 00  mPlayerNetConnectionFlags
+GID   17 18 10 00  mGameId
+SCG   0c 10 18 00  mSourceGroupId
+STAT  04 20 38 00  mPlayerNetConnectionStatus
+TCG   0c 00 28 00  mTargetGroupId
+GID   17 18 10 00  mGameId
+REAS  04 00 18 00  mDestructionReason
+BTPL  0c 10 28 00  mGroupId
+CNTX  13 18 24 00  mPlayerRemovedTitleContext
+GID   17 18 10 00  mGameId
+PID   18 18 18 00  mPlayerId
+REAS  04 20 20 00  mPlayerRemovedReason
+SCTX  05 00 38 00  mTitleContextString
+ALST  18 18 18 00  mAdminPlayerId
+GID   17 18 10 00  mGameId
+OPER  04 20 20 00  mOperation
+UID   18 00 28 00  mUpdaterPlayerId
+PID   18 18 10 00  mPlayerId
+ROLE  05 20 20 00  mRoleName
+SLOT  04 20 18 00  mSlotType
+TIDX  13 00 1c 00  mTeamIndex
+CNTX  13 18 24 00  mPlayerRemovedTitleContext
+GID   17 18 10 00  mGameId
+LFPJ  0f 18 26 00  mLockedForPreferredJoins
+PID   18 18 18 00  mPlayerId
+REAS  04 00 20 00  mPlayerRemovedReason
+CSLT  11 18 29 00  mNewHostConnectionSlotId
+GID   17 18 18 00  mGameId
+HOST  18 18 20 00  mNewHostId
+PMIG  04 20 10 00  mMigrationType
+SLOT  11 00 28 00  mNewHostSlotId
+GID   17 18 10 00  mGameId
+PID   18 18 18 00  mPlayerId
+STAT  04 00 20 00  mPlayerState
+GID   17 18 10 00  mGameId
+PID   18 18 18 00  mPlayerId
+ROLE  05 20 28 00  mPlayerRole
+SLOT  04 20 20 00  mSlotType
+TIDX  13 00 24 00  mTeamIndex
+THLD  05 20 10 00  mMinFitThresholdName
+VALU  04 00 20 00  mDesiredRankedGameValue
+SKDS  16 18 38 00  mSkillValueOverride
+SKRN  05 20 10 00  mRuleName
+SVOR  04 20 30 00  mUseSkillValueOverride
+THLD  05 00 20 00  mMinFitThresholdName
+BVAL  04 00 10 00  mMatchedHostBalanceValue
+VVAL  04 00 10 00  mMatchedHostViabilityValue
+ATTR  01 18 f0 06  mGameAttribs
+BTPL  0c 10 30 09  mGroupId
+CRIT  0a 18 38 00  mCriteriaData
+DUR   15 18 30 00  mSessionDurationMS
+ECRI  01 18 40 09  mEntryCriteriaMap
+EIDS  02 18 e8 09  mReservedExternalPlayers
+ERST  01 18 78 08  mExternalPlayerRoleJoinRoster
+GENT  04 20 d8 09  mGameEntryType
+GNAM  05 20 38 06  mGameName
+GSET  07 10 48 06  mGameSettings
+GVER  05 20 20 00  mGameProtocolVersionString
+IGNO  0f 18 90 09  mIgnoreEntryCriteriaWithInvite
+MODE  07 10 10 00  mSessionMode
+NTOP  04 20 58 06  mNetworkTopology
+PATT  01 18 e0 08  mPlayerAttribs
+PLST  02 18 98 09  mPlayerIdList
+PMAX  13 18 40 07  mMaxPlayerCapacity
+PNET  09 10 60 06  mPlayerNetworkAddress
+PRES  04 20 dc 09  mPresenceMode
+QCAP  13 18 e8 06  mQueueCapacity
+RNFO  0a 18 48 07  mRoleInformation
+RRST  01 18 10 08  mRoleJoinRoster
+TID   13 18 e0 09  mTeamId
+VOIP  04 00 5c 06  mVoipNetwork
+MAXF  15 18 24 00  mMaxPossibleFitScore
+MSID  17 18 18 00  mSessionId
+RSLT  04 20 20 00  mMatchmakingResult
+USID  17 00 10 00  mUserSessionId
+ANME  05 20 20 00  mAttributeName
+ATYP  04 20 30 00  mAttributeType
+POSV  02 18 38 00  mPossibleValues
+RNME  05 20 10 00  mRuleName
+THLS  02 18 78 00  mThresholdNames
+WGHT  15 00 b8 00  mWeight
+EXID  17 18 28 00  mExternalId
+LOC   15 18 30 00  mAccountLocale
+NAME  05 20 18 00  mPlayerName
+PATT  01 18 38 00  mPlayerAttribs
+PID   18 18 10 00  mPlayerId
+ROLE  05 20 90 00  mRoleName
+STAT  04 20 a4 00  mPlayerState
+STYP  04 20 a0 00  mSlotType
+TIDX  13 00 88 00  mTeamIndex
+ADMN  02 18 78 03  mAdminPlayerList
+ATTR  01 18 38 01  mGameAttribs
+CAP   02 18 40 00  mSlotCapacities
+CRIT  01 18 d0 02  mEntryCriteriaMap
+GID   17 18 10 00  mGameId
+GMRG  15 18 30 01  mGameModRegister
+GNAM  05 20 20 00  mGameName
+GSET  07 10 20 01  mGameSettings
+GSTA  04 20 1c 01  mGameState
+GURL  05 20 d0 03  mGameStatusUrl
+HNET  02 18 90 01  mHostNetworkAddressList
+HOST  18 18 88 01  mHostId
+HSES  17 18 e0 03  mTopologyHostSessionId
+NTOP  04 20 f0 01  mNetworkTopology
+PCNT  02 18 80 00  mPlayerCounts
+PRES  04 20 ec 01  mPresenceMode
+PSAS  05 20 f8 01  mPingSiteAlias
+PSID  05 20 b8 03  mPersistedGameId
+QCAP  13 18 c8 03  mQueueCapacity
+QCNT  13 18 ca 03  mQueueCount
+RNFO  0a 18 08 02  mRoleInformation
+ROST  02 18 20 03  mGameRoster
+SID   17 18 18 00  mExternalSessionId
+TCAP  13 18 18 01  mTeamCapacity
+TINF  02 18 c0 00  mGameBrowserTeamInfoVector
+VOIP  04 20 e8 01  mVoipTopology
+VSTR  05 00 30 00  mGameProtocolVersionString
+```
+
+### blok 126 @ 0x000141a30ff0 (3 pol)
+
+```
+THLD  05 20 10 00  mMinFitThresholdName
+VALU  04 00 20 00  mDesiredVirtualGameValue
+REPR  04 00 10 00  mReputationRequirement
+```
+
+### blok 127 @ 0x000141a31090 (251 pol)
+
+```
+GURL  05 20 30 00  mGetURL
+STTS  04 20 40 00  mStatus
+UURL  05 20 20 00  mUploadURL
+XID   05 00 10 00  mXrefId
+ATTR  02 18 b0 00  mAttributes
+BOID  0c 10 e8 01  mBlazeObjId
+CCAT  05 20 38 00  mContentCategory
+CDAT  14 18 c8 01  mCreateDate
+CID   16 18 10 00  mContentId
+COID  1b 18 20 00  mContextId
+DESC  05 20 88 00  mDescription
+DFMT  05 20 a0 00  mDataFormat
+EDAT  14 18 d0 01  mExpireDate
+EID   1b 18 18 00  mEntityId
+ENAM  05 20 28 00  mEntityName
+GPID  0c 10 00 02  mGroupId
+GURL  05 20 68 00  mGetURL
+HIDE  0e 18 10 02  mIsHidden
+NAME  05 20 78 00  mName
+PERM  04 20 d4 01  mPermission
+RATE  15 18 dc 01  mRate
+RCNT  15 18 fc 01  mTotalRatingCount
+SIZE  14 18 d8 01  mSize
+STTS  04 20 98 00  mStatus
+SUBL  01 18 08 01  mSubContentInfos
+TAGS  02 18 70 01  mTags
+UCNT  14 18 e0 01  mUseCount
+UDAT  14 18 cc 01  mUpdateDate
+URAT  15 18 f8 01  mMyRating
+UURL  05 20 58 00  mUploadURL
+XID   05 00 48 00  mXrefId
+EFPF  04 20 18 00  mEmailFormatPref
+UID   18 00 10 00  mUserId
+ATTR  02 18 48 00  mAttributes
+CCAT  05 20 18 00  mContentCategory
+COID  1b 18 10 00  mContextId
+CPEN  0e 18 38 01  mClearPending
+DESC  05 20 38 00  mDescription
+EDAT  14 18 a0 00  mExpireDate
+NAME  05 20 28 00  mName
+PERM  04 20 e8 00  mPermission
+PSID  18 18 30 01  mBlazeId
+SUBL  02 18 f0 00  mSubContentNames
+TAGS  02 00 a8 00  mTags
+CODE  04 20 68 00  mCode
+FAIL  02 00 10 00  mFailure
+INFO  0a 18 10 00  mContentInfo
+PSID  18 18 30 02  mBlazeId
+STST  04 00 28 02  mUploadStatus
+ATTR  02 18 58 00  mAttributes
+CCAT  05 20 20 00  mContentCategory
+CID   16 18 10 00  mContentId
+COID  1b 18 18 00  mContextId
+DESC  05 20 40 00  mDescription
+EDAT  14 18 54 00  mExpireDate
+NAME  05 20 30 00  mName
+PERM  04 20 50 00  mPermission
+SIZE  15 18 f0 00  mSize
+TAGS  02 00 b0 00  mTags
+CCAT  05 20 18 00  mContentCategory
+CID   16 18 10 00  mContentId
+CVSF  04 00 28 00  mContentVisible
+SFLG  04 20 18 00  mFlags
+UID   18 00 10 00  mUserId
+ATTR  02 18 40 00  mAttributes
+CCAT  05 20 10 00  mContentCategory
+CVSF  04 20 00 01  mContentVisible
+EID   1b 18 20 00  mEntityId
+GPID  0c 10 28 00  mGroupId
+MXRC  15 18 f8 00  mLimit
+OFRC  15 18 fc 00  mOffset
+PEND  0f 18 98 00  mIncludePending
+PERM  04 20 38 00  mPermissionFlag
+REFF  04 20 3c 00  mReferenceFlag
+TAGS  02 00 a0 00  mTags
+ATTR  02 18 88 00  mAttributes
+CCAT  05 20 10 00  mContentCategory
+CVSF  04 20 40 01  mContentVisible
+EID   02 18 20 00  mEntityIds
+GPID  0c 10 70 00  mGroupId
+MXRC  15 18 38 01  mMaxResultCount
+OFRC  15 18 3c 01  mOffset
+OJID  0c 10 60 00  mObjectId
+PERM  04 20 80 00  mPermissionFlag
+REFF  04 20 84 00  mReferenceFlag
+TAGS  02 00 e0 00  mTags
+PGID  17 18 10 00  mId
+REAS  04 00 18 00  mReason
+CAT   05 20 10 00  mContentCategory
+CVSF  04 20 84 00  mContentVisible
+MXRC  15 18 7c 00  mLimit
+OFRC  15 18 80 00  mOffset
+TAG   02 18 20 00  mTags
+TGSO  04 00 78 00  mTagSearchOperation
+OPEN  04 20 18 00  mPlaygroupJoinability
+PGID  17 00 10 00  mPlaygroupId
+CCAT  05 20 10 00  mContentCategory
+COUN  14 18 3c 00  mCount
+FLTR  02 18 50 00  mFilters
+LB    04 20 20 00  mLeaderboardType
+STRT  14 18 38 00  mStart
+TAG   05 20 40 00  mTag
+VIEW  05 00 28 00  mLeaderboardView
+OPEN  04 20 18 00  mPlaygroupJoinability
+PGID  17 00 10 00  mPlaygroupId
+CCAT  05 20 10 00  mContentCategory
+LB    04 20 20 00  mLeaderboardType
+VIEW  05 00 28 00  mLeaderboardView
+CCAT  05 20 18 00  mContentCategory
+CTYP  0b 10 14 00  mContextType
+DESC  05 20 40 00  mDesc
+ETYP  0b 10 10 00  mEntityType
+LB    04 20 28 00  mLeaderboardType
+LIST  02 18 58 00  mViewColumns
+SIZE  14 18 50 00  mSize
+TAGS  14 18 54 00  mTagsIncluded
+VIEW  05 00 30 00  mLeaderboardView
+CCAT  05 20 10 00  mContentCategory
+LB    04 00 20 00  mLeaderboardType
+EFPF  04 20 20 00  mEmailFormatPref
+OPTF  07 00 10 00  mEmailOptInFlags
+IDS   02 18 10 00  mUserIds
+MNAP  01 18 68 00  mVariableValueMap
+MTPL  05 20 50 00  mPurpose
+SEOP  04 00 60 00  mOptions
+FLAG  07 10 10 00  mFlags
+MGID  17 18 20 00  mMessageId
+PIDX  15 18 a0 00  mPageIndex
+PSIZ  15 18 9c 00  mPageSize
+SMSK  15 18 90 00  mStatusMask
+SORT  04 20 98 00  mOrderBy
+SRCE  0c 10 28 00  mSource
+STAT  15 18 94 00  mStatus
+TARG  0c 10 38 00  mTarget
+TYPE  15 18 48 00  mType
+TYPL  02 00 50 00  mTypeList
+CODE  04 00 10 00  mResponse
+CODE  04 20 30 00  mResponse
+DATF  05 20 20 00  mDateFinished
+DATS  05 00 10 00  mDateStarted
+IID   15 18 40 00  mItemId
+PCD   05 20 30 00  mPurchasingComponentData
+PCID  13 18 28 00  mPurchasingComponentId
+PID   16 18 10 00  mPurchaseId
+QUAN  15 18 48 00  mQuantity
+STAT  04 20 44 00  mStatus
+UID   18 18 20 00  mUserId
+UPDA  0d 00 18 00  mUpdatedDate
+PID   16 18 10 00  mPurchaseId
+QUAN  15 18 1c 00  mQuantity
+STAT  04 00 18 00  mStatus
+ITLI  02 18 40 00  mItemKeyList
+PID   16 18 10 00  mPackId
+PKEY  05 20 30 00  mPackKey
+SCAT  04 20 80 00  mCategory
+TGEN  0d 18 20 00  mTimeGenerated
+TVAL  0d 18 28 00  mTimeCreated
+UID   18 00 18 00  mUserId
+HIST  0e 18 1c 00  mIncludeHistory
+LIMT  14 18 20 00  mLimit
+SCAT  04 20 18 00  mCategory
+UID   18 00 10 00  mUserId
+PKLS  02 18 18 00  mPackKeyList
+PLIC  02 18 60 00  mUserLicenses
+SCAT  04 20 58 00  mCategory
+UID   18 00 10 00  mUserId
+ATTR  01 18 58 00  mPlaygroupAttributes
+COID  05 20 c0 01  mExternalSessionCorrelationId
+ENBV  0f 18 70 01  mEnableVoIP
+ESNM  05 20 b0 01  mExternalSessionName
+HCID  17 18 50 00  mHostConnectionGroupId
+HCSD  11 18 49 00  mHostConnectionSlotId
+HNET  09 10 b0 00  mHostNetworkAddress
+HSID  11 18 48 00  mHostSlotId
+JOIN  04 20 a8 00  mPlaygroupJoinability
+MLIM  13 18 38 00  mMaxMembers
+NAME  05 20 18 00  mName
+NTOP  04 20 38 01  mNetworkTopology
+OWNR  18 18 40 00  mOwnerBlazeId
+PGID  17 18 10 00  mId
+PRES  04 20 88 01  mPresenceMode
+SCID  05 20 90 01  mScid
+STMN  05 20 a0 01  mExternalSessionTemplateName
+UKEY  05 20 28 00  mUniqueKey
+UPRS  0e 18 8c 01  mHasPresence
+UUID  05 20 78 01  mUUID
+VOIP  04 20 3c 01  mVoipNetwork
+XNNC  08 10 40 01  mXnetNonce
+XSES  08 00 58 01  mXnetSession
+MLST  02 18 18 00  mBlazeIds
+PGID  17 18 10 00  mPlaygroupId
+REAS  04 00 58 00  mReason
+EID   18 18 18 00  mBlazeId
+GPID  0c 10 28 00  mGroupId
+PGID  17 18 10 00  mPlaygroupId
+REAS  04 00 20 00  mKickedReason
+VALU  00 00 00 00  mIpAddress
+VALU  00 00 00 00  mXboxServerAddress
+ADDR  09 10 18 00  mAddress
+TYPE  04 00 10 00  mType
+ADRS  02 18 58 00  mAddresses
+BIND  04 20 50 00  mBindType
+CCON  15 18 b0 00  mCurrentConnections
+CHAN  05 20 10 00  mChannel
+DEC   05 20 40 00  mDecoder
+ENC   05 20 30 00  mEncoder
+MCON  15 18 b4 00  mMaxConnections
+PROT  05 00 20 00  mProtocol
+CLTP  02 18 98 00  mClientTypes
+CWD   05 20 88 00  mCurrentWorkingDirectory
+ENDP  02 18 30 00  mEndpoints
+ID    15 18 18 00  mInstanceId
+LOAD  14 18 10 00  mLoad
+NAME  05 20 20 00  mInstanceName
+SVC   0f 18 14 00  mInService
+TYPE  04 00 1c 00  mInstanceType
+VALU  00 00 00 00  mPS3Ticket
+VALU  00 00 00 00  mXboxId
+VALU  00 00 00 00  mPersona
+BSDK  05 20 88 00  mBlazeSDKVersion
+BTIM  05 20 98 00  mBlazeSDKBuildDate
+CLNT  05 20 50 00  mClientName
+CLTP  04 20 e0 00  mClientType
+CPLT  04 20 e4 00  mClientPlatform
+CSKU  05 20 70 00  mClientSkuId
+CVER  05 20 60 00  mClientVersion
+DSDK  05 20 a8 00  mDirtySDKVersion
+ENV   05 20 20 00  mEnvironment
+FPID  09 10 b8 00  mFirstPartyId
+LOC   15 18 80 00  mClientLocale
+NAME  05 20 10 00  mName
+PLAT  05 20 30 00  mPlatform
+PROF  05 00 40 00  mConnectionProfile
+INST  0a 18 10 00  mInstance
+NAME  05 20 f0 00  mServiceName
+SNMS  02 18 00 01  mServiceNames
+TYPE  04 00 e8 00  mType
+IID   14 18 70 00  mInstanceId
+INAM  05 20 60 00  mInstanceName
+SNAM  05 20 10 00  mServiceName
+SNMS  02 18 20 00  mServiceNames
+TYPE  04 00 74 00  mType
+NAME  05 20 18 00  mServiceName
+PLAT  04 00 10 00  mPlatform
+FNSH  04 20 90 00  mFinishedStatus
+PRVT  06 10 98 00  mPrivateReport
+RPRT  0a 00 10 00  mGameReport
+CFLG  04 20 18 00  mFlags
+HIST  0e 18 1c 00  mIncludeHistory
+RTYP  04 20 20 00  mReturnType
+UID   18 00 10 00  mUserId
+```
+
+### blok 128 @ 0x000141a32c10 (25 pol)
+
+```
+RSN   04 00 10 00  mReason
+ENUM  04 20 b8 00  mRegularEnum
+LIST  02 18 78 00  mMyList
+MAP   01 18 10 00  mMyMap
+MSG   05 00 c0 00  mMessage
+VALU  00 00 00 00  mXboxClientAddress
+VALU  00 00 00 00  mXboxServerAddress
+VALU  00 00 00 00  mIpPairAddress
+VALU  00 00 00 00  mIpAddress
+VALU  00 00 00 00  mHostNameAddress
+DBPS  15 18 18 00  mDownstreamBitsPerSecond
+NATT  04 20 10 00  mNatType
+UBPS  15 00 14 00  mUpstreamBitsPerSecond
+BWPS  0a 18 18 00  mBandwidthPingSiteInfo
+LNP   13 18 10 00  mNumLatencyProbes
+LTPS  01 18 50 00  mPingSiteInfoByAliasMap
+SVID  15 18 14 00  mServiceId
+TIME  0d 00 b8 00  mTimeout
+UBFL  07 10 20 00  mBlazeFlags
+UDEV  05 20 38 00  mDeviceInfo
+UFLG  13 18 18 00  mFlags
+ULRC  14 18 10 00  mLastRsltCode
+UNAT  13 18 30 00  mNatType
+USTA  04 20 34 00  mStatus
+UWAN  15 00 14 00  mWanIpAddr
 ```

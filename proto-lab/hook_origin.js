@@ -130,6 +130,54 @@ if (!base) {
   }
   hookFn(ptr("0xebd140"), "OriginRequestTicket");
 
+  // ============ parser odpowiedzi koordynatora QoS (DirtySDK qosapi) ========
+  // _QosApiParseResponse @0xfdb070(rcx = struct polaczenia, rdx = QosApiRef).
+  // Bufor odpowiedzi HTTP lezy pod *(QosApiRef+0x128) + 0x112, a kod powrotu
+  // mowi JEDNOZNACZNIE, czy gra przyjela nasz XML:
+  //    0  -> przyjety, powinny polecic sondy UDP na <qosport>
+  //   -1  -> XmlFind trafil, ale padla walidacja (0xfdb3f1): qosport == 0 albo
+  //          requestid == 0, albo dla qtyp==2 probesize == 0 / numprobes < 2
+  //   -2  -> nie znalazl zadnego z elementow <firewall>/<firetype>/<qos>
+  //          (tak bylo, gdy odsylalismy format TagField "qos.numprobes=1 ...")
+  function hookQosParse(rva) {
+    try {
+      const addr = base.add(rva);
+      Interceptor.attach(addr, {
+        onEnter(args) {
+          this.ref = args[1];
+          let txt = "(nie odczytalem)";
+          try {
+            txt = this.ref.add(0x128).readPointer().add(0x112).readCString(512);
+          } catch (e) { txt = "(blad czytania buforu: " + e.message + ")"; }
+          console.log("");
+          console.log(">>> QosApiParseResponse, bufor odpowiedzi:");
+          console.log("    " + txt);
+        },
+        onLeave(ret) {
+          const rc = ret.toInt32();
+          const why = rc === 0 ? "XML PRZYJETY - sondy UDP powinny polecic"
+                    : rc === -1 ? "walidacja odrzucila (qosport/requestid == 0?)"
+                    : rc === -2 ? "nie znalazl elementu <qos>/<firetype>/<firewall>"
+                    : "nieznany kod";
+          console.log("<<< QosApiParseResponse = " + rc + "  (" + why + ")");
+          try {
+            const st = this.ref.add(0x128).readPointer();
+            console.log("    stan QoS: qtyp=" + st.add(0x1118).readU32() +
+                        " probesize=" + st.add(0x111c).readU32() +
+                        " numprobes=" + st.add(0x1124).readU32() +
+                        " requestid=" + st.add(0x1130).readU32() +
+                        " reqsecret=" + st.add(0x1134).readU32() +
+                        " qosport=" + this.ref.add(0x124).readU16());
+          } catch (e) {}
+        }
+      });
+      console.log("[+] fn QosApiParseResponse @ " + addr);
+    } catch (e) {
+      console.log("[!] nie podpialem QosApiParseResponse (" + e.message + ")");
+    }
+  }
+  hookQosParse(ptr("0xfdb070"));
+
   // ================= KROK A: sledzenie dekodera TDF (heat2) =================
   // Cel: logowac KAZDY tag, ktory dekoder czyta z naszej odpowiedzi. Ostatni
   // tag przed bledem = brakujace/zle pole. Teraz crasha nie ma, wiec sluzy do

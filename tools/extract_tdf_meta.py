@@ -45,16 +45,31 @@ def valid_tag(tag: str) -> bool:
     return len(tag) == 4 and bool(TAG_RE.match(tag))
 
 
-def scan(pe: PE) -> list[dict]:
-    """Przechodzi .rdata co 8 bajtow szukajac par (tag, nazwa pola)."""
-    sec = next((s for s in pe.sections if s.name == ".rdata"), None)
-    if sec is None:
-        raise SystemExit("brak sekcji .rdata")
+# Sekcje, w ktorych leza tablice pol. Poczatkowo skanowalismy tylko .rdata i
+# przez to brakowalo calych klas: tablica QosConfigInfo siedzi w .data (@0x141a32d80),
+# wiec klasa wygladala na nieistniejaca, choc gra jej uzywa. Zrzut z pamieci ma
+# tez wydzielone sekcje metadanych TDF (fieldinf/typeinfo).
+DEFAULT_SECTIONS = (".rdata", ".data", "fieldinf", "typeinfo", ".rodata", "_RDATA")
 
+
+def scan(pe: PE, section_names: tuple[str, ...] = DEFAULT_SECTIONS) -> list[dict]:
+    """Przechodzi wskazane sekcje co 8 bajtow szukajac par (tag, nazwa pola)."""
+    secs = [s for s in pe.sections if s.name in section_names]
+    if not secs:
+        raise SystemExit(f"brak sekcji {section_names} w obrazie")
+
+    out: list[dict] = []
+    seen: set[int] = set()
+    for sec in secs:
+        out.extend(_scan_section(pe, sec, seen))
+    out.sort(key=lambda e: e["va"])
+    return out
+
+
+def _scan_section(pe: PE, sec, seen: set[int]) -> list[dict]:
     lo, hi = sec.raw_ptr, sec.raw_ptr + sec.raw_size
     data = pe.data
     out: list[dict] = []
-    seen: set[int] = set()
 
     for off in range(lo, hi - 16, 8):
         q0, q1 = struct.unpack_from("<QQ", data, off)
@@ -75,6 +90,7 @@ def scan(pe: PE) -> list[dict]:
         seen.add(va)
         out.append({
             "va": va,
+            "sec": sec.name,
             "tag": tag,
             "name": name,
             # bajty 4..7 spakowanego qworda - kandydaci na kod typu,
@@ -103,16 +119,28 @@ def group_runs(entries: list[dict], gap: int = 64) -> list[list[dict]]:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("exe", type=Path)
+    ap.add_argument("exe", type=Path,
+                    help="NFS14.exe LUB pelny minidump .dmp (wiecej sekcji z RAM)")
     ap.add_argument("-o", "--out", type=Path, default=Path("docs/recon"))
+    ap.add_argument("--sections", default=",".join(DEFAULT_SECTIONS),
+                    help="ktore sekcje skanowac (po przecinku)")
     args = ap.parse_args()
 
     if not args.exe.is_file():
         print(f"nie ma takiego pliku: {args.exe}", file=sys.stderr)
         return 1
 
-    pe = PE(args.exe.read_bytes())
-    entries = scan(pe)
+    # .dmp = obraz z pamieci (ma tez fieldinf/typeinfo); .exe = plik z dysku
+    if args.exe.read_bytes()[:4] == b"MDMP":
+        from dump_image import load_dump
+        pe = load_dump(args.exe)
+    else:
+        pe = PE(args.exe.read_bytes())
+    wanted = tuple(s.strip() for s in args.sections.split(",") if s.strip())
+    entries = scan(pe, wanted)
+    per_sec = Counter(e["sec"] for e in entries)
+    print("rekordow wg sekcji: " +
+          ", ".join(f"{k}={v:,}" for k, v in per_sec.most_common()))
     runs = group_runs(entries)
 
     args.out.mkdir(parents=True, exist_ok=True)

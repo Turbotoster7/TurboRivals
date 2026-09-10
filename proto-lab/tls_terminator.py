@@ -438,6 +438,62 @@ def handle(conn: socket.socket, addr, args, out_dir: Path,
             pass
 
 
+def _qos_body(req: bytes, args) -> bytes:
+    """Tresc odpowiedzi koordynatora QoS. Format: XML (DirtySDK xmlparse).
+
+    Ustalone z dezasemblacji zrzutu pamieci (RVA, baza modulu 0x140000000):
+    _QosApiParseResponse @0xfdb070 bierze bufor odpowiedzi HTTP
+    (*(QosApiRef+0x128) + 0x112) i probuje po kolei XmlFind(buf, "firewall"),
+    XmlFind(buf, "firetype"), XmlFind(buf, "qos"); gdy zadna nie trafi -> -2.
+
+    XmlFind @0xfee910 skanuje do '<', pomija <?..?> i <!..>, konczy na '</',
+    a terminator nazwy elementu to maska 0x40008001FFFFFFFF = {0x00-0x20, '/',
+    '>'} - NIE ma tam '=', wiec nazwy z binarki (".numprobes", ".probesize",
+    ".qosport", ".requestid", ".reqsecret") sa nazwami ELEMENTOW XML, a nie
+    kluczy "klucz=wartosc" ani atrybutow. Wartosci czyta
+    XmlContentGetInteger @0xfee6a0 (po '<' przeskakuje do '>', <tag/> = default),
+    a po rodzenstwie (listy ips/ports) przechodzi XmlNext @0xfeeaf0.
+
+    Dlatego poprzednia odpowiedz ("qos.numprobes=1 qos.probesize=64 ...",
+    format TagField) nie zawierala ANI JEDNEGO '<' - parser wracal z -2 i gra
+    milczala na UDP, mimo ze odpowiedz odczytala.
+
+    Walidacja gry (0xfdb3f1-0xfdb424), return 0 tylko gdy przejdzie:
+      * qosport  != 0  (zawsze)
+      * requestid != 0 (zawsze)
+      * dla qtyp == 2 (test pasma) dodatkowo probesize != 0 i numprobes >= 2
+    probesize jest dlugoscia pakietu sondy, wiec musi byc sensowny takze dla
+    qtyp == 1.
+
+    qosport wskazujemy na siebie: klient wysle tam sondy UDP, ktore odbija
+    responder echo. Sonda (builder @0xfdbc30) niesie big-endian requestid,
+    reqsecret, licznik sondy i numprobes, a odbior @0xfdb9c9 porownuje te pola
+    ze stanem - echo bajt w bajt spelnia wszystkie trzy warunki.
+    """
+    path = req.split(b" ", 2)[1] if b" " in req else b"/"
+    port = args.qos_port
+    if b"/qos/firewall" in path:
+        # ips/ports: liczby dziesietne (IP jako uint32 big-endian). Gra czyta N
+        # par przez XmlNext, czyli po rodzenstwie - dlatego wszystkie <ips>
+        # razem, potem wszystkie <ports>.
+        ip = int.from_bytes(bytes(int(o) for o in args.redirect_ip.split(".")), "big")
+        return (f"<firewall><numinterfaces>1</numinterfaces>"
+                f"<ips>{ip}</ips><ports>{port}</ports>"
+                f"<requestid>1</requestid><reqsecret>1</reqsecret>"
+                f"</firewall>").encode()
+    if b"/qos/firetype" in path:
+        # Wartosc trafia do [conn+0x1b0]; gdy == 5, gra nie wola callbacka
+        # (5 = sentinel "nieznany"), wiec odsylamy cos innego. Semantyki enuma
+        # nie znamy - stad flaga --qos-firetype do bisekcji.
+        return (f"<firetype><firetype>{args.qos_firetype}</firetype>"
+                f"</firetype>").encode()
+    # /qos/qos?vers=1&qtyp=N&prpt=P  (prpt = port, z ktorego klient sonduje)
+    return (f"<qos><numprobes>{args.qos_numprobes}</numprobes>"
+            f"<probesize>{args.qos_probesize}</probesize>"
+            f"<qosport>{port}</qosport>"
+            f"<requestid>1</requestid><reqsecret>1</reqsecret></qos>").encode()
+
+
 def _dispatch_blaze(fr, args):
     """Zwraca bajty odpowiedzi Fire2 dla znanego zadania, albo None (brak handlera)."""
     if fr.component == 5 and fr.command == 1:          # Redirector.getServerInstance
@@ -474,6 +530,18 @@ def _dispatch_blaze(fr, args):
         return blaze.build_empty_reply(9, 0xB, fr.seq, msg_type=args.reply_msgtype)
     if fr.component == 9 and fr.command == 0xC:         # Util.userSettingsLoadAll
         return blaze.build_user_settings_load_all_response(fr.seq, msg_type=args.reply_msgtype)
+    # --- UserSessions (component 0x7802). Numery komend NIE sa zgadniete:
+    #     getCommandName @0xf285b0 ma tablice skokow @0xf2867c (indeks = cmd - 3),
+    #     z ktorej wprost wynika: 3=fetchExtendedData, 5=updateExtendedDataAttribute,
+    #     8=updateHardwareFlags, 0xC=lookupUser, 0x14=updateNetworkInfo,
+    #     0x19=updateUserSessionClientData, 0x1A=setUserInfoAttribute,
+    #     0x20=lookupUserSessionId, 0x23=resumeSession.
+    #     updateNetworkInfo przychodzi po domknieciu testu QoS (niesie
+    #     NetworkInfo{ADDR,NLMP,NQOS}) i nie zwraca danych - wystarczy puste
+    #     potwierdzenie, by RPC klienta sie zakonczylo.
+    if fr.component == 0x7802 and fr.command in (0x14, 0x08, 0x1A):
+        return blaze.build_empty_reply(fr.component, fr.command, fr.seq,
+                                       msg_type=args.reply_msgtype)
     return None
 
 
@@ -552,6 +620,15 @@ def main() -> int:
                     help="port ping-site'u QoS podawany w QOSS i nasluchiwany po UDP")
     ap.add_argument("--no-qos-responder", action="store_true",
                     help="nie uruchamiaj respondera UDP QoS")
+    ap.add_argument("--qos-numprobes", type=int, default=10,
+                    help="<numprobes> w odpowiedzi /qos/qos (ile sond UDP wysle "
+                         "klient; dla qtyp=2 gra wymaga >= 2)")
+    ap.add_argument("--qos-probesize", type=int, default=64,
+                    help="<probesize> w odpowiedzi /qos/qos = dlugosc pakietu "
+                         "sondy UDP (musi byc != 0)")
+    ap.add_argument("--qos-firetype", type=int, default=1,
+                    help="<firetype> w odpowiedzi /qos/firetype (typ NAT). 5 = "
+                         "sentinel 'nieznany' i gra nie wola callbacka")
     ap.add_argument("--plain-session-data", action="store_true",
                     help="wysylaj PUSTE UserSessionExtendedData w notyfikacjach po "
                          "loginie (stare zachowanie - do porownania A/B)")
@@ -622,10 +699,52 @@ def main() -> int:
                 print(f"  [QoS UDP #{n}] {len(data)} B od {peer[0]}:{peer[1]}")
             s.sendto(data, peer)
 
+    def serve_qos_http(port: int) -> None:
+        """Sonda QoS po TCP/HTTP.
+
+        DirtySDK odpytuje ping-site takze po HTTP - w binarce sa wzorce URL
+        "%s://%s:%u/qos/qos?vers=%d", "/qos/firewall", "/qos/firetype". Dotad
+        na porcie QoS sluchalismy WYLACZNIE po UDP, wiec takie polaczenie
+        dostawalo odmowe. Logujemy cale zadanie (to pokaze, czego klient chce)
+        i odpowiadamy pustym 200, zeby nie zostawiac go z niczym.
+        """
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        s.bind(("0.0.0.0", port))
+        s.listen(8)
+        print(f"nasluch TCP 0.0.0.0:{port} (QoS HTTP)")
+        while True:
+            try:
+                conn, peer = s.accept()
+            except OSError:
+                return
+            try:
+                conn.settimeout(5)
+                req = conn.recv(4096)
+                print(f"\n  [QoS HTTP] od {peer[0]}:{peer[1]}, {len(req)} B")
+                try:
+                    print("    " + req.decode("latin1").replace("\r\n", "\n    ").strip())
+                except Exception:                     # noqa: BLE001
+                    print(hexdump(req, 128))
+                body = _qos_body(req, args)
+                print(f"    -> odpowiadam: {body.decode('latin1')}")
+                conn.sendall(b"HTTP/1.1 200 OK\r\n"
+                             b"Content-Type: text/plain\r\n"
+                             b"Content-Length: " + str(len(body)).encode() +
+                             b"\r\n\r\n" + body)
+            except OSError:
+                pass
+            finally:
+                try:
+                    conn.close()
+                except OSError:
+                    pass
+
     for p in ports[1:]:
         threading.Thread(target=serve, args=(p,), daemon=True).start()
     if not args.no_qos_responder:
         threading.Thread(target=serve_qos, args=(args.qos_port,), daemon=True).start()
+        threading.Thread(target=serve_qos_http, args=(args.qos_port,), daemon=True).start()
     print(f"oddajemy grze adres Blaze: {args.redirect_ip}:{args.blaze_port}. "
           f"Ctrl+C konczy.\n")
     try:

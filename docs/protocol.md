@@ -352,3 +352,109 @@ trywialna. To samo uproszczenie stosuje [jacobtread/blaze-ssl](https://github.co
   Caly tor kryptograficzny potwierdzony. Czego test nie obejmuje: czy PRAWDZIWY
   ProtoSSL przyjmie patchowany cert i uzyje dokladnie tej krypto - to test na
   zywym kliencie (pytanie otwarte 3).
+
+---
+
+## 9. Koordynator QoS (DirtySDK `qosapi`) - **potwierdzony z kodu**
+
+Po `Util.postAuth` gra rusza test QoS: bierze ping-site z `QOSS` (nasza
+odpowiedz `preAuth`) i odpytuje go po **HTTP**, a potem sonduje po **UDP**.
+Ponizsze ustalenia pochodza z dezasemblacji zrzutu pamieci (RVA wzgledem bazy
+modulu `0x140000000`), nie z analogii do innych tytulow.
+
+### Endpointy HTTP
+
+Wzorce URL w binarce (`0x170ee60`+):
+
+```
+%s://%s:%u/qos/qos?vers=%d       + &qtyp=  &prpt=
+%s://%s:%u/qos/firewall?vers=%d  + &nint=
+%s://%s:%u/qos/firetype?vers=%d  + &rqid=  &rqsc=  &inip=  &inpt=
+```
+
+`prpt` = port, z ktorego klient bedzie sondowal; `rqid`/`rqsc` to `requestid`/
+`reqsecret`, ktore klient odczytal z NASZEJ odpowiedzi - ich pojawienie sie w
+zapytaniu `firetype` jest dowodem, ze XML zostal sparsowany.
+
+### Format odpowiedzi: XML, nie `klucz=wartosc`
+
+`_QosApiParseResponse` @`0xfdb070` (`rcx` = struct polaczenia, `rdx` =
+`QosApiRef`) czyta bufor odpowiedzi HTTP spod `*(QosApiRef+0x128) + 0x112` i
+probuje po kolei `XmlFind(buf, "firewall")`, `XmlFind(buf, "firetype")`,
+`XmlFind(buf, "qos")`; gdy zadna nie trafi, zwraca `-2`.
+
+| RVA | funkcja | jak rozpoznana |
+| --- | --- | --- |
+| `0xfee910` | `XmlFind(pXml, pName)` | skanuje do `0x3c` (`<`), pomija `<?..?>` i `<!..>`, konczy na `</`; maska terminatorow nazwy `0x40008001FFFFFFFF` = `{0x00-0x20, '/', '>'}` - **brak `=`**, wiec to elementy, nie atrybuty ani pary `klucz=wartosc`; `pName[0]=='.' && pList[0]=='<'` -> oba `++` (zejscie do dzieci) |
+| `0xfee6a0` | `XmlContentGetInteger(pXml, iDefault)` | po `<` przeskakuje do `>`, `<tag/>` zwraca default, potem whitespace, `+`/`-`, cyfry |
+| `0xfeeaf0` | `XmlNext` | pętla po rodzenstwie `ips`/`ports` @`0xfdb170` |
+
+Dlatego nazwy `.numprobes`, `.probesize`, `.qosport`, `.requestid`,
+`.reqsecret`, `.numinterfaces`, `.ips`, `.ports`, `.firetype` (`0x170ef08`+) to
+**nazwy elementow XML**. Poprawne odpowiedzi:
+
+```xml
+<qos><numprobes>10</numprobes><probesize>64</probesize><qosport>17502</qosport>
+<requestid>1</requestid><reqsecret>1</reqsecret></qos>
+
+<firetype><firetype>1</firetype></firetype>
+
+<firewall><numinterfaces>1</numinterfaces><ips>2130706433</ips><ports>17502</ports>
+<requestid>1</requestid><reqsecret>1</reqsecret></firewall>
+```
+
+`ips` to IP jako `uint32` big-endian zapisane dziesietnie. Listy `ips`/`ports`
+gra obchodzi przez `XmlNext` (po rodzenstwie), wiec `numinterfaces` par podajemy
+jako wszystkie `<ips>` razem, potem wszystkie `<ports>`.
+
+### Walidacja (`0xfdb3f1`-`0xfdb424`)
+
+`return 0` (sukces) tylko gdy:
+
+```
+if (qtyp == 2)            -> probesize != 0 && numprobes >= 2    // test pasma
+qosport != 0                                                     // zawsze
+requestid != 0                                                   // zawsze
+```
+
+Kody powrotu: `0` = przyjete, `-1` = walidacja odrzucila, `-2` = nie znaleziono
+zadnego z trzech elementow. Pola stanu (`*(QosApiRef+0x128)`):
+`+0x1118` qtyp, `+0x111c` probesize, `+0x1120` licznik wyslanych sond,
+`+0x1124` numprobes, `+0x1128` licznik odebranych, `+0x1130` requestid,
+`+0x1134` reqsecret, `+0x1138` numinterfaces, `+0x113c` ips[], `+0x1144` ports[],
+`+0x1148` firetype; `qosport` to `word` pod `QosApiRef+0x124`.
+
+### Sonda UDP
+
+Builder @`0xfdbc30`-`0xfdbd02` (`SocketSendto` @`0xfd9c30`), wszystko
+big-endian, dlugosc pakietu = `probesize`:
+
+```
++0x00  htonl(<pole z [conn+0]>)      +0x04  htonl(requestid)
++0x08  htonl(reqsecret)              +0x0c  htonl(licznik sondy)
++0x10  htonl(numprobes)              dalej wypelnienie do probesize
+```
+
+Odbior @`0xfdb9c9` sprawdza `requestid` i `reqsecret` z pakietu i porownuje
+`ntohl(pkt+0xc)` z `numprobes` -> **echo bajt w bajt spelnia wszystkie
+warunki**; responder UDP nie musi niczego przeliczac.
+
+### Komendy komponentu UserSessions (0x7802)
+
+`getCommandName` @`0xf285b0` ma tablice skokow @`0xf2867c` (indeks = `cmd - 3`,
+0x28 wpisow). Stad, bez zgadywania:
+
+| cmd | nazwa | cmd | nazwa |
+| --- | --- | --- | --- |
+| 3 | fetchExtendedData | 0x17 | lookupUserGeoIPData |
+| 5 | updateExtendedDataAttribute | 0x18 | overrideUserGeoIPData |
+| 8 | updateHardwareFlags | 0x19 | updateUserSessionClientData |
+| 0xC | lookupUser | 0x1A | setUserInfoAttribute |
+| 0xD | lookupUsers | 0x1B | resetUserGeoIPData |
+| 0xE | lookupUsersByPrefix | 0x20 | lookupUserSessionId |
+| 0xF | lookupUsersIdentification | 0x21 | fetchLastLocaleUsedAndAuthError |
+| **0x14** | **updateNetworkInfo** | 0x22 | fetchUserFirstLastAuthTime |
+| | | 0x23 | resumeSession |
+
+Ta sama technika (`getCommandName` + tablica skokow) dziala dla kazdego
+komponentu - to tansze niz zgadywanie numerow z emulatorow innych gier.

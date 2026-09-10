@@ -360,28 +360,34 @@ DEFAULT_CLIENT_CONFIG = {
 
 
 def f_qos_ping_site(alias: str, host: str, port: int) -> list[Field]:
-    """Pola QosPingSiteInfo (@0x1417065c0, potwierdzone z binarki):
-    PSA(adres) PSP(port) SNA(nazwa site) - tagi rosnaco."""
+    """Pola QosPingSiteInfo (@0x1417065c0, odczytane z binarki):
+    PSA(mAddress) PSP(mPort) SNA(mSiteName) - tagi rosnaco."""
     return [f_str("PSA", host), f_int("PSP", port), f_str("SNA", alias)]
 
 
 def f_qos_settings(tag: str = "QOSS", *, alias: str = "ams",
                    host: str = "127.0.0.1", port: int = 17502,
-                   service_id: int = 0) -> Field:
-    """QosConfigInfo - ustawienia testu QoS.
+                   service_id: int = 0, timeout_us: int = 5000000) -> Field:
+    """QosConfigInfo (@0x141a32d80) - ustawienia testu QoS.
 
-    Sam QosConfigInfo nie ma tablicy pol w naszym zrzucie .rdata, ale zawarty w
-    nim QosPingSiteInfo zgadza sie z emulatorem BF3 pole w pole (PSA/PSP/SNA),
-    wiec bierzemy z BF3 tez uklad opakowania:
-        BWPS(struct) LNP(int) LTPS(map alias->struct) SVID(int).
-    Ping-site wskazuje na nas - inaczej klient sonduje martwe serwery EA.
+    Uklad ODCZYTANY Z BINARKI (nie zgadniety z BF3):
+        BWPS(struct) mBandwidthPingSiteInfo
+        LNP (uint16) mNumLatencyProbes
+        LTPS(map)    mPingSiteInfoByAliasMap
+        SVID(int32)  mServiceId
+        TIME(czas)   mTimeout            <- tego pola NIE MA w ukladzie BF3
+
+    Tablica pol tej klasy lezy w sekcji .data, nie .rdata - dlatego wczesniejszy
+    skan jej nie widzial i uklad braliśmy przez analogie do BF3, bez TIME.
+    Ping-site wskazuje na nas; inaczej klient sonduje martwe serwery EA.
     """
     site = f_qos_ping_site(alias, host, port)
     return f_struct(tag, [
-        f_struct("BWPS", site),                      # bandwidth ping site
-        f_int("LNP", 1),                             # liczba sond latencji
-        f_map_struct("LTPS", {alias: site}),         # ping sites po aliasie
-        f_int("SVID", service_id),
+        f_struct("BWPS", site),                      # mBandwidthPingSiteInfo
+        f_int("LNP", 1),                             # mNumLatencyProbes
+        f_map_struct("LTPS", {alias: site}),         # mPingSiteInfoByAliasMap
+        f_int("SVID", service_id),                   # mServiceId
+        f_int("TIME", timeout_us),                   # mTimeout (TimeValue, us)
     ])
 
 
