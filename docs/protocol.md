@@ -424,20 +424,44 @@ zadnego z trzech elementow. Pola stanu (`*(QosApiRef+0x128)`):
 `+0x1134` reqsecret, `+0x1138` numinterfaces, `+0x113c` ips[], `+0x1144` ports[],
 `+0x1148` firetype; `qosport` to `word` pod `QosApiRef+0x124`.
 
-### Sonda UDP
+### Sonda UDP - wymagania odbioru (potwierdzone na zywo)
 
-Builder @`0xfdbc30`-`0xfdbd02` (`SocketSendto` @`0xfd9c30`), wszystko
-big-endian, dlugosc pakietu = `probesize`:
+Istnieja DWA rodzaje sond. Rozroznia je sam klient po `ntohl(pakiet+0x04)`
+(`0xfdb76d`): `< 2` to pomiar latencji, `>= 2` sciezka pasma.
+
+**Sonda latencji** - builder @`0xfdbe80`, dlugosc na twardo `0x14` (20 B),
+wszystko big-endian:
 
 ```
-+0x00  htonl(<pole z [conn+0]>)      +0x04  htonl(requestid)
-+0x08  htonl(reqsecret)              +0x0c  htonl(licznik sondy)
-+0x10  htonl(numprobes)              dalej wypelnienie do probesize
++0x00  id ping-site'u (*(u32*)[QosApi+8])    +0x04  requestid
++0x08  reqsecret                             +0x0c  [QosApi+0x14]
++0x10  czas wyslania (NetTick)
 ```
 
-Odbior @`0xfdb9c9` sprawdza `requestid` i `reqsecret` z pakietu i porownuje
-`ntohl(pkt+0xc)` z `numprobes` -> **echo bajt w bajt spelnia wszystkie
-warunki**; responder UDP nie musi niczego przeliczac.
+Odbior @`0xfdb6a0` - **gole echo jest odrzucane**:
+
+| RVA | warunek / odczyt |
+| --- | --- |
+| `0xfdb737` | `len >= 0x10`, inaczej pakiet porzucony |
+| `0xfdb76d` | `ntohl(+0x04) < 2` wybiera sciezke latencji |
+| `0xfdb777` | **`len >= 0x1e` (30 B)** - 20-bajtowe echo wypada tutaj |
+| `0xfdb82e` | `RTT = czas_odbioru - ntohl(+0x10)` - czas trzeba odbic |
+| `0xfdb7cb` | `ntohl(+0x14)` -> zewnetrzny IP klienta (zapis do stanu) |
+| `0xfdb804` | `ntohs(+0x18)` -> zewnetrzny PORT klienta |
+| `0xfdb8be` | `ntohl(+0x1a)` = dlugosc ogona; `memcpy` z `+0x1e` tylko gdy `(dlugosc - 1) <= 0xff`, wiec `0` = brak ogona |
+| `0xfdb918` | bit0 `ntohl(+0x0c)` wybiera prog "dosc probek": `[..+0x13c] >> 2` albo `[..+0x13c]` |
+
+Stad poprawna odpowiedz = **30 B**: 20 B sondy odbite + IP nadawcy (4 B BE) +
+port nadawcy (2 B BE) + `0x00000000` jako dlugosc ogona. To wlasnie jest sens
+sondy QoS: klient poznaje swoj adres zewnetrzny i liczy RTT.
+Implementacja: `_qos_probe_reply` w `tls_terminator.py`.
+
+**Sprzezenie z `requestid`:** to samo pole wybiera sciezke odbioru, wiec dla
+testu latencji musi byc `< 2`, a walidacja odpowiedzi HTTP wymaga `!= 0` -
+czyli **dokladnie 1**. Sonda sciezki pasma (dlugosc `probesize`, builder
+@`0xfdbc30`: `+0x00` id, `+0x04` requestid, `+0x08` reqsecret, `+0x0c` licznik,
+`+0x10` numprobes) wymagalaby `requestid >= 2`; tam kod tylko porownuje
+requestid/reqsecret ze stanem i zlicza bajty, wiec zwykle echo wystarcza.
 
 ### Komendy komponentu UserSessions (0x7802)
 

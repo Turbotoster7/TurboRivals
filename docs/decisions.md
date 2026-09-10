@@ -235,3 +235,19 @@ sondy porownuje `requestid`/`reqsecret`/`numprobes` odczytane z pakietu, a echo
 zwraca je niezmienione), ale **nie bylo jeszcze testowane na zywo**. Nieznana
 zostaje tez semantyka `<firetype>` (typ NAT): wartosc trafia do `[conn+0x1b0]`,
 a `== 5` wylacza callback, wiec 5 to sentinel "nieznany"; domyslnie odsylamy 1.
+
+### Uzupelnienie tego samego dnia - sonda UDP tez nie jest echem
+
+Po przejsciu XML-a gra **wyslala sondy UDP** (`QosApiParseResponse = 0`,
+potwierdzone hookiem), ale nadawala cztery identyczne sondy co ~1 s i ponawiala
+`GET /qos/qos` - czyli odrzucala nasze odpowiedzi. Przyczyna w tym samym
+odbiorniku: `0xfdb777` wymaga **`len >= 0x1e` (30 B)**, a odbijalismy 20 B
+sondy. Dalej kod czyta z odpowiedzi zewnetrzny IP (`+0x14`) i port (`+0x18`)
+klienta oraz dlugosc ogona (`+0x1a`) - pol, ktorych w echu fizycznie nie ma.
+
+Korekta wczesniejszego wpisu: teza "echo bajt w bajt spelnia wszystkie warunki"
+byla sluszna tylko dla sciezki pasma (`ntohl(+0x04) >= 2`), gdzie kod porownuje
+requestid/reqsecret i zlicza bajty. Sciezka latencji, ktorej gra uzywa przy
+`qtyp=0`, wymaga zbudowania odpowiedzi. Wniosek do zapamietania: **zanim uznam
+echo za wystarczajace, mam przeczytac CALA sciezke odbioru, nie tylko miejsce,
+w ktorym porownywane sa pola, ktore znam.**

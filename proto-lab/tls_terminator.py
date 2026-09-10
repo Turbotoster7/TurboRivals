@@ -494,6 +494,44 @@ def _qos_body(req: bytes, args) -> bytes:
             f"<requestid>1</requestid><reqsecret>1</reqsecret></qos>").encode()
 
 
+def _qos_probe_reply(data: bytes, peer) -> bytes:
+    """Odpowiedz na sonde UDP QoS. Gole echo NIE WYSTARCZA.
+
+    Klient wysyla sonde latencji 20 B (builder @0xfdbe80, dlugosc na twardo
+    0x14), wszystko big-endian:
+        +0x00 id ping-site'u   +0x04 requestid   +0x08 reqsecret
+        +0x0c pole [QosApi+0x14]   +0x10 czas wyslania (NetTick)
+
+    Odbior @0xfdb6a0 jest znacznie bardziej wymagajacy:
+        0xfdb737  len >= 0x10           - inaczej pakiet odrzucony
+        0xfdb76d  ntohl(+0x04) < 2      - wybor sciezki: < 2 = pomiar latencji,
+                  inaczej sciezka pasma z porownaniem requestid/reqsecret
+        0xfdb777  len >= 0x1e (30 B)    - sciezka latencji ODRZUCA krotsze!
+        0xfdb82e  RTT = czas_odbioru - ntohl(+0x10)   (echo czasu konieczne)
+        0xfdb7cb  ntohl(+0x14)          -> zewnetrzny IP klienta (zapis do stanu)
+        0xfdb804  ntohs(+0x18)          -> zewnetrzny PORT klienta
+        0xfdb8be  ntohl(+0x1a) = dlugosc ogona; memcpy z +0x1e tylko gdy
+                  (dlugosc - 1) <= 0xff, wiec 0 = brak ogona i bez kopiowania
+
+    Stad odpowiedz = 20 B sondy odbite + adres nadawcy widziany przez nas +
+    zerowa dlugosc ogona = dokladnie 30 B. Tak klient poznaje swoj adres
+    zewnetrzny (to jest sens sondy QoS) i liczy RTT.
+
+    UWAGA na requestid: to ten sam bajt, ktory wybiera sciezke odbioru, wiec dla
+    testu latencji musi byc < 2, a walidacja odpowiedzi HTTP wymaga != 0 -
+    czyli DOKLADNIE 1. Pakiety innego rodzaju (sciezka pasma, dlugosc
+    probesize) odbijamy bez zmian: tam kod tylko porownuje requestid/reqsecret
+    i zlicza bajty.
+    """
+    if len(data) < 0x10 or int.from_bytes(data[4:8], "big") >= 2:
+        return data                       # nie sonda latencji - zwykle echo
+    ip = bytes(int(o) for o in peer[0].split("."))
+    return (data[:0x14].ljust(0x14, bytes(1))      # echo naglowka sondy (z czasem)
+            + ip                                 # +0x14 zewnetrzny IP klienta
+            + peer[1].to_bytes(2, "big")         # +0x18 zewnetrzny port klienta
+            + bytes(4))                     # +0x1a dlugosc ogona = 0
+
+
 def _dispatch_blaze(fr, args):
     """Zwraca bajty odpowiedzi Fire2 dla znanego zadania, albo None (brak handlera)."""
     if fr.component == 5 and fr.command == 1:          # Redirector.getServerInstance
@@ -674,12 +712,12 @@ def main() -> int:
                              daemon=True).start()
 
     def serve_qos(port: int) -> None:
-        """Responder QoS: odbija kazdy pakiet UDP z powrotem do nadawcy.
+        """Responder QoS po UDP.
 
         Klient Blaze po preAuth sonduje ping-site'y z QOSS. Wskazujemy je na
         siebie, wiec musimy odpowiadac - bez odpowiedzi test QoS nigdy sie nie
-        konczy. Echo wystarczy do zmierzenia RTT; jesli klient oczekuje
-        konkretnej tresci, zobaczymy to w zrzucie pierwszych pakietow.
+        konczy. Tresc odpowiedzi sklada _qos_probe_reply (gole echo klient
+        odrzuca: sciezka latencji wymaga >= 30 B i niesie adres zewnetrzny).
         """
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -697,7 +735,12 @@ def main() -> int:
                 print(hexdump(data, 64))
             elif n % 25 == 0:
                 print(f"  [QoS UDP #{n}] {len(data)} B od {peer[0]}:{peer[1]}")
-            s.sendto(data, peer)
+            reply = _qos_probe_reply(data, peer)
+            if n <= 5:
+                print(f"    -> odpowiadam {len(reply)} B"
+                      f"{' (echo)' if reply == data else ' (sonda latencji)'}")
+                print(hexdump(reply, 64))
+            s.sendto(reply, peer)
 
     def serve_qos_http(port: int) -> None:
         """Sonda QoS po TCP/HTTP.
