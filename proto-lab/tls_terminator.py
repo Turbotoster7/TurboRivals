@@ -473,14 +473,36 @@ def _qos_body(req: bytes, args) -> bytes:
     path = req.split(b" ", 2)[1] if b" " in req else b"/"
     port = args.qos_port
     if b"/qos/firewall" in path:
-        # ips/ports: liczby dziesietne (IP jako uint32 big-endian). Gra czyta N
-        # par przez XmlNext, czyli po rodzenstwie - dlatego wszystkie <ips>
-        # razem, potem wszystkie <ports>.
+        # Klucze tej galezi to SCIEZKI ZAGNIEZDZONE, nie nazwy plaskie: w .rdata
+        # stoi jeden string ".ips.ips" z NUL-em na koncu (@0x170ef18) i ".ports.ports"
+        # (@0x170ef28) - po jednym NUL-u na koncu, kropka w srodku to zejscie do
+        # dziecka. Czyli gra szuka elementu `ips` WEWNATRZ elementu `ips`:
+        #     <ips><ips>A</ips><ips>B</ips></ips>
+        # Plaskie <ips>A</ips> nie zostaje znalezione - potwierdzone zywym stanem
+        # ze zrzutu pamieci: numinterfaces bylo zapisane (0xfdb0b6), a ips[0] i
+        # ports[0] zostaly zerami, bo XmlFind(".ips.ips") zwrocil NULL i parser
+        # wyszedl z -2 (0xfdb100 -> 0xfdb269).
+        # Dla kontrastu galaz /qos/qos ma klucze plaskie (".numprobes" itd.).
+        #
+        # Kolejne pary to kolejne PORTY na tym samym IP - test NAT polega na
+        # porownaniu portu zewnetrznego widzianego z dwoch roznych endpointow
+        # serwera, wiec musza byc rozne. Nasluch UDP na tych portach podnosi
+        # main() (--qos-interfaces).
+        nint = 1
+        for part in path.split(b"&"):
+            if part.startswith(b"nint=") or part.startswith(b"?nint="):
+                try:
+                    nint = int(part.split(b"=", 1)[1])
+                except ValueError:
+                    pass
+        nint = max(1, min(nint, args.qos_interfaces))      # tylko tyle, ile slucha
         ip = int.from_bytes(bytes(int(o) for o in args.redirect_ip.split(".")), "big")
-        return (f"<firewall><numinterfaces>1</numinterfaces>"
-                f"<ips>{ip}</ips><ports>{port}</ports>"
-                f"<requestid>1</requestid><reqsecret>1</reqsecret>"
-                f"</firewall>").encode()
+        ips = "".join(f"<ips>{ip}</ips>" for _ in range(nint))
+        ports = "".join(f"<ports>{port + i}</ports>" for i in range(nint))
+        return (f"<firewall><numinterfaces>{nint}</numinterfaces>"
+                f"<ips>{ips}</ips><ports>{ports}</ports>"
+                f"<requestid>{args.qos_requestid}</requestid>"
+                f"<reqsecret>1</reqsecret></firewall>").encode()
     if b"/qos/firetype" in path:
         # Wartosc trafia do [conn+0x1b0]; gdy == 5, gra nie wola callbacka
         # (5 = sentinel "nieznany"), wiec odsylamy cos innego. Semantyki enuma
@@ -491,45 +513,63 @@ def _qos_body(req: bytes, args) -> bytes:
     return (f"<qos><numprobes>{args.qos_numprobes}</numprobes>"
             f"<probesize>{args.qos_probesize}</probesize>"
             f"<qosport>{port}</qosport>"
-            f"<requestid>1</requestid><reqsecret>1</reqsecret></qos>").encode()
+            f"<requestid>{args.qos_requestid}</requestid>"
+            f"<reqsecret>1</reqsecret></qos>").encode()
 
 
-def _qos_probe_reply(data: bytes, peer) -> bytes:
-    """Odpowiedz na sonde UDP QoS. Gole echo NIE WYSTARCZA.
+def _qos_probe_reply(data: bytes, peer, args) -> bytes:
+    """Odpowiedz na sonde UDP QoS. Gole echo NIE WYSTARCZA i dwa rodzaje sond
+    wymagaja ROZNYCH odpowiedzi.
 
-    Klient wysyla sonde latencji 20 B (builder @0xfdbe80, dlugosc na twardo
-    0x14), wszystko big-endian:
-        +0x00 id ping-site'u   +0x04 requestid   +0x08 reqsecret
-        +0x0c pole [QosApi+0x14]   +0x10 czas wyslania (NetTick)
+    Odbior @0xfdb6a0 wybiera sciezke po polu +0x04 NASZEJ odpowiedzi
+    (0xfdb76d: `cmp r15d, 2; jae ...`), a nie po tym, co przyslal klient:
+      ntohl(+0x04) <  2  -> sciezka latencji / adresu zewnetrznego
+      ntohl(+0x04) >= 2  -> sciezka pasma, z porownaniem requestid i reqsecret
+    Dlatego requestid w odpowiedzi HTTP MUSI byc >= 2 (inaczej sciezka pasma jest
+    nieosiagalna), a w odpowiedzi na sonde latencji wpisujemy na sztywno 1.
 
-    Odbior @0xfdb6a0 jest znacznie bardziej wymagajacy:
-        0xfdb737  len >= 0x10           - inaczej pakiet odrzucony
-        0xfdb76d  ntohl(+0x04) < 2      - wybor sciezki: < 2 = pomiar latencji,
-                  inaczej sciezka pasma z porownaniem requestid/reqsecret
-        0xfdb777  len >= 0x1e (30 B)    - sciezka latencji ODRZUCA krotsze!
-        0xfdb82e  RTT = czas_odbioru - ntohl(+0x10)   (echo czasu konieczne)
-        0xfdb7cb  ntohl(+0x14)          -> zewnetrzny IP klienta (zapis do stanu)
-        0xfdb804  ntohs(+0x18)          -> zewnetrzny PORT klienta
-        0xfdb8be  ntohl(+0x1a) = dlugosc ogona; memcpy z +0x1e tylko gdy
-                  (dlugosc - 1) <= 0xff, wiec 0 = brak ogona i bez kopiowania
+    SONDA LATENCJI - 20 B, builder @0xfdbe80 (dlugosc na twardo 0x14), BE:
+        +0x00 id ping-site'u  +0x04 requestid  +0x08 reqsecret
+        +0x0c [QosApi+0x14]   +0x10 czas wyslania (NetTick)
+    Odpowiedz MUSI miec >= 0x1e = 30 B (0xfdb777) i zawierac:
+        +0x04 = 1             wybor sciezki latencji
+        +0x10 = czas z sondy  RTT = czas_odbioru - ntohl(+0x10)   (0xfdb82e)
+        +0x14 = IP klienta    zapis do stanu jako adres zewnetrzny (0xfdb7cb)
+        +0x18 = port klienta  u16 (0xfdb804)
+        +0x1a = 0             dlugosc ogona; memcpy z +0x1e tylko gdy
+                              (dlugosc - 1) <= 0xff, czyli 0 = brak ogona
+    Sens sondy: klient poznaje swoj adres zewnetrzny i mierzy RTT.
 
-    Stad odpowiedz = 20 B sondy odbite + adres nadawcy widziany przez nas +
-    zerowa dlugosc ogona = dokladnie 30 B. Tak klient poznaje swoj adres
-    zewnetrzny (to jest sens sondy QoS) i liczy RTT.
+    SONDA PASMA - dlugosc probesize, builder @0xfdbc30, BE:
+        +0x00 id  +0x04 requestid  +0x08 reqsecret
+        +0x0c licznik wyslanych (0, 1, 2, ...)   +0x10 numprobes
+    Odpowiedz ma INNY uklad niz sonda (kod czyta z niej inne offsety):
+        +0x04 = requestid, +0x08 = reqsecret  - porownywane ze stanem (0xfdb9d0)
+        +0x0c = ILE SOND JUZ ODEBRALISMY; gdy zrowna sie z numprobes (0xfdba7b),
+                test pasma jest domkniety: 0xfdba94 ustawia bit0 "gotowe"
+                (przy firetype != 5; gdy == 5, 0xfdbaa0 przechodzi do qtyp 5)
+        +0x14 = pasmo WYSYLKI klienta zmierzone przez serwer, w bitach/s -
+                czytane TYLKO z pierwszej odpowiedzi (0xfdba05)
+    Pasmo ODBIORU klient liczy sam z czasow naszych odpowiedzi
+    (0xfdba1f: odebrane * probesize * 8000 / czas), wiec wystarczy odpowiadac
+    na kazda sonde.
 
-    UWAGA na requestid: to ten sam bajt, ktory wybiera sciezke odbioru, wiec dla
-    testu latencji musi byc < 2, a walidacja odpowiedzi HTTP wymaga != 0 -
-    czyli DOKLADNIE 1. Pakiety innego rodzaju (sciezka pasma, dlugosc
-    probesize) odbijamy bez zmian: tam kod tylko porownuje requestid/reqsecret
-    i zlicza bajty.
+    Licznik odebranych bierzemy z sondy (+0x0c) + 1 - sonda numeruje sie sama od
+    zera, wiec nie trzymamy zadnego stanu, a przy ostatniej sondzie wychodzi
+    dokladnie numprobes.
     """
-    if len(data) < 0x10 or int.from_bytes(data[4:8], "big") >= 2:
-        return data                       # nie sonda latencji - zwykle echo
-    ip = bytes(int(o) for o in peer[0].split("."))
-    return (data[:0x14].ljust(0x14, bytes(1))      # echo naglowka sondy (z czasem)
-            + ip                                 # +0x14 zewnetrzny IP klienta
-            + peer[1].to_bytes(2, "big")         # +0x18 zewnetrzny port klienta
-            + bytes(4))                     # +0x1a dlugosc ogona = 0
+    if len(data) < 0x10:
+        return data                        # za krotkie, gra i tak odrzuci
+    buf = bytearray(data)
+    if len(data) == 0x14:                  # sonda latencji
+        buf[0x04:0x08] = (1).to_bytes(4, "big")
+        ip = bytes(int(o) for o in peer[0].split("."))
+        return bytes(buf) + ip + peer[1].to_bytes(2, "big") + bytes(4)
+    got = int.from_bytes(data[0x0c:0x10], "big") + 1
+    buf[0x0c:0x10] = got.to_bytes(4, "big")
+    if len(buf) >= 0x18:
+        buf[0x14:0x18] = args.qos_upstream_bps.to_bytes(4, "big")
+    return bytes(buf)
 
 
 def _dispatch_blaze(fr, args):
@@ -555,7 +595,8 @@ def _dispatch_blaze(fr, args):
     if fr.component == 1 and fr.command == 152:         # Authentication.login (Origin)
         return blaze.build_login_response(fr.seq, msg_type=args.reply_msgtype)
     if fr.component == 9 and fr.command == 8:           # Util.postAuth
-        return blaze.build_postauth_response(fr.seq, msg_type=args.reply_msgtype)
+        return blaze.build_postauth_response(fr.seq, msg_type=args.reply_msgtype,
+                                             subsystems=not args.postauth_minimal)
     # --- komendy Util wolane PO postAuth (numeracja z emulatora BF3, ten sam
     #     silnik; NFS uzywa component 9 dla Util). Brak odpowiedzi na ktoras z
     #     nich najpewniej trzymal gre na "Laczenie" (RPC klienta nie konczyl sie).
@@ -664,9 +705,25 @@ def main() -> int:
     ap.add_argument("--qos-probesize", type=int, default=64,
                     help="<probesize> w odpowiedzi /qos/qos = dlugosc pakietu "
                          "sondy UDP (musi byc != 0)")
+    ap.add_argument("--qos-interfaces", type=int, default=2,
+                    help="ile endpointow QoS wystawiamy (porty qos-port, +1, ...). "
+                         "Test NAT (/qos/firewall?nint=N) porownuje port zewnetrzny "
+                         "widziany z roznych endpointow, wiec potrzebuje >= 2")
+    ap.add_argument("--qos-requestid", type=int, default=1234,
+                    help="<requestid> w odpowiedzi /qos/qos. MUSI byc >= 2 - to "
+                         "samo pole wybiera sciezke odbioru sondy, a sciezka "
+                         "pasma dziala tylko dla >= 2")
+    ap.add_argument("--qos-upstream-bps", type=int, default=100_000_000,
+                    help="pasmo wysylki klienta raportowane w odpowiedzi na "
+                         "pierwsza sonde pasma (bity/s, pole +0x14)")
     ap.add_argument("--qos-firetype", type=int, default=1,
                     help="<firetype> w odpowiedzi /qos/firetype (typ NAT). 5 = "
                          "sentinel 'nieznany' i gra nie wola callbacka")
+    ap.add_argument("--postauth-minimal", action="store_true",
+                    help="w odpowiedzi postAuth wyzeruj PORT i oproznij ADRS w "
+                         "PSS/TELE/TICK (struktury zostaja). A/B do pytania, czy "
+                         "klient rozlacza sie, bo probuje podniesc podsystemy pod "
+                         "adresami, pod ktorymi nikt nie slucha")
     ap.add_argument("--plain-session-data", action="store_true",
                     help="wysylaj PUSTE UserSessionExtendedData w notyfikacjach po "
                          "loginie (stare zachowanie - do porownania A/B)")
@@ -722,7 +779,7 @@ def main() -> int:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         s.bind(("0.0.0.0", port))
-        print(f"nasluch UDP 0.0.0.0:{port} (QoS echo)")
+        print(f"nasluch UDP 0.0.0.0:{port} (QoS sondy)")
         n = 0
         while True:
             try:
@@ -730,15 +787,15 @@ def main() -> int:
             except OSError:
                 return
             n += 1
-            if n <= 5:                      # pierwsze pakiety pokazujemy w calosci
+            if n <= 8:                      # pierwsze pakiety pokazujemy w calosci
                 print(f"\n  [QoS UDP #{n}] {len(data)} B od {peer[0]}:{peer[1]}")
                 print(hexdump(data, 64))
             elif n % 25 == 0:
-                print(f"  [QoS UDP #{n}] {len(data)} B od {peer[0]}:{peer[1]}")
-            reply = _qos_probe_reply(data, peer)
-            if n <= 5:
-                print(f"    -> odpowiadam {len(reply)} B"
-                      f"{' (echo)' if reply == data else ' (sonda latencji)'}")
+                print(f"  [QoS UDP :{port} #{n}] {len(data)} B od {peer[0]}:{peer[1]}")
+            reply = _qos_probe_reply(data, peer, args)
+            if n <= 8:
+                kind = "latencja" if len(data) == 0x14 else "pasmo"
+                print(f"    -> odpowiadam {len(reply)} B (sonda: {kind})")
                 print(hexdump(reply, 64))
             s.sendto(reply, peer)
 
@@ -772,7 +829,8 @@ def main() -> int:
                 body = _qos_body(req, args)
                 print(f"    -> odpowiadam: {body.decode('latin1')}")
                 conn.sendall(b"HTTP/1.1 200 OK\r\n"
-                             b"Content-Type: text/plain\r\n"
+                             b"Content-Type: text/xml\r\n"
+                             b"Connection: close\r\n"
                              b"Content-Length: " + str(len(body)).encode() +
                              b"\r\n\r\n" + body)
             except OSError:
@@ -786,7 +844,9 @@ def main() -> int:
     for p in ports[1:]:
         threading.Thread(target=serve, args=(p,), daemon=True).start()
     if not args.no_qos_responder:
-        threading.Thread(target=serve_qos, args=(args.qos_port,), daemon=True).start()
+        for i in range(args.qos_interfaces):
+            threading.Thread(target=serve_qos, args=(args.qos_port + i,),
+                             daemon=True).start()
         threading.Thread(target=serve_qos_http, args=(args.qos_port,), daemon=True).start()
     print(f"oddajemy grze adres Blaze: {args.redirect_ip}:{args.blaze_port}. "
           f"Ctrl+C konczy.\n")

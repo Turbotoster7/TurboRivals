@@ -497,7 +497,8 @@ def build_ping_response(seq: int, *, msg_type: int = MSG_REPLY) -> bytes:
                  msg_type=msg_type).encode()
 
 
-def _telemetry_fields(ip: str = "127.0.0.1", *, locale: int = 1701729619) -> list[Field]:
+def _telemetry_fields(ip: str = "127.0.0.1", *, locale: int = 1701729619,
+                      port: int = 9988) -> list[Field]:
     """Pola TelemetryServer (tag rosnaco) - wspolne dla TELE (postAuth) i
     getTelemetryServer (9/5). Wzor z emulatora BF3 (ten sam silnik), typy
     zweryfikowane ze zrzutem NFS (klasa @0x1416c7510): ADRS/DISA/FILT/NOOK/SESS/
@@ -511,7 +512,7 @@ def _telemetry_fields(ip: str = "127.0.0.1", *, locale: int = 1701729619) -> lis
         f_str("FILT", ""),
         f_int("LOC", locale),
         f_str("NOOK", "US,CA,MX"),
-        f_int("PORT", 9988),
+        f_int("PORT", port),
         f_int("SDLY", 15000),
         f_str("SESS", "telemetry_session"),
         f_str("SKEY", "telemetry_key"),
@@ -522,7 +523,8 @@ def _telemetry_fields(ip: str = "127.0.0.1", *, locale: int = 1701729619) -> lis
 
 def build_postauth_response(seq: int, *, msg_type: int = MSG_REPLY,
                             ip: str = "127.0.0.1",
-                            user_id: int = REDACTED_EA_USER_ID) -> bytes:
+                            user_id: int = REDACTED_EA_USER_ID,
+                            subsystems: bool = True) -> bytes:
     """Odpowiedz Util.postAuth (component 9, command 8) = PostAuthResponse.
     Struktura (@0x1416c3b50): { PSS TELE TICK UROP } - 4 zagniezdzone struktury.
 
@@ -534,19 +536,29 @@ def build_postauth_response(seq: int, *, msg_type: int = MSG_REPLY,
       TELE (Telemetry)  = _telemetry_fields()
       TICK (Ticker)     = { ADRS PORT SKEY }
       UROP (UserOptions)= { TMOP UID }
-    Wszystko wskazane na nas / neutralne, by klient dokonczyl polaczenie."""
+    Wszystko wskazane na nas / neutralne, by klient dokonczyl polaczenie.
+
+    A/B 2026-09-11 (subsystems=False): ADRS puste i PORT=0 we wszystkich trzech
+    podsystemach. Po naszej odpowiedzi na postAuth klient SAM zamykal polaczenie
+    Blaze, a zaraz potem wywracal sie na callbacku spod NULL w sciezce zdejmowania
+    komponentu (base+0xf4de00). Hipoteza: klient probuje podniesc PSS/TELE/TICK
+    pod adresami, pod ktorymi nikt nie slucha, i to konczy sesje. Struktur NIE
+    usuwamy - puste STRUKTURY crashowaly juz wczesniej - tylko neutralizujemy
+    adresy, wiec ksztalt i typy pol zostaja identyczne."""
+    addr = ip if subsystems else ""
     pss = f_struct("PSS", [
-        f_str("ADRS", ip),
+        f_str("ADRS", addr),
         f_blob("CSIG", b""),
         f_str("PJID", "123071"),
-        f_int("PORT", 8443),
+        f_int("PORT", 8443 if subsystems else 0),
         f_int("RPRT", 9),
         f_int("TIID", 0),
     ])
-    tele = f_struct("TELE", _telemetry_fields(ip))
+    tele = f_struct("TELE", _telemetry_fields(addr,
+                                             port=9988 if subsystems else 0))
     tick = f_struct("TICK", [
-        f_str("ADRS", ip),
-        f_int("PORT", 8999),
+        f_str("ADRS", addr),
+        f_int("PORT", 8999 if subsystems else 0),
         f_str("SKEY", f"{user_id}_tick"),
     ])
     urop = f_struct("UROP", [

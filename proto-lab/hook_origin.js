@@ -243,6 +243,42 @@ if (!base) {
   hookFn(ptr("0xf66220"), "UserSessionExtendedDataUpdate (decode notyfikacji)");
   hookFn(ptr("0xf65f90"), "NotifyUserAdded (decode UserAdded)");
 
+  // ============ zdejmowanie komponentu (teardown) ==========================
+  // base+0xf4de00(rcx = hub, edx = indeks komponentu): czyta tablice komponentow
+  // spod [hub+0x310], indeksuje po edx, wola dwie metody przez vtable i ZERUJE
+  // slot (mov qword ptr [r15+rax], 0 @0xf4decd). Indeks jest maly - @0xf4def0
+  // stoi cmp edi,0x10 i uzycie jako numeru bitu w masce.
+  //
+  // Po co: w crashu 2026-09-11 (rip=0, operacja=execute pod adresem 0) najglebsza
+  // ramka powrotu to base+0xf4df22, czyli wnetrze WLASNIE tej funkcji - gra
+  // sprzatala komponent i skoczyla pod wskaznik, ktorego nikt nie ustawil. Ten
+  // hook odpowiada na dwa pytania naraz: KTORY komponent jest zdejmowany i KTO
+  // to zlecil. Jesli teardown pojawi sie PRZED crashem i zlecony z obslugi
+  // naszej odpowiedzi postAuth - rozlaczenie jest przyczyna, a crash skutkiem.
+  let teardownSeen = 0;
+  function hookTeardown(rva) {
+    try {
+      const addr = base.add(rva);
+      Interceptor.attach(addr, {
+        onEnter(args) {
+          const idx = args[1].toInt32() & 0xffff;
+          console.log("\n### TEARDOWN komponentu idx=" + idx + "  hub=" + args[0]);
+          if (teardownSeen++ < 5) {
+            try {
+              const bt = Thread.backtrace(this.context, Backtracer.ACCURATE)
+                .map(a => a + "  (base+" + a.sub(base) + ")").join("\n     ");
+              console.log("   KTO ZLECIL:\n     " + bt);
+            } catch (e) { console.log("   bt err " + e); }
+          }
+        }
+      });
+      console.log("[+] teardown komponentu @ " + addr);
+    } catch (e) {
+      console.log("[!] nie podpialem teardownu (" + e.message + ")");
+    }
+  }
+  hookTeardown(ptr("0xf4de00"));
+
   // --- podsluch polaczen sieciowych: pokaz KAZDY adres:port, do ktorego gra
   //     sie laczy (redirector, Blaze). To ujawni, dokad idzie po zdobyciu tokenu.
   function sockLog(sa, label) {

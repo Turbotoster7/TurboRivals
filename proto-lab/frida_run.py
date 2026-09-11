@@ -24,6 +24,16 @@ try:
 except ImportError:
     sys.exit("brak modulu frida - uruchom: python -m pip install frida-tools")
 
+# Konsola PowerShella na PL Windows ma stdout w cp1250, a hooki wypisuja surowe
+# bufory (XML QoS, payloady TDF) - kazdy bajt spoza cp1250 wywracal watek logow
+# Fridy z UnicodeEncodeError i gubil CALA wiadomosc. Zamiana na utf-8 z
+# podmiana niedrukowalnych zamiast wyjatku.
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except (AttributeError, OSError):
+    pass
+
 
 def on_message(message, data):
     if message.get("type") == "log":
