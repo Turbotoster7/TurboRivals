@@ -368,6 +368,8 @@ def handle(conn: socket.socket, addr, args, out_dir: Path,
         buf = bytearray(app)
         frameno = 0
         notify_seq = 0                                # licznik msgId notyfikacji
+        logged_in = False                             # po 1/152; wlacza keepalive
+        ping_seq = 0                                  # msgId serwerowych PINGow
         try:
             while True:
                 # a) obsluz wszystko, co juz mamy w buforze
@@ -398,6 +400,12 @@ def handle(conn: socket.socket, addr, args, out_dir: Path,
                         w.send_record(RT_APPDATA, resp)
                         print(f"  -> odpowiedz comp={fr.component} cmd={fr.command} "
                               f"({len(resp)} B)")
+                        # Po loginie wlaczamy krotki timeout, zeby budzic sie co
+                        # keepalive sekund i podtrzymywac polaczenie Blaze (patrz
+                        # nizej - inaczej gra zrywa je bledem 0x800e0000).
+                        if fr.component == 1 and fr.command == 152 and args.keepalive:
+                            logged_in = True
+                            conn.settimeout(args.keepalive)
                         for note in _after_reply(fr, args, notify_seq):
                             notify_seq += 1
                             w.send_record(RT_APPDATA, note)
@@ -416,6 +424,16 @@ def handle(conn: socket.socket, addr, args, out_dir: Path,
                 except socket.timeout:
                     # Cisza != koniec sesji. Gra trzyma polaczenie Blaze otwarte
                     # i moze dlugo nic nie wysylac - NIE zamykamy go.
+                    if logged_in and args.keepalive:
+                        # Keepalive: po loginie gra robi QoS na osobnych gniazdach,
+                        # a Blaze TCP milczy. Aktualizacja polaczenia co klatke
+                        # (0xf3a580) po przekroczeniu progu bezczynnosci [conn+0x2fc]
+                        # zrywa polaczenie bledem 0x800e0000 -> teardown -> crash.
+                        # Serwerowy PING resetuje licznik aktywnosci u klienta.
+                        w.send_record(RT_APPDATA, blaze.build_server_ping(ping_seq))
+                        print(f"  -> keepalive PING seq={ping_seq}")
+                        ping_seq += 1
+                        continue
                     print(f"  (cisza {args.idle_timeout} s - polaczenie trzymane, czekam)")
                     continue
                 while rtype == RT_HANDSHAKE:
@@ -436,6 +454,30 @@ def handle(conn: socket.socket, addr, args, out_dir: Path,
             conn.close()
         except OSError:
             pass
+
+
+def _bind_exclusive(s: socket.socket, port: int, opis: str) -> None:
+    """Bind, ktory GLOSNO pada, gdy port jest juz czyjs.
+
+    Dlaczego nie SO_REUSEADDR (bylo tu wczesniej): na Windows ta opcja pozwala
+    DRUGIEMU procesowi zajac ten sam adres:port, a polaczenia dostaje wtedy
+    jeden z nich - w praktyce ten, ktory bindowal pierwszy. Nowy terminator
+    wypisywal wiec komplet nasluchow i nie dostawal NICZEGO, bo gre obslugiwala
+    stara instancja z poprzedniego kodu. Kosztowalo to caly przebieg A/B
+    2026-09-11: logi nowych serwerow mialy sam baner, a Frida pokazywala, ze gra
+    laczy sie i rozmawia. SO_EXCLUSIVEADDRUSE odwraca to: drugi bind konczy sie
+    bledem od razu, zamiast cicho podszywac sie pod dzialajacy serwer."""
+    excl = getattr(socket, "SO_EXCLUSIVEADDRUSE", None)
+    if excl is not None:
+        s.setsockopt(socket.SOL_SOCKET, excl, 1)
+    try:
+        s.bind(("0.0.0.0", port))
+    except OSError as e:
+        sys.exit(f"\nPORT {port} ({opis}) JEST JUZ ZAJETY: {e}\n"
+                 f"Najpewniej chodzi jeszcze terminator z poprzedniego przebiegu "
+                 f"(a gra rozmawia wtedy z NIM, nie z tym procesem).\n"
+                 f"Sprawdz:  netstat -ano | Select-String {port}\n"
+                 f"i zakoncz tamten proces przed startem.")
 
 
 def _qos_body(req: bytes, args) -> bytes:
@@ -733,6 +775,10 @@ def main() -> int:
     ap.add_argument("--idle-timeout", type=int, default=300,
                     help="ile sekund ciszy zanim wypiszemy 'czekam' (polaczenia NIE "
                          "zamykamy - gra trzyma sesje Blaze otwarta)")
+    ap.add_argument("--keepalive", type=float, default=3.0, metavar="SEK",
+                    help="po loginie wysylaj serwerowy Fire2 PING co N sekund ciszy, "
+                         "by gra nie zerwala polaczenia Blaze timeoutem bezczynnosci "
+                         "(blad 0x800e0000 -> teardown -> crash). 0 = wylacz")
     ap.add_argument("--reply-msgtype", type=lambda x: int(x, 0), default=0x10,
                     help="bajt msgType w naglowku Fire2 odpowiedzi. 0x10 = REPLY "
                          "(potwierdzone: gra dekoduje ServerInstanceInfo)")
@@ -756,8 +802,7 @@ def main() -> int:
 
     def serve(port: int) -> None:
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        s.bind(("0.0.0.0", port))
+        _bind_exclusive(s, port, "redirector/Blaze")
         s.listen(16)
         role = "redirector" if port == args.port else "BLAZE"
         print(f"nasluch 0.0.0.0:{port} ({role})")
@@ -777,8 +822,7 @@ def main() -> int:
         odrzuca: sciezka latencji wymaga >= 30 B i niesie adres zewnetrzny).
         """
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        s.bind(("0.0.0.0", port))
+        _bind_exclusive(s, port, "sondy QoS UDP")
         print(f"nasluch UDP 0.0.0.0:{port} (QoS sondy)")
         n = 0
         while True:
@@ -809,8 +853,7 @@ def main() -> int:
         i odpowiadamy pustym 200, zeby nie zostawiac go z niczym.
         """
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        s.bind(("0.0.0.0", port))
+        _bind_exclusive(s, port, "QoS HTTP")
         s.listen(8)
         print(f"nasluch TCP 0.0.0.0:{port} (QoS HTTP)")
         while True:

@@ -28,10 +28,16 @@ except ImportError:
 # bufory (XML QoS, payloady TDF) - kazdy bajt spoza cp1250 wywracal watek logow
 # Fridy z UnicodeEncodeError i gubil CALA wiadomosc. Zamiana na utf-8 z
 # podmiana niedrukowalnych zamiast wyjatku.
+# line_buffering=True jest tu ROWNIE wazne jak kodowanie: bez tego Python przy
+# przekierowaniu (`| Tee-Object plik`) buforuje stdout blokowo i log przez dlugi
+# czas ma tylko baner - wyglada to tak, jakby Frida sie nie podpiela, a w
+# rzeczywistosci hooki dzialaly i czekaly na flush. Kosztowalo to przebieg
+# 2026-09-12 13:24. Terminator ma to zalatwione flaga -u; tutaj wymuszamy w kodzie,
+# zeby polecenie bez -u tez dzialalo.
 try:
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
-except (AttributeError, OSError):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
+except (AttributeError, OSError, ValueError):
     pass
 
 
@@ -111,10 +117,13 @@ def main() -> int:
     ap.add_argument("--duration", type=int, default=0, metavar="SEK",
                     help="trzymaj podpiecie przez N sekund i wyjdz, zamiast czekac "
                          "na Ctrl+C (do uruchamiania w tle z logiem do pliku)")
-    ap.add_argument("--settle", type=int, default=0, metavar="SEK",
+    ap.add_argument("--settle", type=int, default=8, metavar="SEK",
                     help="odczekaj N s po znalezieniu procesu, zanim wstrzykniesz "
-                         "skrypt - swiezo wystartowana gra nie ma jeszcze "
-                         "rozpakowanego kodu i czesc hookow sie nie zaklada")
+                         "skrypt - swiezo wystartowana gra ma .text jeszcze "
+                         "ZASZYFROWANA i czesc hookow pada z 'unable to intercept "
+                         "function'. Domyslnie 8 s (przebieg 2026-09-12: bez tego "
+                         "padly OriginRequestTicket, raport bledow i 2 dekodery). "
+                         "0 = podpnij natychmiast")
     args = ap.parse_args()
 
     js = Path(args.script).read_text(encoding="utf-8")

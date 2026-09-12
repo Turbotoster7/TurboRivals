@@ -251,3 +251,57 @@ requestid/reqsecret i zlicza bajty. Sciezka latencji, ktorej gra uzywa przy
 `qtyp=0`, wymaga zbudowania odpowiedzi. Wniosek do zapamietania: **zanim uznam
 echo za wystarczajace, mam przeczytac CALA sciezke odbioru, nie tylko miejsce,
 w ktorym porownywane sa pola, ktore znam.**
+
+---
+
+## 2026-09-12 - blokada przeniosla sie do bramki aktywacji EA (ActivationUI)
+
+### Objaw
+
+Do 2026-09-11 gra przechodzila caly lancuch logowania do naszego Blaze (redirector
+-> preAuth -> login tokenem z EA App -> notyfikacje -> postAuth -> QoS), a jedynym
+otwartym problemem bylo rozlaczenie + access violation zaraz po naszej odpowiedzi
+na postAuth. W przebiegu 2026-09-12 13:24 gra przestala w ogole dochodzic do menu:
+po "Graj" w Steamie odpala sie `EASteamLauncher` -> `Core/ActivationUI.exe` (bramka
+aktywacji EA, Qt, korzysta z `Core/Activation.dll`/`Activation64.dll`) i pokazuje
+okno logowania/aktywacji. `NFS14.exe` startuje (Frida lapie proces, hook tokenu
+`0xec3c80` sie zaklada), ale stoi za bramka - terminator nie widzi zadnego
+polaczenia Blaze.
+
+### Przyczyna (ze zrzutu ActivationUI)
+
+Zrzut pamieci bezczynnego okna aktywacji zawiera blok srodowiska startowego, ktory
+launcher EA podaje grze - a w nim `EAAuthCode=NeedsAFreshAuthCode`. EA App nie
+zdobylo swiezego auth code (usluga `accounts.ea.com` zyje, w odroznieniu od
+`gos.ea.com`), wiec ActivationUI nie potrafi zweryfikowac entitlementu i spada do
+okna logowania. To jest PRZED calym Origin SDK / LSX, wiec zbudowane wstrzykiwanie
+tokenu (hook w NFS14.exe) nie ma jak zadzialac, dopoki gra nie ruszy. `hosts`
+przekierowuje tylko `gosredirector.ea.com`, wiec to nie my blokujemy accounts.ea.com.
+
+### Wniosek dla dalszej pracy - gra sama NIE waliduje entitlementu
+
+Z calego bloku zmiennych EA* `NFS14.exe` ma w sobie JAKO STRING tylko
+`EALaunchOfflineMode` (`tools/xref.py --str`, brak odwolan `lea` - uzywane przez
+wskaznik/tabele). Reszte (`EALaunchUserAuthToken`, `EALicenseToken`, `EAAuthCode`,
+`EASecureLaunchTokenTemp`) konsumuje LAUNCHER, nie gra. Czyli entitlement waliduje
+ActivationUI, a nie NFS14.exe. Stad Tor B: odpalic `NFS14.exe` bezposrednio z
+odtworzonym srodowiskiem EA* (przy dzialajacym EA App dla LSX 3216), z pominieciem
+ActivationUI - gra powinna pojsc prosto do LSX, gdzie hook `0xec3c80` podmienia
+token. Prototyp: `proto-lab/launch_direct.py` (+ szablon `ea_launch_env.example.txt`;
+`ea_launch_env.txt` z sekretami jest gitignore).
+
+### Zmiany w tej sesji
+
+- `proto-lab/frida_run.py`: domyslny `--settle` = 8 s. W przebiegu 13:24 kilka
+  hookow padlo z "unable to intercept function" (`0xebd140`, `0xebd800`, `0xf66220`,
+  `0xf8a0d0`) - `.text` gry jest szyfrowana i nie byla jeszcze rozpakowana, gdy
+  Frida podpiela sie tuz po starcie procesu. `replace` na `0xec3c80` (token) i
+  `0xec1880` (IsCoreConnected) zaladowaly sie mimo to.
+- `proto-lab/launch_direct.py`: nowy launcher Tora B (opis wyzej).
+
+### Sekrety - swiadoma decyzja
+
+Zrzuty ActivationUI zawieraja ZYWY JWT konta EA (`EALaunchUserAuthToken`) i sesyjne
+tokeny. Repo jest docelowo publiczne, wiec do `docs/` idzie architektura i NAZWY
+zmiennych, a wartosci sekretow sa zredagowane (placeholder `<...>`). Oba pliki
+zrzutu usuniete po wyciagnieciu findings.

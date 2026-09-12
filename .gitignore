@@ -10,6 +10,10 @@ docs/recon/capture/
 # Klucz prywatny i cert zastepczy serwera - generowane lokalnie, nie do repo
 proto-lab/pki/
 
+# Zmienne startowe EA z zywej sesji - zawieraja JWT konta i sesyjne tokeny.
+# Do repo idzie tylko szablon *.example.txt z placeholderami.
+proto-lab/ea_launch_env.txt
+
 __pycache__/
 *.pyc
 

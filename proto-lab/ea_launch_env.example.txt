@@ -1,0 +1,31 @@
+# Szablon srodowiska startowego EA dla launch_direct.py (Tor B).
+# Skopiuj do ea_launch_env.txt (gitignore) i wpisz SWIEZE wartosci z zywej sesji
+# EA App. Blok tych zmiennych ustawia normalnie Core/ActivationUI.exe; my go
+# odtwarzamy, zeby odpalic NFS14.exe z pominieciem bramki aktywacji.
+#
+# Skad wziac wartosci sekretow: ze zrzutu pamieci dzialajacego ActivationUI.exe
+# albo EADesktop.exe (blok srodowiska procesu, pary NAZWA=WARTOSC w UTF-16), albo
+# z Process Explorera (Properties -> Environment). Sekrety sa SESYJNE i wygasaja -
+# jesli gra zazada aktywacji, wartosci sa stare i trzeba je odswiezyc.
+
+# --- jawne (te same dla kazdego uruchomienia gry) ---
+EAConnectionId=Origin.OFR.50.0000676
+EALicenseToken=Origin.OFR.50.0000676
+EAEntitlementSource=STEAM
+EAExternalSource=STEAM
+EALaunchOwner=STEAM
+EALaunchEnv=production
+EALaunchOfflineMode=false
+EAFreeTrialGame=false
+EAGameLocale=pl_PL
+EALsxPort=3216
+
+# --- tozsamosc konta (jawne, ale wlasne dla konta) ---
+EALaunchEAID=<twoj_nick_EA>
+
+# --- SEKRETY: swieze z zywej sesji EA App, NIE commitowac ---
+EALaunchUserAuthToken=<JWT_konta_EA_RS256>
+EASecureLaunchTokenTemp=<persona_id>
+EALaunchCode=<20_znakowy_launch_code>
+EARtPLaunchCode=<liczbowy_rtp_code>
+EAAuthCode=<swiezy_auth_code>

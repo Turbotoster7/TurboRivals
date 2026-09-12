@@ -31,16 +31,32 @@ if (!base) {
   // Ustawiany PRZED hookami: gdyby ktorykolwiek hook sie nie zalozyl, handler i
   // tak dziala. (Wczesniej byl na koncu pliku i nieudany Interceptor.attach
   // przerywal caly skrypt, wiec crashu nie mial kto zlapac.)
-  let crashLogged = false;
   const MOD_SPAN = 0x2000000;
   function inMod(a) {
     return a.compare(base) >= 0 && a.compare(base.add(MOD_SPAN)) < 0;
   }
+  // Raportowanie wyjatkow. UWAGA na pulapke, ktora nas juz raz zmylila:
+  // wczesniej logowalismy WYLACZNIE pierwszy wyjatek, a gra rzuca na starcie
+  // niegrozne wyjatki first-chance spoza modulu (SEH/C++, np. 0x7ffc...). Taki
+  // wyjatek zjadal jedyny slot i prawdziwy access-violation NIE BYL pokazywany -
+  // w przebiegu A/B 2026-09-12 wygladalo to tak, jakby wariant A wcale nie
+  // crashowal, choc konczyl sie identycznie jak B. Teraz: kazdy
+  // access-violation jest raportowany (do LIMIT_AV), a wyjatki innego typu
+  // tylko raz i jednolinijkowo, zeby nie zaglusaly logu.
+  let avLogged = 0, otherLogged = 0;
+  const LIMIT_AV = 5;
   Process.setExceptionHandler(function (details) {
-    if (crashLogged) return false;        // pierwszy wyjatek jest ten wazny
-    crashLogged = true;
+    const isAV = details.type === "access-violation";
+    if (!isAV) {
+      if (otherLogged++ === 0) {
+        console.log("[wyjatek first-chance, typ=" + details.type + " @ " +
+                    details.address + " - zwykle niegrozny, loguje tylko raz]");
+      }
+      return false;
+    }
+    if (avLogged++ >= LIMIT_AV) return false;
     const addr = details.address;
-    console.log("\n########## WYJATEK ##########");
+    console.log("\n########## WYJATEK #" + avLogged + " ##########");
     console.log("  typ:    " + details.type);
     console.log("  adres:  " + addr +
                 (inMod(addr) ? "  (base+0x" + addr.sub(base).toString(16) + ")"
@@ -91,10 +107,32 @@ if (!base) {
   }
 
   hookLogger(ptr("0xee2370"));
-  hookLogger(ptr("0xec1880"));
+
+  // 0xec1880 NIE JEST loggerem - to sprawdzenie "czy Core (EA App) odpowiada":
+  // bez argumentow, wynik w al. OriginRequestTicket (0xebd169) wola je zaraz po
+  // logu i przy al==0 idzie w sciezke bledu. Podpiete tu wczesniej jako logger
+  // czytalo rdx, w ktorym po poprzednim wywolaniu wciaz lezal TEN SAM tekst -
+  // stad kazda linia logu Origin wychodzila w naszych logach PODWOJNIE.
+  let coreChecks = 0, coreFails = 0;
+  try {
+    Interceptor.attach(base.add(0xec1880), {
+      onLeave(ret) {
+        const ok = (ret.toInt32() & 0xff) !== 0;
+        if (coreChecks++ < 6 || (!ok && coreFails++ < 6)) {
+          console.log("[core] EA App podlaczone? " + (ok ? "TAK" : "NIE"));
+        }
+      }
+    });
+    console.log("[+] IsCoreConnected @ base+0xec1880");
+  } catch (e) { console.log("[!] nie podpialem IsCoreConnected: " + e.message); }
 
   // Dodatkowo: kluczowe funkcje auth/online - sygnalizacja wejscia + wynik.
-  let btDone = false;
+  // Backtrace: JEDEN raz NA HOOK, nie jeden raz na caly skrypt. Wczesniej byla
+  // tu wspolna flaga i pierwszy hook z backtrace=true (ServerInstanceRequest,
+  // ktory odpala sie juz przy redirectorze) zabieral jedyny zrzut stosu -
+  // FullLoginResponse nigdy swojego nie wypisal, choc to wlasnie jego backtrace
+  // mial nam dac RVA generycznego dekodera heat2 (TDF_READER_RVA nizej).
+  const btDone = {};
   function hookFn(rva, name, backtrace) {
     // Kazdy hook w try/catch: Frida potrafi odmowic ("unable to intercept
     // function"), gdy podepniemy sie zanim gra rozpakuje kod. Bez tego JEDEN
@@ -112,8 +150,8 @@ if (!base) {
       onEnter() {
         this.n = name;
         console.log("\n>>> " + name);
-        if (backtrace && !btDone) {
-          btDone = true;
+        if (backtrace && !btDone[name]) {
+          btDone[name] = true;
           try {
             const bt = Thread.backtrace(this.context, Backtracer.ACCURATE)
               .map(a => {
@@ -128,7 +166,113 @@ if (!base) {
     });
     console.log("[+] fn " + name + " @ " + addr);
   }
-  hookFn(ptr("0xebd140"), "OriginRequestTicket");
+  // Wstrzykiwanie tokenu Origin (obejscie spoznionego/martwego EA App). Wlacz, by
+  // login Blaze zawsze przeszedl bez zaleznosci od czasu odpowiedzi EA App.
+  const INJECT_TOKEN = true;
+  // OriginRequestTicket (0xebd140) NIE hookujemy przez attach, gdy INJECT_TOKEN:
+  // ta funkcja konczy sie TAIL-JMP do 0xec3c80, ktora PODMIENIAMY. Rownoczesny
+  // attach na 0xebd140 przeklamywal rejestry przy tail-jmp (crash 12.09, outTok
+  // wskazywal w kod). LSX request/response i tak loguje logger 0xee2370.
+  if (!INJECT_TOKEN)
+    hookFn(ptr("0xebd140"), "OriginRequestTicket");
+
+  // ============ raport bledow Origin SDK ===================================
+  // 0xebd800(rcx = kod, rdx = opis, r8 = plik, r9 = linia) sklada
+  // '%s(%d) Origin Error: 0x%08X'. To JEDYNE miejsce, w ktorym widac, czym
+  // skonczylo sie zadanie Origin: sciezki bledu z OriginRequestTicket
+  // (0xebd1e0) i z ticketu LSX (0xec3d8c) skacza wlasnie tutaj. Bez tego hooka
+  // porazka byla dla nas cisza w logu.
+  try {
+    Interceptor.attach(base.add(0xebd800), {
+      onEnter(args) {
+        let opis = "", plik = "";
+        try { opis = args[1].readCString() || ""; } catch (e) {}
+        try { plik = args[2].readCString() || ""; } catch (e) {}
+        console.log("\n!!! ORIGIN ERROR 0x" + args[0].toUInt32().toString(16) +
+                    "  " + opis + "   (" + plik + ":" + args[3].toUInt32() + ")");
+      }
+    });
+    console.log("[+] raport bledow Origin @ base+0xebd800");
+  } catch (e) { console.log("[!] nie podpialem raportu bledow: " + e.message); }
+
+  // ============ WSTRZYKNIECIE TOKENU ORIGIN (obejscie EA App) ==============
+  // Po co: gdy EA App uzna gre za nieaktywowana, NIE odpowiada na LSX
+  // GetAuthToken. Gra nie dostaje ticketu, nigdy nie wysyla Blaze login (1/152)
+  // i pokazuje okno aktywacji - tak skonczyl przebieg 2026-09-12 12:39.
+  // Nasz serwer tokenu NIE WALIDUJE (przyjmuje dowolny AUTH), wiec wystarczy
+  // podac grze ten sam string, ktory EA App wydalo, gdy jeszcze dzialalo.
+  //
+  // Gdzie (z dezasemblacji zrzutu, nie z domyslu): OriginRequestTicket 0xebd140
+  // sprawdza Core i skacze do
+  //     0xec3c80(rcx=Core, rdx=uchwyt uzytkownika, r8=char** out, r9=size_t* outLen)
+  // ktora alokuje kontekst 0x1a8 B, wpisuje w niego r8/r9 oraz callback 0xec3dd0
+  // i CZEKA w 0xec1770 z timeoutem -1 na odpowiedz LSX. Caly callback to:
+  //     mov [r8], [rax]        ; *out    = char* token
+  //     mov [r9], [rax+0x10]   ; *outLen = dlugosc
+  //     xor eax, eax           ; 0 = sukces
+  // Token wraca WSKAZNIKIEM na tekst, wiec nie podrabiamy ani LSX, ani jego
+  // szyfrowania, ani zdarzenia w kontekscie - podajemy wskaznik i zero.
+  //
+  // Dlaczego replace, a nie attach: original czeka z timeoutem -1, wiec przy
+  // milczacym EA App onLeave nigdy by sie nie odpalil, a gra by wisiala.
+  //
+  // Token: dokladnie ten base64, ktory EA App wydalo 2026-09-11 21:54. W udanym
+  // logowaniu gra przekazala go do Blaze BEZ ZMIAN (log-login.txt:66
+  // AUTH='QVQx...'), wiec nie ma tu zadnego kodowania do odtworzenia.
+  // Wygasniecie nie ma znaczenia - przyjmuje go NASZ serwer.
+  // WYLACZONE 2026-09-12 popoludnie. Przebieg 13:59 (uruchomienie przez EA App)
+  // pokazal DWIE rzeczy: (1) EA App znow dziala - gra przeszla bramke aktywacji,
+  // wiec token GetAuthToken plynie normalnie i wstrzykiwanie jest zbedne; (2) samo
+  // wstrzykiwanie jest ZEPSUTE - callback rzucil "access violation accessing
+  // 0x140955a90" (adres KODU, nie bufor) w linii z outTok.writePointer, zwrocil
+  // smieci (rax=0xeb00000000) i najpewniej to ONO wywolalo crash. Przyczyna:
+  // Interceptor.replace na 0xec3c80 koliduje z attach na OriginRequestTicket
+  // (0xebd140), ktora konczy sie TAIL-JMP do 0xec3c80 - rejestry z argumentami
+  // (r8/r9 = bufory wyjsciowe) wychodza przeklamane. Do naprawy dla Tora B trzeba
+  // albo zdjac attach z 0xebd140, albo zamiast replace hookowac callback ukonczenia
+  // 0xec3dd0. Na teraz opieramy sie na dzialajacym EA App (jak w udanym logowaniu
+  // 11.09), zeby dojsc do blokady postAuth.
+  const ORIGIN_TOKEN =
+    "QVQxOjMuMDozLjA6MjQwOnd4VWwxOHRXOHNxQ1JTZFU5cU9UM1kyZTMwamxSSjZqdVczOjc0NzA0OnNlMGcw";
+  let tokenBuf = null;          // referencje MUSZA byc globalne: bufor i callback
+  let ticketCb = null;          // zwolnione przez GC = gra czytalaby smieci
+  let ticketHits = 0;
+  if (INJECT_TOKEN) {
+    try {
+      tokenBuf = Memory.allocUtf8String(ORIGIN_TOKEN);
+      ticketCb = new NativeCallback(function (core, user, outTok, outLen) {
+        ticketHits++;
+        // ODPORNOSC NA CRASH (nauczka z 12.09): przy pierwszym wywolaniu argumenty
+        // bywaja inne (init), a outTok wskazywal w KOD -> zapis wywalal gre. Kazdy
+        // zapis w try/catch: gdy wskaznik nie jest zapisywalny, NIE piszemy i
+        // zwracamy blad a2000004 (tak jak original 0xec3cc0 przy braku bufora) -
+        // gra to obsluguje, zamiast crashowac. Przy prawdziwym wywolaniu outTok/
+        // outLen sa zapisywalne i token wchodzi.
+        if (outTok.isNull() || outLen.isNull())
+          return 0xa2000004 | 0;
+        try {
+          outTok.writePointer(tokenBuf);
+          outLen.writeU64(ORIGIN_TOKEN.length);
+        } catch (e) {
+          if (ticketHits <= 3)
+            console.log("[token] wywolanie #" + ticketHits + " ma nizapisywalny " +
+                        "bufor (" + outTok + ") - pomijam, zwracam blad");
+          return 0xa2000004 | 0;
+        }
+        if (ticketHits <= 3) {
+          console.log("\n[token] PODSTAWIAM token Origin (" + ORIGIN_TOKEN.length +
+                      " B) zamiast pytac EA App   [wywolanie #" + ticketHits + "]");
+        }
+        return 0;
+      }, "int", ["pointer", "pointer", "pointer", "pointer"]);
+      Interceptor.replace(base.add(0xec3c80), ticketCb);
+      console.log("[+] WSTRZYKIWANIE TOKENU aktywne (0xec3c80 podmieniona)");
+    } catch (e) {
+      console.log("[!] nie podmienilem 0xec3c80: " + e.message);
+    }
+  } else {
+    console.log("[*] wstrzykiwanie tokenu WYLACZONE (INJECT_TOKEN=false)");
+  }
 
   // ============ parser odpowiedzi koordynatora QoS (DirtySDK qosapi) ========
   // _QosApiParseResponse @0xfdb070(rcx = struct polaczenia, rdx = QosApiRef).
@@ -240,8 +384,12 @@ if (!base) {
   hookFn(ptr("0xf0c0a0"), "FullLoginResponse (decode odp. login) <- BACKTRACE do dekodera", true);
   hookFn(ptr("0xf211d0"), "PostAuthRequest (encode -> gra wysyla postAuth!)");
   hookFn(ptr("0xf211e0"), "PostAuthResponse (decode naszej odp. postAuth?)");
-  hookFn(ptr("0xf66220"), "UserSessionExtendedDataUpdate (decode notyfikacji)");
-  hookFn(ptr("0xf65f90"), "NotifyUserAdded (decode UserAdded)");
+  // backtrace=true: w przebiegu 14:07 getTypeDescr FullLoginResponse (0xf0c0a0)
+  // sie NIE odpalil, ale TA notyfikacja i NotifyUserAdded DEKODUJA TDF i odpalaja
+  // sie na pewno. Backtrace z ktorejkolwiek ujawni generyczny dekoder heat2
+  // (ramka tuz nad w module) -> TDF_READER_RVA.
+  hookFn(ptr("0xf66220"), "UserSessionExtendedDataUpdate (decode notyfikacji)", true);
+  hookFn(ptr("0xf65f90"), "NotifyUserAdded (decode UserAdded)", true);
 
   // ============ zdejmowanie komponentu (teardown) ==========================
   // base+0xf4de00(rcx = hub, edx = indeks komponentu): czyta tablice komponentow
@@ -278,6 +426,73 @@ if (!base) {
     }
   }
   hookTeardown(ptr("0xf4de00"));
+
+  // ============ CRASH GUARD: NULL callback w dyspozytorze notyfikacji =========
+  // 0xf6c5f0(rcx=dispatcher, rdx=funkcja-callback, r8=kontekst): petla po
+  // listenerach robi `call r14` gdzie r14=rdx. W teardownie polaczenia rdx bywa
+  // NULL -> call 0 -> rip=0 -> access-violation (nasz crash w kazdym przebiegu).
+  // Podmieniamy NULL na no-op: gra PRZEZYWA teardown, dzieki czemu zobaczymy, co
+  // robi DALEJ po tym, jak sama zamknela polaczenie Blaze po postAuth - czy laczy
+  // sie ponownie (rozlaczenie byloby normalnym krokiem Blaze), idzie do menu, czy
+  // stoi. To rozstrzyga, czy crash to skutek uboczny normalnego rozlaczenia, czy
+  // rozlaczenie jest realna blokada. Guard rusza TYLKO gdy rdx==NULL, wiec nie
+  // rusza normalnych notyfikacji (0xf6c5f0 wolane jest tez z waznym callbackiem).
+  const noopCb = new NativeCallback(function () {}, "void", ["pointer", "pointer"]);
+  let guardHits = 0;
+  try {
+    Interceptor.attach(base.add(0xf6c5f0), {
+      onEnter() {
+        if (this.context.rdx.isNull()) {
+          this.context.rdx = noopCb;
+          if (guardHits++ < 8)
+            console.log("[guard] 0xf6c5f0 rdx=NULL -> no-op (crash unikniety) #" + guardHits);
+        }
+      }
+    });
+    console.log("[+] crash guard @ base+0xf6c5f0");
+  } catch (e) { console.log("[!] nie podpialem crash guard: " + e.message); }
+
+  // ============ PRZEJSCIE STANU POLACZENIA ("conn") - powod rozlaczenia =======
+  // Z crasha 14:07/14:31 (dezasemblacja): teardown (0xf4de00) jest SKUTKIEM
+  // rozlaczenia, ktore idzie z PETLI AKTUALIZACJI CO KLATKE (0xefe99d -> 0xefa5f5
+  // -> 0xf2505d), nie z obslugi przychodzacej wiadomosci. Konczy sie w funkcji
+  // stanu polaczenia 0xf37f10, ktora:
+  //   - przy flagach [rdi+0x339]=[rdi+0x33a]=[rdi+0x33c]=0 ustawia deadline
+  //     [rdi+0x3b0] = [rdi+0x300] * 1000 (czyli [rdi+0x300] to timeout w SEKUNDACH)
+  //   - loguje pod kategoria "conn", przekazujac esi = KOD STANU/POWODU.
+  // Ten hook czyta esi (powod) i [rdi+0x300] (timeout, s) - jednoznacznie odroznia
+  // idle-timeout (duza wartosc, np. 90 = connIdleTimeout) od timeoutu RPC
+  // (30 = defaultRequestTimeout) od natychmiastowego zamkniecia. Fires rzadko
+  // (tylko na zmianach stanu), wiec nie zasmieca logu jak poprzedni 0xf25000.
+  let connSeen = 0;
+  try {
+    Interceptor.attach(base.add(0xf37f10), {
+      onEnter(args) {
+        const conn = args[0];
+        const reason = this.context.rdx.toInt32();   // edx = 2. arg = powod/stan
+        let tout = -1, f = "?", st = -1, thr = -1;
+        try {
+          tout = conn.add(0x300).readU32();
+          f = conn.add(0x339).readU8() + "/" + conn.add(0x33a).readU8() +
+              "/" + conn.add(0x33c).readU8();
+          st = conn.add(0x30).readU32();              // [conn+0x30] = stan polaczenia
+          thr = conn.add(0x2fc).readU32();            // [conn+0x2fc] = prog z 0xf3a580
+        } catch (e) {}
+        console.log("\n@@@ STAN POLACZENIA (0xf37f10) powod=" + reason +
+                    " stan[+0x30]=" + st + " prog[+0x2fc]=" + thr +
+                    " timeout=" + tout + "s  flagi[339/33a/33c]=" + f);
+        if (connSeen++ < 4) {
+          try {
+            const bt = Thread.backtrace(this.context, Backtracer.ACCURATE)
+              .slice(0, 8)
+              .map(a => a + "  (base+" + a.sub(base) + ")").join("\n     ");
+            console.log("   STOS:\n     " + bt);
+          } catch (e) {}
+        }
+      }
+    });
+    console.log("[+] stan polaczenia (conn) @ base+0xf37f10");
+  } catch (e) { console.log("[!] nie podpialem stanu polaczenia: " + e.message); }
 
   // --- podsluch polaczen sieciowych: pokaz KAZDY adres:port, do ktorego gra
   //     sie laczy (redirector, Blaze). To ujawni, dokad idzie po zdobyciu tokenu.

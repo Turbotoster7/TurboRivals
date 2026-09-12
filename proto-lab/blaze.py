@@ -497,6 +497,26 @@ def build_ping_response(seq: int, *, msg_type: int = MSG_REPLY) -> bytes:
                  msg_type=msg_type).encode()
 
 
+# Bajt msgType na drucie = typ_logiczny << 4 (REPLY 1->0x10, NOTIFICATION 2->0x20,
+# potwierdzone na zywo). Zatem serwerowy PING = MSG_PING(4) << 4 = 0x40, a klient
+# odsyla PING_REPLY (0x50).
+MSG_PING_BYTE = MSG_PING << 4          # 0x40
+
+
+def build_server_ping(seq: int = 0) -> bytes:
+    """Transportowy heartbeat Fire2 (msgType=PING) wysylany PRZEZ SERWER.
+
+    Po co: po loginie klient robi QoS na osobnych gniazdach, a polaczenie Blaze
+    TCP nie ma ruchu. Aktualizacja polaczenia co klatke (0xf3a580) sprawdza
+    `stan==2 && (teraz - ostatnia_aktywnosc) > [conn+0x2fc]` i przy przekroczeniu
+    zrywa polaczenie bledem 0x800e0000 (0xeffca0) -> teardown -> crash. Ramka od
+    serwera resetuje licznik aktywnosci po stronie odbioru klienta. PING jest
+    najczystszy - to heartbeat transportu, klient odpowiada PING_REPLY i nie
+    przetwarza go jak notyfikacji komponentu."""
+    return Fire2(component=0, command=0, payload=b"", error=0, seq=seq,
+                 msg_type=MSG_PING_BYTE).encode()
+
+
 def _telemetry_fields(ip: str = "127.0.0.1", *, locale: int = 1701729619,
                       port: int = 9988) -> list[Field]:
     """Pola TelemetryServer (tag rosnaco) - wspolne dla TELE (postAuth) i

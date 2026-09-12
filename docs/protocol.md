@@ -482,3 +482,46 @@ requestid/reqsecret ze stanem i zlicza bajty, wiec zwykle echo wystarcza.
 
 Ta sama technika (`getCommandName` + tablica skokow) dziala dla kazdego
 komponentu - to tansze niz zgadywanie numerow z emulatorow innych gier.
+
+---
+
+## 10. Bramka aktywacji EA (ActivationUI) i srodowisko startowe
+
+Po "Graj" w Steamie lancuch to: `EASteamLauncher` -> `Core/ActivationUI.exe`
+(bramka aktywacji, Qt) -> dopiero potem `NFS14.exe`. ActivationUI waliduje
+entitlement z `accounts.ea.com` (po TLS) i przy niepowodzeniu pokazuje okno
+logowania zamiast uruchomic gre (stringi `access_title_entitlement_failed`,
+`could not connect to EA Core`). Objaw braku swiezej autoryzacji w srodowisku
+startowym: `EAAuthCode=NeedsAFreshAuthCode`.
+
+### Srodowisko startowe przekazywane grze
+
+Wyciagniete ze zrzutu pamieci `ActivationUI.exe` (blok srodowiska procesu,
+pary `NAZWA=WARTOSC` w UTF-16). Wartosci sekretow sa SESYJNE i wygasaja - tu
+zredagowane (`<...>`), bo repo jest docelowo publiczne.
+
+| zmienna | wartosc | uwagi |
+| --- | --- | --- |
+| `EAConnectionId` | `Origin.OFR.50.0000676` | offer id gry |
+| `EALicenseToken` | `Origin.OFR.50.0000676` | to samo offer id |
+| `EAEntitlementSource` | `STEAM` | zrodlo uprawnienia |
+| `EAExternalSource` | `STEAM` | |
+| `EALaunchOwner` | `STEAM` | |
+| `EALaunchEnv` | `production` | |
+| `EALaunchOfflineMode` | `false` | **jedyna zmienna EA* czytana przez sama gre** |
+| `EAFreeTrialGame` | `false` | |
+| `EAGameLocale` | `pl_PL` | |
+| `EALsxPort` | `3216` | port LSX do EA App (`127.0.0.1`) |
+| `EALaunchEAID` | `<nick konta EA>` | jawne, ale wlasne dla konta |
+| `EAAuthCode` | `<auth code>` | **sekret**; `NeedsAFreshAuthCode` = brak autoryzacji |
+| `EALaunchUserAuthToken` | `<JWT konta EA>` | **sekret**; RS256, `iss=accounts.ea.com` |
+| `EASecureLaunchTokenTemp` | `<persona id>` | **sekret**; = `UserId` z LSX |
+| `EALaunchCode` | `<20 znakow>` | **sekret** |
+| `EARtPLaunchCode` | `<liczba>` | **sekret** |
+
+### Konsekwencja - gra nie waliduje entitlementu sama
+
+`NFS14.exe` ma w sobie jako string tylko `EALaunchOfflineMode` (0x1413cd280;
+`tools/xref.py --str`, brak odwolan `lea`). Reszte bloku konsumuje ActivationUI.
+Entitlement waliduje wiec bramka, nie gra - stad `proto-lab/launch_direct.py`
+odpala `NFS14.exe` bezposrednio z odtworzonym srodowiskiem, pomijajac aktywacje.
