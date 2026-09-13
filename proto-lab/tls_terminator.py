@@ -43,6 +43,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 from tcp_proxy import hexdump, parse_records  # noqa: E402  (reuzycie raportowania)
 import blaze  # noqa: E402  (Fire2 + TDF: dekodowanie zadania i budowa odpowiedzi)
+import player_store  # noqa: E402  (zapis postepu z raportow GameReporting)
+import lobby  # noqa: E402  (sesje graczy i gry - multiplayer)
 
 # --- stale protokolu ---
 VER_TLS11 = 0x0302
@@ -277,6 +279,7 @@ def handle(conn: socket.socket, addr, args, out_dir: Path,
           f"({role}) ===")
 
     w = Wire(conn)
+    sess = None                                       # sesja Blaze (lobby.py) - po handshake
     transcript = b""                                  # wiadomosci handshake (z naglowkami)
     try:
         # 1. ClientHello
@@ -357,6 +360,13 @@ def handle(conn: socket.socket, addr, args, out_dir: Path,
 
         out_dir.mkdir(parents=True, exist_ok=True)
 
+        # ByteVault laczy sie na TEN SAM port, ale mowi HTTP (REST), nie Fire2. W run-22
+        # takie polaczenia wisialy na "ogon ... czekam na reszte ramki".
+        if bytes(app[:7]).split(b" ")[0] in (b"GET", b"POST", b"PUT", b"DELETE", b"HEAD"):
+            print("  (to HTTP, nie Fire2 - obsluga ByteVault)")
+            _serve_http(w, bytearray(app), args)
+            return
+
         # 10. Petla serwera Blaze: dekoduj KAZDE zadanie Fire2 i odpowiadaj.
         #     UWAGA: granica rekordu TLS != granica ramki Fire2. Klient Blaze
         #     potrafi wyslac kilka RPC w jednym rekordzie (i rozbic jedno RPC na
@@ -367,7 +377,9 @@ def handle(conn: socket.socket, addr, args, out_dir: Path,
         conn.settimeout(args.idle_timeout)
         buf = bytearray(app)
         frameno = 0
-        notify_seq = 0                                # licznik msgId notyfikacji
+        # Wszystkie wysylki tego polaczenia ida przez sesje (blokada + wlasne msgId notyfikacji):
+        # notyfikacje do tego gracza moze wysylac takze watek innego gracza (multiplayer).
+        sess = lobby.Session(addr[0], lambda frame: w.send_record(RT_APPDATA, frame))
         logged_in = False                             # po 1/152; wlacza keepalive
         ping_seq = 0                                  # msgId serwerowych PINGow
         try:
@@ -387,17 +399,21 @@ def handle(conn: socket.socket, addr, args, out_dir: Path,
                     except Exception as e:            # noqa: BLE001
                         print(f"  [!] nie zdekodowalem Fire2: {e}")
                         print(hexdump(pkt, 256)); continue
+                    if fr.component == GAME_REPORTING and fr.msg_type == 0:
+                        _ack_game_report(sess, fr, args)
+                        continue
+                    name = blaze.rpc_name(fr.component, fr.command)
                     print(f"\n  <- Fire2 comp={fr.component} cmd={fr.command} "
                           f"err={fr.error} type=0x{fr.msg_type:02x} seq={fr.seq} "
-                          f"payload={len(fr.payload)}B")
+                          f"payload={len(fr.payload)}B" + (f"  [{name}]" if name else ""))
                     if args.dump_tdf and fr.payload:
                         try:
                             print(blaze.dump_tdf(blaze.decode_tdf(fr.payload), 3))
                         except Exception as e:            # noqa: BLE001
                             print(f"      (nie zdekodowalem TDF zadania: {e})")
-                    resp = _dispatch_blaze(fr, args)
+                    resp = _dispatch_blaze(fr, args, sess)
                     if resp is not None:
-                        w.send_record(RT_APPDATA, resp)
+                        sess.send(resp)
                         print(f"  -> odpowiedz comp={fr.component} cmd={fr.command} "
                               f"({len(resp)} B)")
                         # Po loginie wlaczamy krotki timeout, zeby budzic sie co
@@ -406,15 +422,26 @@ def handle(conn: socket.socket, addr, args, out_dir: Path,
                         if fr.component == 1 and fr.command == 152 and args.keepalive:
                             logged_in = True
                             conn.settimeout(args.keepalive)
-                        for note in _after_reply(fr, args, notify_seq):
-                            notify_seq += 1
-                            w.send_record(RT_APPDATA, note)
-                            nfr = blaze.Fire2.decode(note)
-                            print(f"  -> async NOTIFY comp={nfr.component} "
-                                  f"cmd={nfr.command} seq={nfr.seq} ({len(note)} B)")
+                        _deliver(sess, _after_reply(fr, args, sess))
                     else:
-                        print("  *** brak handlera - zrzut (kolejny etap do zbudowania) ***")
-                        print(hexdump(pkt, 384))
+                        if name and "#" not in name:
+                            # Komenda znana z binarki; surowa ramka i tak lezy w capture, a
+                            # pola pokazuje --dump-tdf - hexdump tylko zasmiecal log.
+                            print(f"  *** brak handlera: {name} ***")
+                        else:
+                            print("  *** brak handlera - zrzut (kolejny etap do zbudowania) ***")
+                            print(hexdump(pkt, 384))
+                        # Domyslnie odpowiadamy pustym potwierdzeniem (err=0, pusty
+                        # payload = odpowiedz z wartosciami domyslnymi). Bez tego RPC gry
+                        # nigdy sie nie konczy i gra czeka w nieskonczonosc. run-20: po
+                        # zalogowaniu przyszlo 7 takich zapytan naraz. --no-ack-unknown
+                        # wylacza (zeby zobaczyc, na ktorym RPC gra naprawde stoi).
+                        if getattr(args, "ack_unknown", True) and fr.msg_type == 0:
+                            ack = blaze.build_empty_reply(fr.component, fr.command, fr.seq,
+                                                          msg_type=args.reply_msgtype)
+                            sess.send(ack)
+                            print(f"  -> puste potwierdzenie comp={fr.component} "
+                                  f"cmd={fr.command} ({len(ack)} B)")
                 if buf:
                     print(f"  (ogon {len(buf)} B - czekam na reszte ramki)")
 
@@ -430,7 +457,7 @@ def handle(conn: socket.socket, addr, args, out_dir: Path,
                         # (0xf3a580) po przekroczeniu progu bezczynnosci [conn+0x2fc]
                         # zrywa polaczenie bledem 0x800e0000 -> teardown -> crash.
                         # Serwerowy PING resetuje licznik aktywnosci u klienta.
-                        w.send_record(RT_APPDATA, blaze.build_server_ping(ping_seq))
+                        sess.send(blaze.build_server_ping(ping_seq))
                         print(f"  -> keepalive PING seq={ping_seq}")
                         ping_seq += 1
                         continue
@@ -450,10 +477,28 @@ def handle(conn: socket.socket, addr, args, out_dir: Path,
     except (ConnectionError, ValueError, struct.error) as e:
         print(f"  blad sesji: {e}")
     finally:
+        if sess is not None and sess.uid:
+            # Rozlaczenie = wyjscie ze wszystkich gier; pozostali gracze dostaja notyfikacje.
+            _deliver(sess, _lobby(args).logout(sess))
         try:
             conn.close()
         except OSError:
             pass
+
+
+def _deliver(sess, notes) -> None:
+    """Wysyla notyfikacje (sesja, ramka) - do wlasnego polaczenia i do innych graczy. Polaczenie
+    innego gracza moglo juz sie zamknac: taki blad tylko logujemy."""
+    for target, note in notes:
+        nfr = blaze.Fire2.decode(note)
+        who = "" if target is sess else f" -> do {target!r}"
+        try:
+            seq = target.notify(note)
+        except OSError as e:
+            print(f"  -> NOTIFY comp={nfr.component} cmd={nfr.command}{who} NIE WYSLANE ({e})")
+            continue
+        print(f"  -> async NOTIFY comp={nfr.component} cmd={nfr.command} seq={seq} "
+              f"({len(note)} B){who}")
 
 
 def _bind_exclusive(s: socket.socket, port: int, opis: str) -> None:
@@ -480,7 +525,7 @@ def _bind_exclusive(s: socket.socket, port: int, opis: str) -> None:
                  f"i zakoncz tamten proces przed startem.")
 
 
-def _qos_body(req: bytes, args) -> bytes:
+def _qos_body(req: bytes, args, peer=None) -> bytes:
     """Tresc odpowiedzi koordynatora QoS. Format: XML (DirtySDK xmlparse).
 
     Ustalone z dezasemblacji zrzutu pamieci (RVA, baza modulu 0x140000000):
@@ -538,7 +583,10 @@ def _qos_body(req: bytes, args) -> bytes:
                 except ValueError:
                     pass
         nint = max(1, min(nint, args.qos_interfaces))      # tylko tyle, ile slucha
-        ip = int.from_bytes(bytes(int(o) for o in args.redirect_ip.split(".")), "big")
+        # Klient z innego komputera musi dosiegnac sond UDP pod adresem serwera w sieci.
+        server_ip = args.redirect_ip if peer is None or peer[0] in lobby.LOCAL_IPS \
+            else _public_ip(args)
+        ip = int.from_bytes(bytes(int(o) for o in server_ip.split(".")), "big")
         ips = "".join(f"<ips>{ip}</ips>" for _ in range(nint))
         ports = "".join(f"<ports>{port + i}</ports>" for i in range(nint))
         return (f"<firewall><numinterfaces>{nint}</numinterfaces>"
@@ -605,7 +653,12 @@ def _qos_probe_reply(data: bytes, peer, args) -> bytes:
     buf = bytearray(data)
     if len(data) == 0x14:                  # sonda latencji
         buf[0x04:0x08] = (1).to_bytes(4, "big")
-        ip = bytes(int(o) for o in peer[0].split("."))
+        # Adres zewnetrzny, ktory klient potem melduje innym graczom (HNET/PNET). Gracz lokalny
+        # sonduje z 127.0.0.1 - drugi komputer nie polaczy sie z takim adresem, wiec podajemy
+        # adres tego komputera w sieci (--public-ip albo wykryty LAN). --public-ip 127.0.0.1
+        # przywraca stare zachowanie.
+        seen = _public_ip(args) if peer[0] in lobby.LOCAL_IPS else peer[0]
+        ip = bytes(int(o) for o in seen.split("."))
         return bytes(buf) + ip + peer[1].to_bytes(2, "big") + bytes(4)
     got = int.from_bytes(data[0x0c:0x10], "big") + 1
     buf[0x0c:0x10] = got.to_bytes(4, "big")
@@ -614,8 +667,9 @@ def _qos_probe_reply(data: bytes, peer, args) -> bytes:
     return bytes(buf)
 
 
-def _dispatch_blaze(fr, args):
-    """Zwraca bajty odpowiedzi Fire2 dla znanego zadania, albo None (brak handlera)."""
+def _dispatch_blaze(fr, args, sess):
+    """Zwraca bajty odpowiedzi Fire2 dla znanego zadania, albo None (brak handlera).
+    `sess` = lobby.Session tego polaczenia (tozsamosc gracza, adres, gry)."""
     if fr.component == 5 and fr.command == 1:          # Redirector.getServerInstance
         return blaze.build_getserverinstance_response(
             args.redirect_ip, args.blaze_port, seq=fr.seq,
@@ -627,17 +681,33 @@ def _dispatch_blaze(fr, args):
         elif args.client_config is not None:
             conf = dict(kv.split("=", 1) for kv in args.client_config.split(",") if kv)
         else:
-            conf = None                                 # DEFAULT_CLIENT_CONFIG
+            conf = dict(blaze.DEFAULT_CLIENT_CONFIG)
+            if not args.no_bytevault:
+                # ByteVault: tuz po zalogowaniu (stan online gry 9 -> 10 w 0xa1bb00) gra
+                # czyta te klucze i inicjuje polaczenie ByteVault (0xf71b40). Bez nich
+                # bierze domyslny host EA, ktory nie zyje. Formaty z kodu: port przez atoi
+                # (getter +0x48), secure = porownanie z "true", host jako string.
+                # Kierujemy na nasz Blaze - nieznane RPC wyjda w logu jako "brak handlera".
+                conf.update({
+                    "bytevaultHostname": args.bytevault_host or args.blaze_host,
+                    "bytevaultPort": str(args.bytevault_port or args.blaze_port),
+                    "bytevaultSecure": "true",
+                })
         return blaze.build_preauth_response(
             fr.seq, msg_type=args.reply_msgtype, client_config=conf,
-            qos=not args.no_qoss, qos_host=args.redirect_ip,
+            qos=not args.no_qoss, qos_host=_client_facing_ip(sess, args),
             qos_port=args.qos_port, pad_to=args.pad_preauth)
     if fr.component == 9 and fr.command == 2:           # Util.ping
         return blaze.build_ping_response(fr.seq, msg_type=args.reply_msgtype)
     if fr.component == 1 and fr.command == 152:         # Authentication.login (Origin)
-        return blaze.build_login_response(fr.seq, msg_type=args.reply_msgtype)
+        # Tozsamosc per gracz (lobby.py): 127.0.0.1 = PayTonkaaa, inny komputer = uid z players.json.
+        sess.outbox += _lobby(args).login(sess)
+        print(f"  [gracz] {sess.ip} -> {sess.persona} (uid {sess.uid})")
+        return blaze.build_login_response(fr.seq, msg_type=args.reply_msgtype,
+                                          user_id=sess.uid, persona=sess.persona)
     if fr.component == 9 and fr.command == 8:           # Util.postAuth
         return blaze.build_postauth_response(fr.seq, msg_type=args.reply_msgtype,
+                                             user_id=sess.uid or LOCAL_USER_ID,
                                              subsystems=not args.postauth_minimal)
     # --- komendy Util wolane PO postAuth (numeracja z emulatora BF3, ten sam
     #     silnik; NFS uzywa component 9 dla Util). Brak odpowiedzi na ktoras z
@@ -661,33 +731,504 @@ def _dispatch_blaze(fr, args):
     #     NetworkInfo{ADDR,NLMP,NQOS}) i nie zwraca danych - wystarczy puste
     #     potwierdzenie, by RPC klienta sie zakonczylo.
     if fr.component == 0x7802 and fr.command in (0x14, 0x08, 0x1A):
+        if fr.command == 0x14:
+            # Adres gracza dla innych (UserAdded, roster gry). Pierwszy raport, jeszcze przed QoS,
+            # ma EXIP 0 - takiego nie zapamietujemy.
+            addr = _union_ip_pair(_req_fields(fr).get("ADDR"))
+            if addr and addr[0]:
+                sess.addr = addr
         return blaze.build_empty_reply(fr.component, fr.command, fr.seq,
                                        msg_type=args.reply_msgtype)
+    # --- RPC po zalogowaniu (run-20/21b). Nazwy z emulacji getCommandName w binarce,
+    #     uklady odpowiedzi z tablic pol TDF - patrz buildery w blaze.py.
+    req = _req_fields(fr)
+    mt = args.reply_msgtype
+    if fr.component == 9 and fr.command == 10:          # Util.userSettingsLoad
+        return blaze.build_user_settings_load_response(fr.seq, str(req.get("KEY", "")), msg_type=mt)
+    if fr.component == 7 and fr.command == 15:          # Stats.getKeyScopesMap
+        return blaze.build_key_scopes_response(fr.seq, msg_type=mt)
+    if fr.component == 7 and fr.command == 4:           # Stats.getStatGroup
+        return blaze.build_stat_group_response(fr.seq, str(req.get("NAME", "")), msg_type=mt)
+    if fr.component == 7 and fr.command == 16:          # Stats.getStatsByGroupAsync
+        return blaze.build_empty_reply(7, 16, fr.seq, msg_type=mt)   # dane idza notyfikacja 7/0x32
+    if fr.component == 25 and fr.command == 6:          # AssociationLists.getLists
+        return blaze.build_get_lists_response(fr.seq, msg_type=mt)
+    if fr.component == 2050 and fr.command == 38:       # NFS.getGeolocationInfo
+        return blaze.build_geolocation_info_response(fr.seq, int(req.get("BLID", 0) or 0), msg_type=mt)
+    if fr.component == 1 and fr.command == 36:          # Authentication.getAuthToken
+        return blaze.build_get_auth_token_response(fr.seq, f"TR_AUTH_{sess.uid}", msg_type=mt)
+    if fr.component == 1 and fr.command == 29:          # Authentication.listUserEntitlements2
+        # BUID = id persony EA tej gry (np. 1006431274704) - zapamietane w sesji. Licencje dalej
+        # puste (Steam Complete Edition: DLC dziala lokalnie), wiec odpowiedz generyczna.
+        if req.get("BUID"):
+            sess.persona_id = int(req["BUID"])
+        return None
+    # --- GameManager (run-22: "Wyszukiwanie gry" = createGame bez odpowiedzi).
+    #     Gry i gracze w rejestrze lobby.py; notyfikacje (takze dla innych graczy) wysyla _after_reply.
+    if fr.component == 4 and fr.command == 1:           # GameManager.createGame
+        lb = _lobby(args)
+        sess.addr = _raw_ip_pair(fr.payload)
+        lb.learn_persona(sess, _raw_str(fr.payload, "GNAM", ""))
+        g = lb.create_game(sess, _create_game_params(fr.payload), getattr(args, "gm_player_state", 4))
+        sess.pending = ("created_game", 0, g)
+        print(f"  [gra] {sess!r} tworzy gre {g.gid:#x} ({'publiczna' if g.public else 'prywatna'})")
+        return blaze.build_create_game_response(fr.seq, g.gid, msg_type=mt)
+    if fr.component == 4 and fr.command == 13:          # GameManager.startMatchmaking
+        # run-26: "wyszukaj sesje" = leaveGameByGroup + startMatchmaking (MODE 3 = szukaj i utworz);
+        # wynik matchmakingu przychodzi notyfikacja. Najpierw szukamy publicznej gry innego gracza
+        # (dolaczenie, SUCCESS_JOINED_EXISTING_GAME), a gdy jej nie ma - nowa gra z graczem jako
+        # hostem (SUCCESS_CREATED_GAME). --mm-fail: NotifyMatchmakingFailed SESSION_TIMED_OUT (A/B).
+        lb = _lobby(args)
+        msid = lb.new_msid()
+        if getattr(args, "mm_fail", False):
+            sess.pending = ("mm_failed", msid, None)
+            print(f"  [matchmaking] sesja {msid} -> NotifyMatchmakingFailed SESSION_TIMED_OUT (--mm-fail)")
+            return blaze.build_start_matchmaking_response(fr.seq, msid, msg_type=mt)
+        pnet = _union_ip_pair(req.get("PNET"))
+        if pnet and pnet[0]:
+            sess.addr = pnet
+        lb.learn_persona(sess, str(req.get("GNAM", "")))
+        crit = {t.strip(): v for t, _w, v in (req.get("CRIT") or [])}
+        agam = {t.strip(): v for t, _w, v in (crit.get("AGAM") or [])}
+        g = lb.find_public_game(sess, {int(x) for x in (agam.get("GIDL") or [])})
+        if g is not None:
+            lb.join(sess, g)
+            sess.pending = ("mm_joined", msid, g)
+            print(f"  [matchmaking] sesja {msid}: {sess!r} DOLACZA do gry {g.gid:#x} hosta "
+                  f"{lb.persona_of(g.host_uid)} (graczy: {len(g.players)})")
+        else:
+            g = lb.create_game(sess, _mm_game_params(req), getattr(args, "gm_player_state", 4))
+            sess.pending = ("mm_created", msid, g)
+            print(f"  [matchmaking] sesja {msid}, MODE={req.get('MODE')} DUR={req.get('DUR')} ms -> "
+                  f"nowa gra {g.gid:#x} (SUCCESS_CREATED_GAME)")
+        return blaze.build_start_matchmaking_response(fr.seq, msid, msg_type=mt)
+    if fr.component == 4 and fr.command in (2, 3, 11, 15, 22, 29):
+        # destroyGame, advanceGameState, removePlayer, finalizeGameCreation, leaveGameByGroup,
+        # updateMeshConnection - samo potwierdzenie; skutki (notyfikacje) wysyla _after_reply
+        return blaze.build_empty_reply(4, fr.command, fr.seq, msg_type=mt)
+    if fr.component == 2050 and fr.command == 20 and not getattr(args, "no_speed_walls", False):
+        # NFS.getInGameSpeedWalls: gra pyta o speed wall, gdy podjezdza do fotoradaru, strefy albo
+        # eventu (run-25: 46 zapytan o 35 id). Id to ENTI z raportow GameReporting, wiec wiersze
+        # bierzemy z zapisanego stanu. --no-speed-walls wraca do pustego potwierdzenia (A/B).
+        store = _player_store(args)
+        walls = []
+        for swid in req.get("SWIS") or []:
+            rows = store.rows_for_entity(swid) if store else []
+            for r in rows:
+                r["persona"] = _lobby(args).persona_of(r["blaze_id"])
+            walls.append((int(swid), rows))
+            print(f"  [speed wall] {swid}: {len(rows)} wiersz(y)"
+                  + (f" {rows[0]['float'] or rows[0]['int']}" if rows else ""))
+        return blaze.build_in_game_speed_walls_response(fr.seq, walls, msg_type=mt)
+    if fr.component == 9 and fr.command == 20:          # Util.filterForProfanity
+        # run-23: TLST [{DIRT 2, UTXT ''}] - puste potwierdzenie oddawalo PUSTA liste, czyli
+        # gra dostawala zero wynikow na jeden tekst. Odsylamy kazdy tekst bez zmian.
+        texts = []
+        for item in req.get("TLST") or []:
+            vals = {t.strip(): v for t, _w, v in item} if isinstance(item, list) else {}
+            texts.append(str(vals.get("UTXT", "")))
+        return blaze.build_filter_profanity_response(fr.seq, texts, msg_type=mt)
     return None
 
 
-def _after_reply(fr, args, seq0: int = 0):
-    """Async notyfikacje wysylane PO odpowiedzi (np. po loginie: UserSessions).
-    `seq0` = pierwszy msgId do nadania; kolejne notyfikacje dostaja seq0+1, ...
-    (wlasna sekwencja serwera, niezalezna od messageId zadan klienta)."""
+GAME_REPORTING = 28
+_REPORTS = {"n": 0}
+
+
+def _ack_game_report(sess, fr, args) -> None:
+    """GameReporting (komponent 28): raporty stanu gry. W run-23 przyszlo ich 429 w ok. 2 min
+    jazdy (Collectables, DistanceDriven*, CarCustomization, LicensesPart1/2 ...) i zajmowaly
+    95% logu. Klasa zadania @0x141a32ad0 {FNSH mFinishedStatus, PRVT mPrivateReport,
+    RPRT mGameReport}; raport siedzi w polu typu variable, ktorego nasz dekoder nie rozklada.
+    Odpowiadamy pustym potwierdzeniem, tak jak w run-23 (gra je przyjmuje). Pelna ramka jest w
+    capture (blaze-<tag>-NN.bin), wiec w logu zostaje jedna linia z nazwami z raportu."""
+    import re
+    _REPORTS["n"] += 1
+    sess.send(blaze.build_empty_reply(fr.component, fr.command, fr.seq,
+                                      msg_type=args.reply_msgtype))
+    # Zapis postepu (player_store.py). Blad parsowania/zapisu nie moze zatrzymac gry - ack
+    # poszedl wyzej, tu tylko log.
+    store = _player_store(args)
+    try:
+        rep = player_store.parse_game_report(fr.payload)
+        stats = sum(len(p[k]) for p in rep["players"].values() for k in ("int", "float", "str"))
+        entity = next(iter(rep["players"].values()))["entity"] if rep["players"] else "-"
+        desc = f"{rep['category']} ENTI={entity} ({stats} stat.)"
+        saved = ""
+        if store is not None:
+            store.record(rep)
+            saved = " [zapis]"
+    except Exception as e:                              # noqa: BLE001
+        words = [m.decode() for m in re.findall(rb"[A-Za-z][A-Za-z0-9_]{5,}", fr.payload)]
+        desc, saved = " ".join(words[:4]), f" [NIE ZAPISANE: {e!r}]"
+    print(f"  <- GameReporting 28/{fr.command} #{_REPORTS['n']} seq={fr.seq} "
+          f"({len(fr.payload)} B): {desc} -> ack{saved}")
+
+
+_STORE_LOCK = threading.Lock()
+_STORE: dict = {}
+
+
+def _player_store(args):
+    """Wspolny PlayerStore dla wszystkich polaczen; None przy --no-store."""
+    if getattr(args, "no_store", False):
+        return None
+    root = getattr(args, "data_dir", None) or player_store.DATA_DIR
+    with _STORE_LOCK:
+        if root not in _STORE:
+            _STORE[root] = player_store.PlayerStore(root)
+        return _STORE[root]
+
+
+LOCAL_USER_ID = lobby.LOCAL_USER_ID  # BlazeId gracza lokalnego (to samo w odpowiedzi na login)
+LOCAL_PERSONA = lobby.LOCAL_PERSONA
+_LOBBY: dict = {}
+
+
+def _lobby(args) -> lobby.Lobby:
+    """Wspolny rejestr graczy i gier (jeden na proces). players.json lezy obok zapisu postepu."""
+    with _STORE_LOCK:
+        if "lobby" not in _LOBBY:
+            root = Path(getattr(args, "data_dir", None) or player_store.DATA_DIR)
+            forced = dict(p.split("=", 1) for p in (getattr(args, "player", None) or []) if "=" in p)
+            _LOBBY["lobby"] = lobby.Lobby(root / "players.json", forced)
+        return _LOBBY["lobby"]
+
+
+def _public_ip(args) -> str:
+    """Adres tego komputera widziany z innego komputera w sieci: --public-ip albo wykryty LAN."""
+    ip = getattr(args, "public_ip", None)
+    if not ip:
+        ip = _detect_lan_ip()
+        args.public_ip = ip
+    return ip
+
+
+def _detect_lan_ip() -> str:
+    """Glowny adres IPv4 w sieci lokalnej. connect() gniazda UDP nie wysyla pakietu - system tylko
+    wybiera interfejs z trasa domyslna i jego adres."""
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(("192.0.2.1", 9))
+        return s.getsockname()[0]
+    except OSError:
+        return "127.0.0.1"
+    finally:
+        s.close()
+
+
+def _client_facing_ip(sess, args) -> str:
+    """Adres serwera dla tego klienta: gracz lokalny 127.0.0.1, inny komputer - adres w sieci."""
+    if sess is None or sess.is_local:
+        return args.redirect_ip
+    return _public_ip(args)
+
+
+def _req_fields(fr) -> dict:
+    """Pola najwyzszego poziomu zadania klienta: tag (bez spacji) -> wartosc."""
+    if not fr.payload:
+        return {}
+    try:
+        return {tag.strip(): val for tag, _wtype, val in blaze.decode_tdf(fr.payload)}
+    except Exception:                                   # noqa: BLE001
+        return {}
+
+
+# --- Odczyt pojedynczych pol z SUROWEGO zadania. Nasz dekoder nie rozklada calego
+#     createGame (lista unii HNET, typy variable), a potrzebujemy tylko kilku wartosci.
+#     Szukamy bajtow "tag + typ" - dla tych pol w createGame trafienia sa jednoznaczne.
+def _enc_tag(tag: str) -> bytes:
+    v = 0
+    for ch in tag.ljust(4)[:4]:
+        v = (v << 6) | ((ord(ch) - 0x20) & 0x3F)
+    return v.to_bytes(3, "big")
+
+
+def _dec_varint(b: bytes, p: int) -> tuple[int, int]:
+    v = b[p] & 0x3F
+    neg = b[p] & 0x40
+    shift = 6
+    while b[p] & 0x80:
+        p += 1
+        v |= (b[p] & 0x7F) << shift
+        shift += 7
+    return (-v if neg else v), p + 1
+
+
+def _raw_int(payload: bytes, tag: str, default: int = 0) -> int:
+    i = payload.find(_enc_tag(tag) + b"\x00")
+    return _dec_varint(payload, i + 4)[0] if i >= 0 else default
+
+
+def _raw_str(payload: bytes, tag: str, default: str = "") -> str:
+    i = payload.find(_enc_tag(tag) + b"\x01")
+    if i < 0:
+        return default
+    n, p = _dec_varint(payload, i + 4)
+    return payload[p:p + n].rstrip(b"\x00").decode("latin1")
+
+
+def _raw_list_int(payload: bytes, tag: str, default: list[int]) -> list[int]:
+    i = payload.find(_enc_tag(tag) + b"\x04\x00")
+    if i < 0:
+        return default
+    n, p = _dec_varint(payload, i + 5)
     out = []
+    for _ in range(n):
+        v, p = _dec_varint(payload, p)
+        out.append(v)
+    return out
+
+
+def _raw_map_str(payload: bytes, tag: str) -> dict[str, str]:
+    i = payload.find(_enc_tag(tag) + b"\x05\x01\x01")
+    if i < 0:
+        return {}
+    n, p = _dec_varint(payload, i + 6)
+    out = {}
+    for _ in range(n):
+        kl, p = _dec_varint(payload, p)
+        k = payload[p:p + kl].rstrip(b"\x00").decode("latin1")
+        p += kl
+        vl, p = _dec_varint(payload, p)
+        out[k] = payload[p:p + vl].rstrip(b"\x00").decode("latin1")
+        p += vl
+    return out
+
+
+def _union_ip_pair(u) -> tuple[int, int, int, int, int] | None:
+    """(exip, export, inip, inport, maci) ze zdekodowanej unii NetworkAddress wariant 2 (IpPair
+    {EXIP{IP MACI PORT} INIP{..} MACI}): PNET w startMatchmaking, ADDR w updateNetworkInfo.
+    None, gdy uklad jest inny."""
+    try:
+        _union, _variant, (_tag, _wtype, fields) = u
+        f = {t.strip(): v for t, _w, v in fields}
+        ex = {t.strip(): v for t, _w, v in f["EXIP"]}
+        inn = {t.strip(): v for t, _w, v in f["INIP"]}
+        return ex["IP"], ex["PORT"], inn["IP"], inn["PORT"], f.get("MACI", 0)
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def _objid_uid(v) -> int:
+    """uid z ObjectId (0x7802, 2, uid) - SCG/TCG w updateMeshConnection."""
+    return int(v[2]) if isinstance(v, tuple) and len(v) == 3 else 0
+
+
+def _create_game_params(p: bytes) -> dict:
+    """Parametry gry z SUROWEGO zadania createGame (nasz dekoder nie rozklada HNET)."""
+    return dict(game_name=_raw_str(p, "GNAM", LOCAL_PERSONA), game_settings=_raw_int(p, "GSET", 0),
+                network_topology=_raw_int(p, "NTOP", 0), presence_mode=_raw_int(p, "PRES", 1),
+                voip=_raw_int(p, "VOIP", 0), version_string=_raw_str(p, "VSTR", ""),
+                max_players=_raw_int(p, "PMAX", 6),
+                slot_capacities=_raw_list_int(p, "PCAP", [6, 0, 0, 0]),
+                team_ids=_raw_list_int(p, "TIDS", [65535]), attributes=_raw_map_str(p, "ATTR"))
+
+
+def _mm_game_params(req: dict) -> dict:
+    """Parametry gry tworzonej przez matchmaking - ze zdekodowanego zadania startMatchmaking."""
+    pmax = int(req.get("PMAX", 6))
+    attrs = {str(k): str(v) for k, v in (req.get("ATTR") or {}).items()}
+    # Regula czlonkostwa z kryteriow (RLST: gameMembershipRule = ['Public']) zapisana jako atrybut
+    # gry pod nazwa z createGame (gameMembershipRequirements) - po nim drugi gracz szukajacy gry
+    # publicznej ja znajduje (Lobby.find_public_game). Nazwa atrybutu przyjeta z createGame.
+    crit = {t.strip(): v for t, _w, v in (req.get("CRIT") or [])}
+    for rule in crit.get("RLST") or []:
+        rf = {t.strip(): v for t, _w, v in rule}
+        if rf.get("NAME") == "gameMembershipRule" and rf.get("VALU"):
+            attrs.setdefault("gameMembershipRequirements", str(rf["VALU"][0]))
+    return dict(game_name=str(req.get("GNAM", LOCAL_PERSONA)), game_settings=int(req.get("GSET", 0)),
+                network_topology=int(req.get("NTOP", 0)), presence_mode=int(req.get("PRES", 1)),
+                voip=int(req.get("VOIP", 0)), version_string=str(req.get("GVER", "")),
+                max_players=pmax, slot_capacities=[pmax, 0, 0, 0],
+                team_ids=[int(req.get("TID", 65535))], attributes=attrs)
+
+
+def _game_setup(lb, g, setup_context) -> bytes:
+    """NotifyGameSetup gry z rejestru: roster wszystkich graczy, adres hosta, biezacy stan gry."""
+    roster = lb.roster(g)
+    host_addr = next((p["addr"] for p in roster if p["uid"] == g.host_uid), lobby.DEFAULT_ADDR)
+    return blaze.build_notify_game_setup(g.gid, g.host_uid, roster, host_addr=host_addr,
+                                         game_state=g.state, setup_context=setup_context, **g.params)
+
+
+def _raw_ip_pair(payload: bytes) -> tuple[int, int, int, int, int]:
+    """(exip, export, inip, inport, maci) z HNET zadania createGame; domyslnie lokalnie."""
+    def sub(tag):
+        i = payload.find(_enc_tag(tag) + b"\x03")
+        if i < 0:
+            return 0x7F000001, 3659
+        part = payload[i + 4:i + 40]
+        return _raw_int(part, "IP", 0x7F000001), _raw_int(part, "PORT", 3659)
+    exip, export = sub("EXIP")
+    inip, inport = sub("INIP")
+    j = payload.find(_enc_tag("INIP") + b"\x03")
+    maci = _raw_int(payload[j + 4:], "MACI", 0) if j >= 0 else 0
+    # MACI wewnatrz INIP to 0, wlasciwy MACI pary jest za struktura INIP - bierz ostatnie trafienie
+    k = payload.rfind(_enc_tag("MACI") + b"\x00")
+    if k >= 0:
+        maci = _dec_varint(payload, k + 4)[0]
+    return exip, export, inip, inport, maci
+
+
+def _bytevault_reply(method: str, path: str, body: bytes, args) -> tuple[str, str, bytes]:
+    """Odpowiedz ByteVault (REST). Uklad listy rekordow: kandydat {LIST mRecords, TOTL
+    mTotalCount} (@0x1416b6748). Klucze JSON NIE sa zapisane w binarce - przyjmujemy nazwy
+    pol bez przedrostka m; --bytevault-format heat wysyla ten sam TDF binarnie."""
+    fmt = getattr(args, "bytevault_format", "json")
+    listing = "/recordinfo" in path or path.split("?")[0].rstrip("/").endswith("/records")
+    if fmt == "heat":
+        payload = blaze.encode_tdf([blaze.f_list_struct("LIST", []), blaze.f_int("TOTL", 0)]) \
+            if listing else b""
+        return "200 OK", "application/heat", payload
+    return "200 OK", "application/json", (b'{"records":[],"totalCount":0}' if listing else b"{}")
+
+
+def _serve_http(w, buf: bytearray, args) -> None:
+    """Sesja HTTP po TLS na porcie Blaze - tak laczy sie ByteVault (run-22: GET
+    /1.0/contexts/nfs-rivals-common/categories/Unlocks/recordinfo?...). Obsluguje kolejne
+    zapytania na tym samym polaczeniu (keep-alive) az klient je zamknie."""
+    while True:
+        while b"\r\n\r\n" not in buf:
+            rtype, _ver, rec = w.recv_record()
+            if rtype != RT_APPDATA:
+                return
+            buf += rec
+        head, _, rest = bytes(buf).partition(b"\r\n\r\n")
+        lines = head.decode("latin1").split("\r\n")
+        parts = (lines[0].split(" ") + ["", "", ""])[:3]
+        method, path = parts[0], parts[1]
+        headers = {}
+        for ln in lines[1:]:
+            k, _, v = ln.partition(":")
+            headers[k.strip().lower()] = v.strip()
+        clen = int(headers.get("content-length", "0") or 0)
+        rest = bytearray(rest)
+        while len(rest) < clen:
+            rtype, _ver, rec = w.recv_record()
+            if rtype != RT_APPDATA:
+                return
+            rest += rec
+        body, buf = bytes(rest[:clen]), bytearray(rest[clen:])
+        print(f"  [HTTP] {method} {path}")
+        for ln in lines[1:]:
+            print(f"      {ln}")
+        if body:
+            print(f"      BODY ({len(body)} B): {body[:300]!r}")
+        status, ctype, payload = _bytevault_reply(method, path, body, args)
+        resp = (f"HTTP/1.1 {status}\r\nContent-Type: {ctype}\r\n"
+                f"Content-Length: {len(payload)}\r\n\r\n").encode() + payload
+        w.send_record(RT_APPDATA, resp)
+        print(f"  -> HTTP {status} {ctype} ({len(payload)} B) {payload[:120]!r}")
+        if headers.get("connection", "").lower() == "close":
+            # ByteVault wysyla "Connection: Close" i zamyka gniazdo po odpowiedzi; dalsze
+            # czekanie na rekord konczylo sie falszywym "blad sesji" w logu (run-23).
+            return
+
+
+def _after_reply(fr, args, sess):
+    """Async notyfikacje wysylane PO odpowiedzi: lista (sesja, ramka). Zwykle do tego samego
+    gracza, a w multiplayerze takze do innych graczy gry (dolaczenie, wyjscie, mesh). msgId nadaje
+    Session.notify - kazda sesja ma wlasna rosnaca sekwencje."""
+    lb = _lobby(args)
+    out = list(sess.outbox)
+    sess.outbox.clear()
+
+    def me(frame):
+        out.append((sess, frame))
+
     if fr.component == 1 and fr.command == 152:         # po loginie
         if args.notify_probe:
             for cmd in range(1, 11):
-                out.append(blaze.build_usersession_update(
-                    component=args.notify_comp, command=cmd))
+                me(blaze.build_usersession_update(sess.uid, component=args.notify_comp, command=cmd))
         else:
             # Kolejnosc jak w Blaze po loginie: UserAdded (cmd 2, tworzy usera),
             # ExtendedDataUpdate (cmd 1, dane sesji), UserAuthenticated (cmd 8,
-            # sygnal "zalogowany" -> trigger postAuth; pusty payload).
+            # sygnal "zalogowany" -> trigger postAuth).
             rich = not args.plain_session_data
-            out.append(blaze.build_useradded_notify(component=args.notify_comp, command=2,
-                                                    rich_data=rich))
-            out.append(blaze.build_usersession_update(component=args.notify_comp, command=1,
-                                                      rich_data=rich))
-            out.append(blaze.build_notification(args.notify_comp, 8, b""))
-    # nadaj rosnace msgId (buildery domyslnie daja 0 dla kazdej notyfikacji)
-    return [blaze.reseq(n, seq0 + i) for i, n in enumerate(out)]
+            # USER w UserAdded = UserIdentification (ID = BlazeId). Stary uklad z tagami
+            # UserSessionLoginInfo dawal usera z ID=0 -> gra nie dostawala onAuthenticated.
+            me(blaze.build_useradded_notify(sess.uid, sess.persona, component=args.notify_comp,
+                                            command=2, rich_data=rich,
+                                            legacy_user=getattr(args, "legacy_user_added", False)))
+            me(blaze.build_usersession_update(sess.uid, component=args.notify_comp, command=1,
+                                              rich_data=rich))
+            # UserAuthenticated z pelnym UserSessionLoginInfo (klasa z binarki
+            # @0x141a2f160). Pusty payload dawal BUID=0 i stan online gry nie dochodzil
+            # do 9 ("Logowanie"). --empty-user-auth przywraca stary pusty wariant (A/B).
+            if args.empty_user_auth:
+                me(blaze.build_notification(args.notify_comp, 8, b""))
+            else:
+                me(blaze.build_user_authenticated_notify(sess.uid, sess.persona,
+                                                         component=args.notify_comp, command=8))
+    if fr.component == 7 and fr.command == 16:          # Stats.getStatsByGroupAsync
+        # Wynik zapytania asynchronicznego przychodzi notyfikacja 7/0x32 z tym samym VID;
+        # LAST=1 zamyka widok. Bez niej gra czeka na statystyki bez konca.
+        req = _req_fields(fr)
+        eids = req.get("EID") or []
+        if not isinstance(eids, list):
+            eids = [eids]
+        me(blaze.build_stats_async_notification(
+            int(req.get("VID", 0) or 0), str(req.get("NAME", "")),
+            [int(e) for e in eids if isinstance(e, int)]))
+    if fr.component == 4 and fr.command in (1, 13) and sess.pending:
+        # createGame / startMatchmaking: decyzje (utworzona / dolaczona / porazka) podjal dispatch.
+        kind, msid, g = sess.pending
+        sess.pending = None
+        if kind == "mm_failed":
+            me(blaze.build_notify_matchmaking_failed(msid, sess.uid,
+                                                     blaze.MATCHMAKING_RESULT["SESSION_TIMED_OUT"]))
+        elif kind == "mm_joined":
+            # Dolaczajacy musi znac pozostalych graczy (UserAdded z ich adresami), zanim dostanie
+            # gre z rosterem; gracze juz w grze dostaja UserAdded dolaczajacego i NotifyPlayerJoining.
+            others = lb.members(g, exclude=sess.uid)
+            for o in others:
+                me(blaze.build_useradded_notify(o.uid, o.persona, component=args.notify_comp,
+                                                command=2, addr=o.addr))
+            me(_game_setup(lb, g, (msid, blaze.MATCHMAKING_RESULT["SUCCESS_JOINED_EXISTING_GAME"],
+                                   sess.uid)))
+            joiner = next(p for p in lb.roster(g) if p["uid"] == sess.uid)
+            for o in others:
+                out.append((o, blaze.build_useradded_notify(sess.uid, sess.persona,
+                                                            component=args.notify_comp,
+                                                            command=2, addr=sess.addr)))
+                out.append((o, blaze.build_notify_player_joining(g.gid, joiner)))
+        else:
+            ctx = None if kind == "created_game" else \
+                (msid, blaze.MATCHMAKING_RESULT["SUCCESS_CREATED_GAME"], sess.uid)
+            me(_game_setup(lb, g, ctx))
+    if fr.component == 4 and fr.command == 3:           # GameManager.advanceGameState
+        req = _req_fields(fr)
+        gid = int(req.get("GID", 0) or 0)
+        state = int(req.get("GSTA", blaze.GAME_STATE["PRE_GAME"]))
+        g = lb.set_state(gid, state)
+        note = blaze.build_notify_game_state_change(gid, state)
+        targets = lb.members(g) if g is not None else []
+        if sess not in targets:
+            targets.append(sess)
+        out += [(t, note) for t in targets]
+    if fr.component == 4 and fr.command == 29:          # GameManager.updateMeshConnection
+        req = _req_fields(fr)
+        gid = int(req.get("GID", 0) or 0)
+        src, tgt = _objid_uid(req.get("SCG")), _objid_uid(req.get("TCG"))
+        stat = int(req.get("STAT", 0) or 0)
+        if src != tgt:
+            print(f"  [mesh] gra {gid:#x}: {lb.persona_of(src)} -> {lb.persona_of(tgt)} STAT={stat}")
+        out += lb.mesh(gid, src, tgt, stat)
+    if fr.component == 4 and fr.command in (2, 11, 22):  # destroyGame, removePlayer, leaveGameByGroup
+        req = _req_fields(fr)
+        g = lb.game(int(req.get("GID", 0) or 0))
+        if g is not None:
+            if fr.command == 2:
+                uid, reason = sess.uid, blaze.PLAYER_REMOVED_REASON["PLAYER_LEFT"]
+            else:
+                uid = int(req.get("PID", 0) or sess.uid)
+                reason = int(req.get("REAS", blaze.PLAYER_REMOVED_REASON["PLAYER_LEFT"]))
+            notes = lb.remove_player(g, uid, reason)
+            print(f"  [gra] {lb.persona_of(uid)} wychodzi z gry {g.gid:#x} (REAS {reason}), "
+                  f"notyfikacji dla innych: {len(notes)}")
+            out += notes
+    return out
 
 
 def _drain_alert(rtype: int, body: bytes) -> None:
@@ -714,6 +1255,15 @@ def main() -> int:
     ap.add_argument("--blaze-host", default="gosredirector.ea.com",
                     help="nazwa hosta w polu HOST odpowiedzi (musi byc w pliku hosts "
                          "-> 127.0.0.1 ORAZ pasowac do CN certu). Gra laczy sie z nia.")
+    ap.add_argument("--no-bytevault", action="store_true",
+                    help="NIE dopisuj bytevaultHostname/Port/Secure do CONF w preAuth "
+                         "(gra wtedy celuje w domyslny, martwy host EA)")
+    ap.add_argument("--bytevault-host", default=None,
+                    help="bytevaultHostname w CONF (domyslnie = --blaze-host; musi "
+                         "pasowac do CN certu, bo bytevaultSecure=true)")
+    ap.add_argument("--bytevault-port", type=int, default=0,
+                    help="bytevaultPort w CONF (domyslnie = --blaze-port, czyli "
+                         "polaczenie ByteVault trafia do naszego Blaze)")
     ap.add_argument("--addr-index", type=int, default=0,
                     help="indeks aktywnego skladnika unii ADDR (0=IpAddress dla "
                          "ServerAddressInfo; do prob, jesli klient nie laczy sie)")
@@ -766,6 +1316,39 @@ def main() -> int:
                          "PSS/TELE/TICK (struktury zostaja). A/B do pytania, czy "
                          "klient rozlacza sie, bo probuje podniesc podsystemy pod "
                          "adresami, pod ktorymi nikt nie slucha")
+    ap.add_argument("--bytevault-format", choices=("json", "heat"), default="json",
+                    help="format odpowiedzi ByteVault (REST po HTTPS na porcie Blaze): json "
+                         "(klucze = nazwy pol bez 'm', niepotwierdzone) albo heat (ten sam TDF binarnie)")
+    ap.add_argument("--public-ip", default=None, metavar="IP",
+                    help="adres tego komputera widziany z innego komputera (multiplayer). Domyslnie "
+                         "wykryty adres LAN. Graczowi lokalnemu QoS podaje go jako adres zewnetrzny, "
+                         "zeby drugi gracz mogl sie z nim polaczyc; 127.0.0.1 = stare zachowanie")
+    ap.add_argument("--player", action="append", default=[], metavar="IP=NICK",
+                    help="nazwa gracza dla adresu IP (mozna powtarzac); bez tego serwer uczy sie "
+                         "nicku z gry i zapisuje go w players.json")
+    ap.add_argument("--mm-fail", action="store_true",
+                    help="GameManager.startMatchmaking: zamiast tworzyc gre publiczna wyslij "
+                         "NotifyMatchmakingFailed SESSION_TIMED_OUT (porownanie A/B)")
+    ap.add_argument("--no-speed-walls", action="store_true",
+                    help="na NFS.getInGameSpeedWalls (2050/20) odpowiadaj pustym potwierdzeniem "
+                         "zamiast zapisanych wynikow (porownanie A/B)")
+    ap.add_argument("--no-store", action="store_true",
+                    help="NIE zapisuj postepu z raportow GameReporting (28) na dysk")
+    ap.add_argument("--data-dir", default=None,
+                    help="katalog zapisu postepu (domyslnie ~\\TurboRivals\\data)")
+    ap.add_argument("--gm-player-state", type=int, default=4,
+                    help="stan gracza-hosta w NotifyGameSetup: 4 = ACTIVE_CONNECTED, "
+                         "2 = ACTIVE_CONNECTING (enum PlayerState z binarki)")
+    ap.add_argument("--no-ack-unknown", dest="ack_unknown", action="store_false",
+                    help="NIE odpowiadaj pustym potwierdzeniem na RPC bez handlera (domyslnie "
+                         "odpowiadamy err=0 z pustym payloadem, zeby zapytanie gry sie konczylo)")
+    ap.add_argument("--legacy-user-added", action="store_true",
+                    help="w notyfikacji UserAdded wysylaj USER ze starymi tagami "
+                         "UserSessionLoginInfo zamiast UserIdentification (gra dostaje "
+                         "usera z ID=0) - do A/B")
+    ap.add_argument("--empty-user-auth", action="store_true",
+                    help="wysylaj notyfikacje UserAuthenticated (0x7802/8) z PUSTYM "
+                         "payloadem (stare zachowanie; gra dostaje BUID=0) - do A/B")
     ap.add_argument("--plain-session-data", action="store_true",
                     help="wysylaj PUSTE UserSessionExtendedData w notyfikacjach po "
                          "loginie (stare zachowanie - do porownania A/B)")
@@ -869,7 +1452,7 @@ def main() -> int:
                     print("    " + req.decode("latin1").replace("\r\n", "\n    ").strip())
                 except Exception:                     # noqa: BLE001
                     print(hexdump(req, 128))
-                body = _qos_body(req, args)
+                body = _qos_body(req, args, peer)
                 print(f"    -> odpowiadam: {body.decode('latin1')}")
                 conn.sendall(b"HTTP/1.1 200 OK\r\n"
                              b"Content-Type: text/xml\r\n"
@@ -892,7 +1475,14 @@ def main() -> int:
                              daemon=True).start()
         threading.Thread(target=serve_qos_http, args=(args.qos_port,), daemon=True).start()
     print(f"oddajemy grze adres Blaze: {args.redirect_ip}:{args.blaze_port}. "
-          f"Ctrl+C konczy.\n")
+          f"Ctrl+C konczy.")
+    print("zapis postepu: " + ("WYLACZONY (--no-store)" if args.no_store
+                               else str(args.data_dir or player_store.DATA_DIR)))
+    lan = _public_ip(args)
+    print(f"multiplayer: adres serwera w sieci {lan}. Drugi komputer: w pliku hosts wpis "
+          f"'{lan} {args.blaze_host}'. Firewall Windows: Python TCP {args.port}, {args.blaze_port}, "
+          f"{args.qos_port} i UDP {args.qos_port}-{args.qos_port + args.qos_interfaces - 1}; "
+          f"gra UDP 3659.\n")
     try:
         serve(ports[0])
     except KeyboardInterrupt:
