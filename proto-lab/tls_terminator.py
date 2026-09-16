@@ -758,10 +758,21 @@ def _dispatch_blaze(fr, args, sess):
     if fr.component == 1 and fr.command == 36:          # Authentication.getAuthToken
         return blaze.build_get_auth_token_response(fr.seq, f"TR_AUTH_{sess.uid}", msg_type=mt)
     if fr.component == 1 and fr.command == 29:          # Authentication.listUserEntitlements2
-        # BUID = id persony EA tej gry (np. 1006431274704) - zapamietane w sesji. Licencje dalej
+        # BUID = id persony EA tej gry (np. 1006431274704) - zapamietane w sesji. Licencje domyslnie
         # puste (Steam Complete Edition: DLC dziala lokalnie), wiec odpowiedz generyczna.
         if req.get("BUID"):
             sess.persona_id = int(req["BUID"])
+        if getattr(args, "entitlements", "none") == "online":
+            # A/B 15.09: dolaczajacy wychodzi z cudzej gry ~230 ms po tych zapytaniach (log-30..32).
+            # Hipoteza: czeka na uprawnienie typu ONLINE_ACCESS w grupie gry. Tylko NFS14PC - grupa
+            # NFS13PC (loyalty) moglaby odblokowac nagrody w zapisie kariery.
+            groups = [str(g) for g in (req.get("GNLS") or []) if str(g) == "NFS14PC"]
+            ents = [dict(id=1000 + i, group=g, type=blaze.ENTITLEMENT_TYPE["ONLINE_ACCESS"],
+                         tag="ONLINE_ACCESS", persona_id=sess.persona_id,
+                         product_id="Origin.OFR.50.0000676", grant_date="2013-11-19T00:00Z")
+                    for i, g in enumerate(groups)]
+            print(f"  [entitlements] {sess.persona}: {len(ents)} wpis(y) ONLINE_ACCESS dla {groups}")
+            return blaze.build_list_entitlements_response(fr.seq, ents, msg_type=mt)
         return None
     # --- GameManager (run-22: "Wyszukiwanie gry" = createGame bez odpowiedzi).
     #     Gry i gracze w rejestrze lobby.py; notyfikacje (takze dla innych graczy) wysyla _after_reply.
@@ -773,6 +784,22 @@ def _dispatch_blaze(fr, args, sess):
         sess.pending = ("created_game", 0, g)
         print(f"  [gra] {sess!r} tworzy gre {g.gid:#x} ({'publiczna' if g.public else 'prywatna'})")
         return blaze.build_create_game_response(fr.seq, g.gid, msg_type=mt)
+    if fr.component == 4 and fr.command == 25:          # GameManager.resetDedicatedServer
+        # run-36/37: gra z sesja PRYWATNA nie matchmakuje - zamiast startMatchmaking prosi o
+        # zresetowanie serwera dedykowanego na wlasna gre (ATTR gameMembershipRequirements=
+        # 'Private', GSET 276 zamiast 287 = bez bitow "otwarta na przegladanie/matchmaking").
+        # Zadanie ma te same tagi co createGame (ATTR GNAM GSET NTOP PRES VOIP VSTR PCAP TIDS
+        # HNET), wiec parametry czytamy tym samym kodem. Bez odpowiedzi gra stoi w nieskonczonosc
+        # na "Wyszukiwanie gry" (log-36 i log-37: pusty ack i cisza az do zamkniecia gry).
+        lb = _lobby(args)
+        sess.addr = _raw_ip_pair(fr.payload)
+        lb.learn_persona(sess, _raw_str(fr.payload, "GNAM", ""))
+        g = lb.create_game(sess, _create_game_params(fr.payload),
+                           getattr(args, "gm_player_state", 4))
+        sess.pending = ("reset_dedicated", 0, g)
+        print(f"  [gra] {sess!r} resetuje serwer dedykowany -> gra {g.gid:#x} "
+              f"({'publiczna' if g.public else 'prywatna'})")
+        return blaze.build_reset_dedicated_server_response(fr.seq, g.gid, msg_type=mt)
     if fr.component == 4 and fr.command == 13:          # GameManager.startMatchmaking
         # run-26: "wyszukaj sesje" = leaveGameByGroup + startMatchmaking (MODE 3 = szukaj i utworz);
         # wynik matchmakingu przychodzi notyfikacja. Najpierw szukamy publicznej gry innego gracza
@@ -802,9 +829,10 @@ def _dispatch_blaze(fr, args, sess):
             print(f"  [matchmaking] sesja {msid}, MODE={req.get('MODE')} DUR={req.get('DUR')} ms -> "
                   f"nowa gra {g.gid:#x} (SUCCESS_CREATED_GAME)")
         return blaze.build_start_matchmaking_response(fr.seq, msid, msg_type=mt)
-    if fr.component == 4 and fr.command in (2, 3, 11, 15, 22, 29):
+    if fr.component == 4 and fr.command in (2, 3, 11, 15, 22, 29, 106, 107):
         # destroyGame, advanceGameState, removePlayer, finalizeGameCreation, leaveGameByGroup,
-        # updateMeshConnection - samo potwierdzenie; skutki (notyfikacje) wysyla _after_reply
+        # updateMeshConnection, addAdminPlayer, removeAdminPlayer - samo potwierdzenie; skutki
+        # (notyfikacje) wysyla _after_reply
         return blaze.build_empty_reply(4, fr.command, fr.seq, msg_type=mt)
     if fr.component == 2050 and fr.command == 20 and not getattr(args, "no_speed_walls", False):
         # NFS.getInGameSpeedWalls: gra pyta o speed wall, gdy podjezdza do fotoradaru, strefy albo
@@ -1017,11 +1045,14 @@ def _objid_uid(v) -> int:
 
 def _create_game_params(p: bytes) -> dict:
     """Parametry gry z SUROWEGO zadania createGame (nasz dekoder nie rozklada HNET)."""
+    cap = _raw_list_int(p, "PCAP", [6, 0, 0, 0])
+    # resetDedicatedServer przysyla PMAX=0, a pojemnosc wylacznie w PCAP ([6,0,0,0]) - gdy PMAX
+    # jest zerowy, bierzemy sume miejsc, inaczej gra dostaje MCAP=0 i nie ma gdzie wejsc.
     return dict(game_name=_raw_str(p, "GNAM", LOCAL_PERSONA), game_settings=_raw_int(p, "GSET", 0),
                 network_topology=_raw_int(p, "NTOP", 0), presence_mode=_raw_int(p, "PRES", 1),
                 voip=_raw_int(p, "VOIP", 0), version_string=_raw_str(p, "VSTR", ""),
-                max_players=_raw_int(p, "PMAX", 6),
-                slot_capacities=_raw_list_int(p, "PCAP", [6, 0, 0, 0]),
+                max_players=_raw_int(p, "PMAX", 0) or sum(cap) or 6,
+                slot_capacities=cap,
                 team_ids=_raw_list_int(p, "TIDS", [65535]), attributes=_raw_map_str(p, "ATTR"))
 
 
@@ -1171,8 +1202,9 @@ def _after_reply(fr, args, sess):
         me(blaze.build_stats_async_notification(
             int(req.get("VID", 0) or 0), str(req.get("NAME", "")),
             [int(e) for e in eids if isinstance(e, int)]))
-    if fr.component == 4 and fr.command in (1, 13) and sess.pending:
-        # createGame / startMatchmaking: decyzje (utworzona / dolaczona / porazka) podjal dispatch.
+    if fr.component == 4 and fr.command in (1, 13, 25) and sess.pending:
+        # createGame / startMatchmaking / resetDedicatedServer: decyzje (utworzona / dolaczona /
+        # porazka) podjal dispatch.
         kind, msid, g = sess.pending
         sess.pending = None
         if kind == "mm_failed":
@@ -1193,10 +1225,13 @@ def _after_reply(fr, args, sess):
                                                             component=args.notify_comp,
                                                             command=2, addr=sess.addr)))
                 out.append((o, blaze.build_notify_player_joining(g.gid, joiner)))
-        else:
-            ctx = None if kind == "created_game" else \
-                (msid, blaze.MATCHMAKING_RESULT["SUCCESS_CREATED_GAME"], sess.uid)
-            me(_game_setup(lb, g, ctx))
+        elif kind == "created_game":                   # DatalessSetupContext
+            me(_game_setup(lb, g, None))
+        elif kind == "reset_dedicated":                # ResetDedicatedServerSetupContext
+            me(_game_setup(lb, g, "reset_dedicated"))
+        else:                                          # MatchmakingSetupContext
+            me(_game_setup(lb, g, (msid, blaze.MATCHMAKING_RESULT["SUCCESS_CREATED_GAME"],
+                                   sess.uid)))
     if fr.component == 4 and fr.command == 3:           # GameManager.advanceGameState
         req = _req_fields(fr)
         gid = int(req.get("GID", 0) or 0)
@@ -1215,6 +1250,19 @@ def _after_reply(fr, args, sess):
         if src != tgt:
             print(f"  [mesh] gra {gid:#x}: {lb.persona_of(src)} -> {lb.persona_of(tgt)} STAT={stat}")
         out += lb.mesh(gid, src, tgt, stat)
+    if fr.component == 4 and fr.command in (106, 107):  # addAdminPlayer, removeAdminPlayer
+        # Zmiane listy adminow Blaze rozglasza wszystkim graczom gry. log-30: host dodal goscia jako
+        # admina 13 ms po polaczeniu mesh (4/106 {GID, PID}), a my odsylalismy samo potwierdzenie.
+        req = _req_fields(fr)
+        g = lb.game(int(req.get("GID", 0) or 0))
+        pid = int(req.get("PID", 0) or 0)
+        if g is not None and pid:
+            added = fr.command == 106
+            op = blaze.GM_ADMIN_OPERATION["GM_ADMIN_ADDED" if added else "GM_ADMIN_REMOVED"]
+            note = blaze.build_notify_admin_list_change(g.gid, pid, op, sess.uid)
+            print(f"  [gra] {lb.persona_of(sess.uid)} {'dodaje' if added else 'zdejmuje'} admina "
+                  f"{lb.persona_of(pid)} w grze {g.gid:#x}")
+            out += [(t, note) for t in lb.members(g)]
     if fr.component == 4 and fr.command in (2, 11, 22):  # destroyGame, removePlayer, leaveGameByGroup
         req = _req_fields(fr)
         g = lb.game(int(req.get("GID", 0) or 0))
@@ -1332,6 +1380,10 @@ def main() -> int:
     ap.add_argument("--no-speed-walls", action="store_true",
                     help="na NFS.getInGameSpeedWalls (2050/20) odpowiadaj pustym potwierdzeniem "
                          "zamiast zapisanych wynikow (porownanie A/B)")
+    ap.add_argument("--entitlements", choices=("none", "online"), default="none",
+                    help="Authentication.listUserEntitlements2 (1/29): none = pusta lista (dotychczas), "
+                         "online = wpis typu ONLINE_ACCESS dla grupy NFS14PC (A/B: czy dolaczajacy "
+                         "przestaje wychodzic z cudzej gry)")
     ap.add_argument("--no-store", action="store_true",
                     help="NIE zapisuj postepu z raportow GameReporting (28) na dysk")
     ap.add_argument("--data-dir", default=None,

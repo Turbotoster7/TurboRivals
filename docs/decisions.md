@@ -305,3 +305,323 @@ Zrzuty ActivationUI zawieraja ZYWY JWT konta EA (`EALaunchUserAuthToken`) i sesy
 tokeny. Repo jest docelowo publiczne, wiec do `docs/` idzie architektura i NAZWY
 zmiennych, a wartosci sekretow sa zredagowane (placeholder `<...>`). Oba pliki
 zrzutu usuniete po wyciagnieciu findings.
+
+---
+
+## 2026-09-13 - zerwanie Blaze: wartosci czasu w CONF bez jednostek
+
+### Objaw
+
+Odkad CONF w preAuth jest niepusty (2026-09-09), klient zrywa polaczenie Blaze
+bledem `0x800e0000` w ciagu sekund: w run-13 zaraz po postAuth, w run-14 (trzy
+proby) juz po preAuth, zanim zdazyl wyslac login. Hook stanu pokazywal za kazdym
+razem `[conn+0x2fc]=0`, czyli prog bezczynnosci. 2026-09-07, przy pustym CONF, to
+samo polaczenie zylo 50 minut na samych pingach.
+
+### Przyczyna (dezasemblacja zrzutu)
+
+Warunek zerwania w `0xf3a580` to "cisza > `[conn+0x2fc]` ms". Pole zapisuja tylko
+konstruktor (40000) i czytnik configu `0xf419b0` (`wartosc/1000`). Czytnik bierze
+wartosc przez getter `0xf39dc0`, a ten przez parser TimeValue `0xf79d60`, ktory
+wymaga jednostki (`90s`, `15000ms`, `1m`). My wysylalismy `"90"`: parser zwraca
+false i nic nie zapisuje, getter ten wynik ignoruje i melduje "znaleziony", wiec
+czytnik zapisuje 0. To samo dotyczylo `defaultRequestTimeout="30"` (timeout RPC 0 ms).
+Format opisany w `protocol.md`, sekcja 11.
+
+### Falszywe tropy po drodze
+
+- "Keepalive od serwera" (2026-09-12): klient nie czekal na ruch, mial prog 0 ms,
+  wiec zaden ping by nie zdazyl.
+- "Klient nie znajduje klucza, format mapy zly": mapa jest dobra i klucz jest
+  znajdowany. Zly byl format WARTOSCI. Nasz round-trip enkoder/dekoder tego nie
+  wykryje, bo sprawdza tylko nasz wlasny format, nie semantyke u konsumenta.
+
+### Zmiany
+
+- `blaze.DEFAULT_CLIENT_CONFIG`: `connIdleTimeout=90s`, `defaultRequestTimeout=30s`,
+  `pingPeriod=15s`.
+- `hook_origin.js`: hooki gettera `0xf39dc0` (klucz, wynik w us), parsera `0xf79d60`
+  (tekst -> OK/BLAD) i migawka pol polaczenia w `0xf3a580` (loguje tylko zmiany).
+
+### Otwarte
+
+Hook na wejsciu `0xf419b0` nie wypisal w run-14 nic, choc to jedyny zapis zera do
+`[conn+0x2fc]` poza konstruktorem. Hooki gettera i parsera pokaza wprost, czy i kiedy
+czytnik dziala.
+
+Wniosek do zapamietania: **wartosci wysylane klientowi sprawdzamy u konsumenta
+(parser w kodzie), nie tylko round-tripem naszego enkodera.**
+
+### Wynik - run-15 (12:53), fix POTWIERDZONY
+
+- Parser przyjal wartosci: `'15s' -> 15000000 us`, `'30s' -> 30000000 us`,
+  `'90s' -> 90000000 us`. Getter czyta klucze w kolejnosci pingPeriod ->
+  defaultRequestTimeout -> connIdleTimeout (dokladnie jak `0xf419b0`), a migawka
+  polaczenia pokazuje `idle[+0x2fc]=90000ms req[+0x1c4]=30000ms`.
+- Drugie polaczenie Blaze przeszlo preAuth -> ping -> login 1/152 -> notyfikacje ->
+  postAuth 9/8, a klient **po raz pierwszy zdekodowal nasza odpowiedz postAuth**
+  (`PostAuthResponse` `0xf211e0`) i NIE zamknal polaczenia. Potem pingi 9/2 co ok.
+  15 s, polaczenie ESTABLISHED, zero wyjatkow, brak wpisu crasha w Event Log.
+- Pierwsze polaczenie w tym przebiegu i tak zerwalo sie (`0x800e0000`,
+  `prog=90000`). Gra nie byla restartowana po run-14, a migawka na starcie
+  pokazywala `idle=0ms` - obiekt polaczenia mial stary prog zero do chwili
+  przyjscia nowego configu. Najpewniej pozostalosc; do sprawdzenia na swiezym procesie.
+- Hook na wejsciu `0xf419b0` znow nic nie wypisal, choc czytnik wyraznie dziala
+  (sekwencja kluczy z gettera). Przyczyna nieznana, dla diagnozy juz nieistotna.
+- Na swiezym procesie gry (13:00) juz PIERWSZE polaczenie przechodzi login i postAuth
+  i zyje (idle 40000 -> 90000 ms po preAuth). Zerwanie pierwszej proby wyzej bylo
+  wiec pozostaloscia po run-14.
+
+### Crash 12:59:58 - to Frida, nie gra
+
+Event Log wskazuje `frida-agent.dll`, kod `0xc0000409` (fail-fast 7 = `abort()`),
+offset `0xfc891d`. Identyczny podpis ma zgon z 01:58:36 (proces run-12). Minidumpy
+WER (`%LOCALAPPDATA%\CrashDumps\NFS14.exe.<PID>.dmp`) pokazuja, ze abortuje wlasny
+watek agenta Fridy: na stosie tylko `frida-agent.dll` i start watku, zero ramek gry,
+a na zadnym stosie nie ma pierwotnego rekordu wyjatku (`0xc0000005` itp.). Oba zgony
+wypadly przy restartowaniu `frida_run.py` na dzialajacej grze, ktora miala Fride
+podpinana wiecej niz raz. To korelacja, nie dowod.
+
+Konsekwencje:
+- Hook co klatke `0xf3a580` (migawka polaczenia) domyslnie wylaczony
+  (`CONN_SNAPSHOT=false`) - swoje zadanie spelnil, a zmniejsza ryzyko przy odpinaniu.
+- Przebieg konczymy, **zamykajac najpierw gre**, potem Fride i terminator.
+- Przy kazdym crashu najpierw sprawdzic w Event Log modul (id 1000): `frida-agent.dll`
+  to artefakt narzedzia, `NFS14.exe`/`unknown` to realny blad gry.
+
+---
+
+## 2026-09-13 (popoludnie) - "Logowanie": gra dostawala usera z ID=0
+
+### Objaw
+
+Po naprawie configu (run-15..19) login i postAuth przechodzily, sesja Blaze zyla, ale
+na ekranie wisialo "Logowanie", a po postAuth gra wysylala tylko pingi.
+
+### Jak to rozlozylismy
+
+- Obserwator stanu menedzera online gry (`0xa1bb00`, stan w `[obj+0x20]`) pokazal
+  2 -> 5 -> 6 i nigdy 9.
+- Hooki zdarzen pokazaly, ze obiekt online gry to `BlazeStateEventHandler` (vtable
+  `0x15cc938`: dtor, onConnected -> 6, onDisconnected, onAuthenticated -> 9,
+  onDeAuthenticated, onIncompatibleServerVersion). Stan 6 to "polaczony" (onConnected
+  po preAuth), a onAuthenticated nie przychodzilo nigdy.
+- Notyfikacja UserAdded (`0x7802/2`) ma pola `DATA mExtendedData` i `USER mUserInfo`.
+  W binarce jest klasa UserIdentification (`@0x1416d78c0`: AID ALOC EXBB EXID ID NAME
+  ORIG PIDI). My wysylalismy w USER tagi UserSessionLoginInfo (BUID DSNM KEY ...), z
+  ktorych zgadzal sie tylko ALOC - gra tworzyla lokalnego usera z `ID=0`.
+
+### Zmiana i wynik (run-20)
+
+`USER` = UserIdentification z `ID` = BlazeId z loginu. Wynik: onAuthenticated, stan
+online gry 9 -> 10, inicjalizacja ByteVault i seria nowych RPC (userSettingsLoad,
+getLists, Stats, komponent 2050).
+
+### Falszywe tropy po drodze (zeby do nich nie wracac)
+
+- Pusta notyfikacja UserAuthenticated (cmd 8) - wypelnilismy ja wg klasy z binarki
+  (`@0x141a2f160`), ale sama nie zmienila zachowania.
+- `0xf40570` to `Game::setGameState` (GameManager; wartosci 1, 4, 7, 8, 130, 131 to enum
+  GameState), a nie stan logowania. Sloty thunkow dyspozytorow (`0xf6c5f0`, `0xefde70`)
+  sa generyczne - numer slotu nie mowi, jaki to interfejs listenera.
+- ByteVault i klucze `bytevault*` - nie blokowaly logowania (czytane dopiero po stanie 9).
+
+### Blad znaleziony przy okazji - mapy musza byc posortowane
+
+Lookup configu (`0xf39cb0`) szuka klucza binarnie w posortowanym wektorze. Klucze
+`bytevault*` dopisane na koncu CONF byly przez to nieznajdowane i ByteVault poszedl
+na domyslny host `bytevault.test.gameservices.ea.com`. `blaze.f_map_str` sortuje
+teraz klucze.
+
+### Zmiany w narzedziach
+
+- `tls_terminator.py`: na RPC bez handlera domyslnie wysylamy puste potwierdzenie
+  (err=0), zeby zapytanie gry sie konczylo; `--no-ack-unknown` wylacza. Flagi A/B:
+  `--legacy-user-added`, `--empty-user-auth`, `--no-bytevault`.
+- `hook_origin.js`: obserwator stanu online gry, hooki zdarzen listenera, lookup i
+  getter configu, DNS przez `gethostbyname`, init ByteVault.
+
+## 2026-09-13 (wieczor) - run-23: rozgrywka na naszym serwerze
+
+### Wynik
+
+Po odpowiedzi na `GameManager.createGame` (odpowiedz z `GID` + `NotifyGameSetup` z graczem
+jako hostem) gra przeszla sama: `updateMeshConnection` -> `finalizeGameCreation` ->
+`advanceGameState` PRE_GAME (130) -> IN_GAME (131). Jazda w otwartym swiecie, bez crasha,
+bez Fridy. ByteVault (REST po HTTPS na porcie Blaze) dostal odpowiedzi i je przyjal.
+Zmiana gry w trakcie (`leaveGameByGroup` -> nowy `createGame` -> `removePlayer` starej gry)
+tez przeszla, choc na te komendy odpowiadamy samym potwierdzeniem.
+
+### Co przyszlo w trakcie jazdy
+
+- 429 raportow `GameReporting` (komponent 28, cmd 2) w ok. 2 minuty: Collectables,
+  DistanceDriven*, Racer_Completed_Objective_*, CarCustomization, LicensesPart1/2. To stan
+  postepu gracza - kandydat do zapisu po stronie serwera.
+- `Util.filterForProfanity`, `NFS.getInGameSpeedWalls`, `UserSessions.lookupUsers`,
+  `Authentication.listUserEntitlements2`, `NFS.getSpecialGuestInfo`,
+  `NFS.getOverwatchStatsConfig`, `NFS.getAutologPlaylist`, `NFS.getInGameRecommendations`.
+- Gra uzywa dwoch identyfikatorow: BlazeId z loginu i drugiego id (persona) w
+  `listUserEntitlements2`, `lookupUsers` i naglowku `X-USER-ID` ByteVault. Skad bierze to
+  drugie - nie ustalone.
+
+### Nazwy komend z binarki
+
+Emulacja 13 funkcji `getCommandName` na zrzucie pamieci daje pelne tablice numer -> nazwa
+(Authentication, GameManager, Stats, Util, AssociationLists, NFS 2050, UserSessions, ByteVault,
+Messaging, Playgroups oraz notyfikacje). Sa w `blaze._RPC_TABLES` i trafiaja do logu przez
+`blaze.rpc_name()`. Komponent 28 nie ma tablicy nazw; nazwe GameReporting daje uklad klasy
+zadania `{FNSH PRVT RPRT}` (`@0x141a32ad0`).
+
+### Zmiany w narzedziach
+
+- `tls_terminator.py`: nazwy komend w logu; znane RPC bez handlera bez hexdumpu; raporty 28
+  jedna linia + potwierdzenie (surowe ramki zostaja w capture); `filterForProfanity` odsyla
+  teksty z wynikiem `FILTER_RESULT_PASSED` (enum z `.rdata`, klient wysyla `UNPROCESSED` = 2);
+  sesja HTTP konczy sie po `Connection: Close`.
+- Zweryfikowane offline na ramkach run-23, nie na zywo.
+
+## 2026-09-13 (wieczor) - zapis postepu gracza z raportow GameReporting
+
+### Decyzja
+
+Po run-24 (logowanie, swiat, zmiana kariery - wszystko dziala) wybralismy zapis postepu przed
+multiplayerem, bo da sie go zrobic i sprawdzic w pojedynke.
+
+### Co jest w raportach
+
+Dekoder dostal typ `variable` (bajt obecnosci, id klasy, pola). Wszystkie 473 raporty z run-24
+rozkladaja sie tak samo: `RPRT.GTYP` = kategoria + 8 znakow hex, a w `RPRT.GAME` mapa
+`gracz -> {ENTI, STAI, STAF, STAS}` (id obiektu i mapy statystyk int/float/string).
+
+Raporty niosa **stan**, nie przyrost - kolejne raporty `PlayerStats` powtarzaja te same liczby
+(kupione auta, zlote medale, kredyty, rangi, postep shotlist). Zapisujemy wiec ostatnia wartosc
+kazdej statystyki, a obok pelny dziennik raportow, zeby stan dalo sie odtworzyc na nowo, gdyby ten
+model okazal sie zly.
+
+Nazwy kategorii (poza `MetaData` i `VehicleStatisticsData`) nie wystepuja w kodzie - pochodza z
+danych gry. Koncowki hex to najpewniej hashe (`0xaaa040`: sprintf nazwy + hash djb2a).
+
+### Gdzie i jak
+
+`proto-lab/player_store.py`, dane w `%LOCALAPPDATA%\TurboRivals\data` - poza repo i poza OneDrive
+(podmiana pliku kilka razy na sekunde w synchronizowanym folderze grozi blokada pliku). Blad
+parsowania lub zapisu nie wstrzymuje gry: potwierdzenie raportu idzie przed zapisem.
+
+### Otwarte
+
+Odczyt: gra pyta Stats tylko o grupy `MetaData` i `PlayerStats`. Zanim zaczniemy odsylac wartosci,
+trzeba z kodu ustalic, jak klient mapuje wartosci `EntityStats.STAT` na nazwy - nie zgadujemy.
+Id speed walli w `getInGameSpeedWalls` pokrywaja sie z `ENTI` z raportow, wiec wlasne wyniki da
+sie podawac z zapisanego stanu.
+
+### Poprawka po run-25: katalog danych
+
+Zapis dzialal (465/465), ale plikow nie bylo pod `%LOCALAPPDATA%\TurboRivals`. Python ze Sklepu
+Microsoft (`WindowsApps\python.exe`) wirtualizuje zapisy do AppData\Local i kieruje je do
+`Packages\PythonSoftwareFoundation.Python.*\LocalCache`. Domyslny katalog to teraz
+`~\TurboRivals\data` (katalog domowy nie jest wirtualizowany), a terminator wypisuje go na starcie.
+
+## 2026-09-13 (wieczor) - speed walle z zapisanych wynikow
+
+### Jak ustalilismy uklad
+
+Automatyczne wiazanie tablic pol z nazwami klas zawiodlo (brak wskaznikow w danych, brak `lea` do
+nazw w tych samych funkcjach). Zadzialaly stringi `Klasa::mPole` w binarce, np.
+`InGameSpeedWallResponseRow::mStatsFlt` - nazwy pol wskazuja jedna tablice:
+
+- `InGameSpeedWallResponseRow` = `{BLUS mBlazeUser, STAF mStatsFlt, STAI mStatsInt, STAS mStatsStr}`
+- `InGameSpeedWallResponseSpeedWall` = `{ROWS mSpeedWall, SWID mSpeedWallId}`
+- `{RILI, SPWA}`, brane wczesniej za odpowiedz speed walli, to `InGameRecommendationsResponse`.
+
+Wiersz speed walla ma dokladnie te same mapy co wpis gracza w raporcie GameReporting, a id speed
+walla to `ENTI` z raportu: serwer odsylal zapisane statystyki obiektu (fotoradar - `speed`, strefa
+predkosci - `AverageSpeed`).
+
+### Niepewnosc, ktora obchodzimy
+
+`InGameSpeedWallResponse::mSpeedwalls` pasuje do dwoch tablic: lista pod tagiem `ROWS` albo `SPWA`.
+Wysylamy oba pola z ta sama lista - dekoder klienta pomija tagi nieznane swojej klasie.
+
+### Zmiany
+
+`blaze.build_in_game_speed_walls_response`, mapy int/float, `PlayerStore.rows_for_entity`, handler
+2050/20 w terminatorze (`--no-speed-walls` wraca do pustego potwierdzenia). Sprawdzone offline na
+46 zapytaniach z run-25: 9 speed walli dostaje wiersze, wartosci zgodne z zapisanym stanem.
+
+## 2026-09-13 (wieczor) - gra publiczna: matchmaking tworzy gre
+
+### Objaw (run-26)
+
+"Wyszukaj sesje" w grze konczylo sie samymi pingami. Gra wysylala `GameManager.leaveGameByGroup`, a
+potem `GameManager.startMatchmaking` z trybem `MODE=3` (szukaj i utworz), czasem sesji 6000 ms i
+regula `gameMembershipRule = Public`. Na oba odpowiadalismy pustym potwierdzeniem. Wynik matchmakingu
+serwer dostarcza notyfikacja, wiec gra czekala bez konca.
+
+### Co wzielismy z binarki
+
+- `StartMatchmakingRequest` (stringi `StartMatchmakingRequest::m...`) - uklad zadania.
+- Enum `MatchmakingResult` z tablicy `{nazwa, wartosc}`: `SUCCESS_CREATED_GAME=0` ...
+  `SESSION_TIMED_OUT=3` ... `SESSION_ERROR_GAME_SETUP_FAILED=6`.
+- `MatchmakingSetupContext {FIT MAXF MSID RSLT USID}` jako wariant 3 unii powodu setupu gry
+  (kolejnosc tablic czlonkow; wariant 0 dziala od run-23 przy `createGame`).
+- `NotifyMatchmakingFailed {MAXF MSID RSLT USID}`.
+
+### Decyzja
+
+Innych graczy na serwerze nie ma, wiec robimy to, co serwer w trybie "szukaj i utworz" robi przy
+braku gier: tworzymy nowa gre z graczem jako hostem. Odpowiedz `{MSID}`, potem `NotifyGameSetup` z
+kontekstem matchmakingu i wynikiem `SUCCESS_CREATED_GAME`. Parametry gry kopiujemy z zadania, a
+regule `Public` zapisujemy jako atrybut gry (nazwa atrybutu przyjeta z `createGame`), zeby w
+przyszlosci drugi gracz mogl te gre znalezc. `--mm-fail` wysyla zamiast tego porazke
+`SESSION_TIMED_OUT` - do porownania, gdyby gra nie przyjela utworzonej gry.
+
+### Otwarte
+
+Prawdziwe "znajdz" (dolaczanie do gier innych graczy) wymaga wspolnej listy gier miedzy
+polaczeniami - to juz multiplayer. Stara gra po `leaveGameByGroup` nie dostaje
+`NotifyPlayerRemoved`/`NotifyGameRemoved`.
+
+### Wynik (run-27)
+
+Gra publiczna dziala: gra wyslala `startMatchmaking` zaraz po wejsciu, przyjela utworzona gre i
+przeszla do IN_GAME (przy grze z matchmakingu klient pomija `updateMeshConnection` i
+`finalizeGameCreation`). Speed walle z zapisanymi wynikami (fotoradar, strefa, skok) tez przyjete.
+Na koncu przebiegu crash gry (wykonanie spod adresu stosu) - log serwera urwany przy otwartym
+polaczeniu, wiec najpewniej ten sam problem gry przy utracie polaczenia z serwerem, tylko z innym
+podpisem; minidump WER nie ma ramek NFS14, wiec nie da sie tego potwierdzic z samego zrzutu.
+Uzytkownik potwierdzil pozniej, ze zamknal terminal przed gra.
+
+## 2026-09-13 (wieczor) - serwer dla kilku graczy
+
+### Dlaczego teraz
+
+Tryb dla jednego gracza dziala od poczatku do konca, a uzytkownik testuje z kolega w tej samej
+sieci. Serwer zakladal jednego gracza: stala tozsamosc, gry jako liczniki bez listy graczy,
+notyfikacje tylko do wlasnego polaczenia i adres zewnetrzny `127.0.0.1` z QoS.
+
+### Decyzje
+
+- **Rejestr w osobnym module** (`proto-lab/lobby.py`): sesje i gry pod jedna blokada, a kazda
+  sesja z wlasna blokada wysylki. `Wire.send_record` zmienia stan RC4 i licznik MAC, a
+  notyfikacje do gracza B wysyla watek gracza A - bez blokady rekordy by sie przeplataly.
+- **Tozsamosc po adresie IP.** Login niesie tylko token Origin, ktorego nie weryfikujemy i z
+  ktorego nie odczytamy pelnego id. W LAN adres rozroznia komputery; gracz lokalny zachowuje
+  BlazeId z EA App, pod ktorym jest zapisany jego postep. Nick EA drugiego gracza serwer
+  poznaje z nazwy gry, ktora klient sam tworzy, i zapamietuje.
+- **Matchmaking najpierw szuka, potem tworzy** - jak serwer w trybie `MODE=3`.
+- **Adres zewnetrzny gracza lokalnego = adres komputera w sieci** (`--public-ip`, domyslnie
+  wykryty). Bez tego host melduje `127.0.0.1` i kolega laczylby sie sam ze soba. Topologia
+  gry to polaczenia bezposrednie; relay EA nie istnieje.
+- **Notyfikacja o wyjsciu tylko dla pozostalych graczy.** W run-23..27 klient wychodzil z gry
+  bez tej notyfikacji i dzialal; wyslanie jej o wlasnym wyjsciu grozi podwojnym sprzataniem gry.
+- **Bez migracji hosta:** gdy host wychodzi (tez przy zmianie kariery), gra znika i pozostali
+  dostaja `NotifyGameRemoved`.
+- **Licencje DLC pominiete:** Steam Complete Edition ma DLC lokalnie, a w binarce nie ma tagow
+  licencji, ktore dalo sie odeslac.
+
+### Weryfikacja
+
+Offline na ramkach run-27: dwie symulowane sesje (lokalna i z LAN) - utworzenie gry
+publicznej, dolaczenie drugiego gracza z rosterem dwoch graczy, zakonczenie dolaczania po
+`updateMeshConnection`, wyjscie, rozlaczenie hosta, solo `createGame` bez zmian, adresy QoS
+per klient. Regresja zapisu postepu i speed walli. Test na zywo z drugim komputerem w toku.

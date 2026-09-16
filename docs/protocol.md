@@ -525,3 +525,139 @@ zredagowane (`<...>`), bo repo jest docelowo publiczne.
 `tools/xref.py --str`, brak odwolan `lea`). Reszte bloku konsumuje ActivationUI.
 Entitlement waliduje wiec bramka, nie gra - stad `proto-lab/launch_direct.py`
 odpala `NFS14.exe` bezposrednio z odtworzonym srodowiskiem, pomijajac aktywacje.
+
+---
+
+## 11. Client config (CONF w odpowiedzi preAuth) - **potwierdzony z kodu**
+
+Klient w zadaniu preAuth przysyla `FCCR{CFID='BlazeSDK'}`, a konfiguracje dostaje w
+`PreAuthResponse.CONF` = struktura z jednym polem `CONF` typu `map<string,string>`.
+Klucze czasu polaczenia czyta jedna funkcja, `0xf419b0`, przez getter obiektu
+polaczenia `0xf39dc0` (`[vtable+0x50]`, vtable `0x1416d41f0`). Innych odwolan do
+tych stringow w `.text` nie ma.
+
+| klucz | pole | gdy klucza brak | zapis |
+| --- | --- | --- | --- |
+| `pingPeriod` | `[conn+0x2f8]` ms | 15000 | wartosc/1000; wynik < 1000 -> 15000 |
+| `defaultRequestTimeout` | `[conn+0x1c4]` ms | bez zmian | wartosc/1000 |
+| `connIdleTimeout` | `[conn+0x2fc]` ms | 40000 (konstruktor `0xf2e7d0`) | wartosc/1000 |
+
+### Format wartosci czasu (parser `0xf79d60`)
+
+Segmenty `<liczba><jednostka>`, jednostki `d`, `h`, `m`, `s`, `ms`. Segmenty mozna
+laczyc wprost albo przez `:` (`1m30s`, `1h:30m`). Wynik w **mikrosekundach**:
+`((((d*24 + h)*60 + m)*60 + s)*1000 + ms)*1000`. Liczba bez jednostki to blad:
+parser dochodzi do NUL, ktory nie jest jednostka, i zwraca false bez zapisu.
+
+Pulapka: getter **ignoruje** wynik parsera (`call 0xf79d60; mov al, 1`). Dla klucza
+obecnego w mapie zawsze melduje "znaleziony", a czytnik bierze wtedy niezapisana
+zmienna lokalna rowna 0. Zly format NIE daje wiec wartosci domyslnej, tylko **zero**.
+
+### Do czego sluzy `connIdleTimeout`
+
+Aktualizacja polaczenia co klatke (`0xf3a580`, slot 0 vtable conn) zrywa polaczenie
+bledem `0x800e0000` (`0xeffca0`), gdy:
+
+    [[conn+8]+0x52c] == 0  &&  [conn+0x30] == 2  &&
+    (arg2 - [[conn+0x28]+0xcd0]) > [conn+0x2fc]      (bez znaku, ms)
+
+`arg2` to czas biezacy przekazany do funkcji, `[[conn+0x28]+0xcd0]` czas ostatniej
+aktywnosci (odczyt przez `0xefe7a0`). Przy `[conn+0x2fc]=0` wystarcza 1 ms ciszy.
+
+## 12. Gra wieloosobowa (GameManager) - **zbudowane, test na zywo w toku**
+
+### Topologia
+
+Gra tworzy gre z `NTOP=133` = `PEER_HOSTED_DIRTYCAST_FAILOVER` (enum `@0x141706950`):
+gracze lacza sie bezposrednio (UDP 3659), a relay EA (DirtyCast) jest tylko awaryjny i juz
+nie istnieje. Serwer nie przenosi ruchu gry - musi tylko podac graczom poprawne adresy.
+
+### Adresy
+
+Adres zewnetrzny klient poznaje z odpowiedzi na sonde latencji QoS (`+0x14` IP, `+0x18`
+port) i melduje go potem w `updateNetworkInfo` (ADDR), `createGame` (HNET) i
+`startMatchmaking` (PNET). Gracz na komputerze z serwerem sonduje z `127.0.0.1`, wiec
+serwer podaje mu adres tego komputera w sieci (`--public-ip`, domyslnie wykryty adres LAN).
+Adres ping-site'u (preAuth `QOSS.PSA`) i `<ips>` w `/qos/firewall` tez zaleza od klienta:
+lokalny dostaje `127.0.0.1`, inny komputer - adres serwera w sieci.
+
+### Przeplyw dolaczania (matchmaking, `MODE=3` szukaj i utworz)
+
+| Krok | Do kogo | Ramka |
+|---|---|---|
+| odpowiedz `startMatchmaking` | dolaczajacy | `{MSID}` |
+| inni gracze gry | dolaczajacy | `UserAdded` (0x7802/2) z adresem gracza |
+| gra | dolaczajacy | `NotifyGameSetup` (4/20): roster wszystkich, REAS wariant 3 `RSLT=SUCCESS_JOINED_EXISTING_GAME` (2) |
+| nowy gracz | gracze w grze | `UserAdded` dolaczajacego + `NotifyPlayerJoining` (4/21) `{GID, PDAT}` |
+| `updateMeshConnection` (4/29) `STAT=CONNECTED` (2) miedzy dolaczajacym a hostem | wszyscy | `NotifyPlayerJoinCompleted` (4/30) `{GID, PID}` |
+
+W rosterze (`ReplicatedGamePlayer`) numer miejsca gracza (host 0, kolejni 1, 2...) idzie do `SID`
+(`mSlotId`) i `CSID` (`mConnectionSlotId`), a `SLOT` to `mSlotType` = `SLOT_PUBLIC_PARTICIPANT` (0;
+enum `@0x1416d9790`: PUBLIC_PARTICIPANT 0, PRIVATE_PARTICIPANT 1, PUBLIC_SPECTATOR 2,
+PRIVATE_SPECTATOR 3). Pierwszy test w LAN (log-29) mial `SID=CSID=0` u obu graczy i obie gry
+meldowaly `STAT=0` - nikt nikogo nie widzial.
+
+Gra "do znalezienia" = atrybut `gameMembershipRequirements=Public`, host polaczony, stan
+`PRE_GAME`/`IN_GAME`, gid spoza `CRIT.AGAM.GIDL`, wolne miejsce. Brak takiej gry ->
+nowa gra z pytajacym jako hostem (`RSLT=SUCCESS_CREATED_GAME`).
+
+### Sesja prywatna - `resetDedicatedServer` (4/25)
+
+Gra z sesja ustawiona na **prywatna** w ogole nie matchmakuje: zamiast `startMatchmaking`
+wysyla `resetDedicatedServer` (4/25) i czeka na `NotifyGameSetup`. Bez odpowiedzi stoi na
+"Wyszukiwanie gry" w nieskonczonosc (log-36 i log-37: pusty ack, potem cisza). Rozpoznane
+po przechwycie `blaze-012432-006-23.bin` (276 B, caly zdekodowany):
+
+| Pole | Sesja prywatna (4/25) | Publiczna (4/13) |
+|---|---|---|
+| `ATTR.gameMembershipRequirements` | `Private` | `Public` (z `CRIT.RLST`) |
+| `GSET` | 276 | 287 |
+| `PMAX` | 0 (pojemnosc tylko w `PCAP` = `[6,0,0,0]`) | 6 |
+| `TIDS` | `[65534]` | `TID` 65534 |
+
+Pozostale tagi sa te same co w `createGame` (`ATTR GNAM GSET NTOP PRES VOIP VSTR PCAP TIDS
+HNET`), wiec parametry gry czyta ten sam kod. Roznica 287 -> 276 to skasowane bity "otwarta
+na przegladanie" i "otwarta na matchmaking" standardowego bitfielda `GameSettings` (nazw bitow
+NIE MA w binarce - poszlaka; rozstrzyga string `Private` w `ATTR`).
+
+Odpowiedz: `CreateGameResponse` `{GID, JGS, REX}` (@`0x141a300b0`) z numerem komendy 25 -
+stringu `ResetDedicatedServerResponse` w binarce nie ma, a to jedyna odpowiedz GameManagera
+z samym `GID`. Potem `NotifyGameSetup` (4/20) z `REAS` = **wariant 1**
+`ResetDedicatedServerSetupContext` (tablica `VALU` @`0x141a30298`). Klasa kontekstu **nie ma
+pol**: miedzy `DatalessSetupContext {DCTX}` @`0x141a30100` a `MatchmakingSetupContext {FIT...}`
+@`0x141a30120` nie ma zadnej tablicy czlonkow, wiec `VALU` zostaje puste.
+
+### Lista struktur, ktorej elementy sa uniami (`HNET`)
+
+`HNET` jedzie jako lista (typ 4) z typem elementu 3 (struct), ale kazdy element zaczyna sie
+**bajtem wariantu unii** (2 = `IpPairAddress`) przed polami czlonu. Nasz enkoder robil tak od
+dawna (`f_list_ip_pair`), dekoder nie - i rozjezdzal sie na `resetDedicatedServer` ("nieznany
+typ TDF 0x70 na offsecie 117"). Dekoder rozpoznaje wariant po tym, ze pierwszy bajt TAGA ma
+zawsze ustawiony bit 7 (pierwszy znak taga >= `@`), a numer wariantu jest mniejszy; zero
+zostaje terminatorem pustej struktury. Po poprawce wszystkie 1672 ramki z przechwytow
+log-36/log-37 dekoduja sie bez bledu.
+
+### Wyjscie
+
+`leaveGameByGroup` (4/22), `removePlayer` (4/11), `destroyGame` (4/2) i zerwane polaczenie
+-> `NotifyPlayerRemoved` (4/40) `{CNTX GID LFPJ PID REAS}` do pozostalych graczy. Wyszedl
+host, a ktos zostal -> pozostali dostaja SAMO `NotifyGameRemoved` (4/16) `{GID, REAS=HOST_LEAVING}`
+(3), bez `NotifyPlayerRemoved` hosta - w log-29 ta para (PlayerRemoved hosta, zaraz GameRemoved)
+poprzedzila crash gry dolaczajacego (skok pod NULL). Enumy:
+PlayerRemovedReason `PLAYER_CONN_LOST=1 PLAYER_LEFT=6 GROUP_LEFT=7`.
+
+Uklady `NotifyPlayerRemoved` i `NotifyGameRemoved` sa wziete z nazw pol tablic
+(`@0x141a30560`, `@0x141a303a8`), bez stringow `Klasa::mPole` - do potwierdzenia na zywo.
+
+### Tozsamosc graczy (serwer, `lobby.py`)
+
+Klucz = adres IP klienta. `127.0.0.1` to gracz lokalny (BlazeId z EA App). Inny adres
+dostaje staly uid i nazwe tymczasowa; nick EA serwer poznaje z `GNAM` w `createGame` /
+`startMatchmaking` i zapisuje w `players.json` (od kolejnego logowania jest w loginie).
+
+### Ustawienie drugiego komputera w LAN
+
+- plik `C:\Windows\System32\drivers\etc\hosts`: `<adres serwera> gosredirector.ea.com`,
+- gra przez EA App, jak na komputerze z serwerem,
+- na komputerze z serwerem zgoda firewalla Windows dla Pythona (TCP 42127, 14219, 17502;
+  UDP 17502-17503) i dla gry (UDP 3659).

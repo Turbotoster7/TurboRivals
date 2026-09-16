@@ -299,7 +299,8 @@ def f_ip_pair(tag: str, ip: str = "127.0.0.1", port: int = 3659, *,
 
 def f_extended_data(tag: str = "DATA", *, ip: str = "127.0.0.1", port: int = 3659,
                     ping_site: str = "ams", country: str = "PL",
-                    latencies: list[int] | None = None) -> Field:
+                    latencies: list[int] | None = None,
+                    addr: tuple[int, int, int, int, int] | None = None) -> Field:
     """UserSessionExtendedData (@0x1416d7ac0) - stan sesji uzytkownika.
 
     Pola w kolejnosci tagow (heat2 czyta sekwencyjnie, wiec ROSNACO):
@@ -314,7 +315,9 @@ def f_extended_data(tag: str = "DATA", *, ip: str = "127.0.0.1", port: int = 365
     if latencies is None:
         latencies = [10]                          # jeden ping-site, 10 ms
     return f_struct(tag, [
-        f_ip_pair("ADDR", ip, port),
+        # addr = pelna para adresow gracza (exip, export, inip, inport, maci) - multiplayer: inni
+        # gracze dostaja w UserAdded prawdziwy adres, nie 127.0.0.1
+        f_union_ip_pair("ADDR", *addr) if addr else f_ip_pair("ADDR", ip, port),
         f_str("BPS", ping_site),
         f_str("CTY", country),
         f_map_empty("DMAP", T_INT, T_INT),        # mDataMap - brak danych wlasnych
@@ -335,8 +338,12 @@ def f_map_str(tag: str, items: dict[str, str]) -> Field:
     pary (klucz, wartosc) BEZ naglowkow tagow. Format wg TdfEncoder BlazeSDK
     (potwierdzony na emulatorze BF3 - ten sam silnik): keyType, valType, count,
     potem dla kazdej pary enc_str(key)+enc_str(val)."""
+    # Klucze POSORTOWANE: klient trzyma mape jako posortowany wektor i szuka w nim
+    # binarnie (lookup configu 0xf39cb0). W run-20 klucze bytevault* dopisane na koncu
+    # (za voipHeadsetUpdateRate) byly przez to "nieznalezione" i ByteVault poszedl na
+    # domyslny host EA. Serwery Blaze wysylaja mapy posortowane.
     body = bytes((T_STRING, T_STRING)) + enc_int(len(items))
-    for k, v in items.items():
+    for k, v in sorted(items.items()):
         body += enc_str(k) + enc_str(v)
     return Field(tag, T_MAP, body)
 
@@ -350,11 +357,20 @@ DEFAULT_COMPONENT_IDS = [1, 4, 5, 7, 9, 11, 15, 21, 25, 30, 63, 2000]
 # defaultRequestTimeout, connIdleTimeout; @0x016ea7c8 associationListSkipInitialSet;
 # @0x016eaac8 voipHeadsetUpdateRate). Wartosci sa nasze - klient parsuje je jako
 # tekst, wiec liczby ida stringami.
+#
+# CZASY MUSZA MIEC JEDNOSTKE. Trzy klucze czasu czyta tylko 0xf419b0, przez getter
+# polaczenia 0xf39dc0 -> parser TimeValue 0xf79d60: segmenty <liczba><d|h|m|s|ms>
+# (mozna laczyc, opcjonalnie przez ':'), wynik w mikrosekundach. Gola liczba ("90")
+# konczy sie NUL-em zamiast jednostki -> parser zwraca false i nic nie zapisuje, a
+# getter IGNORUJE ten wynik i melduje "znaleziony" -> czytnik bierze zmienna = 0.
+# Tak bylo do 2026-09-13: connIdleTimeout="90" dawalo [conn+0x2fc]=0 ms i klient
+# zrywal Blaze (0x800e0000) zaraz po preAuth. Domyslne klienta, gdy klucza brak
+# (konstruktor 0xf2e7d0): idle 40 s, ping 15 s. Szczegoly: docs/protocol.md sekcja 11.
 DEFAULT_CLIENT_CONFIG = {
     "associationListSkipInitialSet": "1",
-    "connIdleTimeout": "90",
-    "defaultRequestTimeout": "30",
-    "pingPeriod": "15000",                 # ms; gra i tak pinguje co ~15 s
+    "connIdleTimeout": "90s",
+    "defaultRequestTimeout": "30s",
+    "pingPeriod": "15s",
     "voipHeadsetUpdateRate": "500",
 }
 
@@ -648,31 +664,53 @@ def build_useradded_notify(user_id: int = REDACTED_EA_USER_ID, persona: str = "P
                            command: int = 2, seq: int = 0,
                            msg_type: int = MSG_NOTIFY_BYTE,
                            email: str = "player@nfsrivals.local",
-                           rich_data: bool = True) -> bytes:
-    """UserSessions notyfikacja UserAdded (cmd 1) = Blaze::NotifyUserAdded.
-    Struktura (@0x1416d87d0): { DATA(UserSessionExtendedData) USER(mUserInfo) }.
-    USER wypelniamy jako UserSessionLoginInfo (tozsamosc+sesja lokalnego usera).
-    To najpewniejszy trigger: gra tworzy lokalnego usera i idzie do postAuth."""
+                           rich_data: bool = True, legacy_user: bool = False,
+                           addr: tuple[int, int, int, int, int] | None = None) -> bytes:
+    """UserSessions notyfikacja UserAdded (cmd 2) = Blaze::NotifyUserAdded.
+    Struktura (@0x1416d87d0): { DATA mExtendedData, USER mUserInfo }.
+
+    USER = UserIdentification (tablica pol @0x1416d78c0, tagi z binarki):
+        AID mAccountId  ALOC mAccountLocale  EXBB mExternalBlob  EXID mExternalId
+        ID mBlazeId  NAME mName  ORIG mOriginPersonaId  PIDI mPidId
+    Do 2026-09-13 wysylalismy tu tagi UserSessionLoginInfo (BUID DSNM KEY ...), z ktorych
+    UserIdentification zna tylko ALOC - dekoder heat2 pomija nieznane tagi, wiec gra
+    tworzyla lokalnego usera z ID=0 i pustym NAME (nie pasowal do BUID z loginu).
+    Pewnosc: nazwy klas/pol z binarki + standardowy uklad BlazeSDK (mUserInfo to
+    UserIdentification); sama tablica pol nie trzyma wskaznika na klase pola, wiec
+    powiazania USER -> @0x1416d78c0 nie da sie odczytac z danych wprost.
+    EXBB (kod typu 8, kodowanie nieustalone) pomijamy - brak pola = wartosc domyslna.
+    legacy_user=True przywraca stary uklad (A/B)."""
     import time
     now = int(time.time())
     if session_key is None:
         session_key = f"1_{user_id}_sess"
-    user = f_struct("USER", [                # UserSessionLoginInfo (tagi rosnaco)
-        f_int("ALOC", 1701729619),           # locale (~enUS)
-        f_int("BUID", user_id),              # blaze user id
-        f_str("DSNM", persona),              # display name
-        f_int("FRST", 0),
-        f_str("KEY", session_key),
-        f_int("LAST", now),
-        f_int("LLOG", now),
-        f_str("MAIL", email),
-        f_int("PID", user_id),               # persona id
-        f_int("PLAT", 4),                    # pc
-        f_int("UID", user_id),
-        f_int("USTP", 0),
-        f_int("XREF", 0),
-    ])
-    data = f_extended_data("DATA") if rich_data else f_struct("DATA", [])
+    if legacy_user:
+        user = f_struct("USER", [            # stary uklad: UserSessionLoginInfo
+            f_int("ALOC", 1701729619),
+            f_int("BUID", user_id),
+            f_str("DSNM", persona),
+            f_int("FRST", 0),
+            f_str("KEY", session_key),
+            f_int("LAST", now),
+            f_int("LLOG", now),
+            f_str("MAIL", email),
+            f_int("PID", user_id),
+            f_int("PLAT", 4),
+            f_int("UID", user_id),
+            f_int("USTP", 0),
+            f_int("XREF", 0),
+        ])
+    else:
+        user = f_struct("USER", [            # UserIdentification (tagi rosnaco)
+            f_int("AID", user_id),           # mAccountId
+            f_int("ALOC", 1701729619),       # mAccountLocale (~enUS)
+            f_int("EXID", 0),                # mExternalId
+            f_int("ID", user_id),            # mBlazeId - MUSI == BUID z loginu
+            f_str("NAME", persona),          # mName
+            f_int("ORIG", user_id),          # mOriginPersonaId
+            f_int("PIDI", 0),                # mPidId
+        ])
+    data = f_extended_data("DATA", addr=addr) if rich_data else f_struct("DATA", [])
     payload = encode_tdf([data, user])       # DATA < USER
     return build_notification(component, command, payload, seq=seq, msg_type=msg_type)
 
@@ -691,6 +729,629 @@ def build_usersession_update(user_id: int = REDACTED_EA_USER_ID, *, component: i
         f_int("USID", user_id),
     ])
     return build_notification(component, command, payload, seq=seq, msg_type=msg_type)
+
+
+def f_objid(tag: str, component: int, obj_type: int, obj_id: int) -> Field:
+    """EA::TDF::ObjectId na drucie heat2: trzy varinty (komponent, typ, id) - ten sam
+    uklad, ktory czyta _dec_value dla T_OBJID."""
+    return Field(tag, T_OBJID, enc_int(component) + enc_int(obj_type) + enc_int(obj_id))
+
+
+def build_user_authenticated_notify(user_id: int = REDACTED_EA_USER_ID, persona: str = "PayTonkaaa",
+                                    session_key: str | None = None, *,
+                                    component: int = 0x7802, command: int = 8, seq: int = 0,
+                                    msg_type: int = MSG_NOTIFY_BYTE,
+                                    email: str = "player@nfsrivals.local") -> bytes:
+    """UserSessions notyfikacja UserAuthenticated (cmd 8).
+
+    Klasa ODCZYTANA Z BINARKI: tablica pol @0x141a2f160, konstruktor 0xf5ccf0 w bloku
+    cmd 8 dyspozytora notyfikacji UserSessions 0xf29f90. To splaszczone SessionInfo +
+    PersonaDetails z odpowiedzi na login, plus ALOC, CGID i USTP:
+        ALOC mAccountLocale  BUID mBlazeUserId  CGID mConnectionGroupObjectId (objid)
+        DSNM mDisplayName  FRST mIsFirstLogin  KEY mSessionKey  LAST mLastAuthenticated
+        LLOG mLastLoginDateTime  MAIL mEmail  PID mPersonaId  PLAT mClientPlatform
+        UID mUserId  USTP mUserSessionType  XREF mExtId
+    Kody typow pol sa identyczne jak w SessionInfo/PersonaDetails loginu (gra je
+    dekoduje), wiec kodujemy je tak samo i z tymi samymi wartosciami.
+
+    Do 2026-09-13 cmd 8 szlo z PUSTYM payloadem: gra dostawala "zalogowano usera" z
+    BUID=0 i bez klucza sesji, a maszyna stanow online gry (0xa1bb00) stala na 5/6 i
+    nie dochodzila do 9 (zalogowany) - ekran "Logowanie".
+    CGID = (UserSessions 0x7802, typ 2, user_id): typ obiektu NIEPOTWIERDZONY w kodzie."""
+    import time
+    now = int(time.time())
+    if session_key is None:
+        session_key = f"1_{user_id}_sess"             # ten sam KEY co w loginie
+    payload = encode_tdf([                             # tagi rosnaco
+        f_int("ALOC", 1701729619),                     # jak USER w UserAdded
+        f_int("BUID", user_id),
+        f_objid("CGID", 0x7802, 2, user_id),
+        f_str("DSNM", persona),
+        f_int("FRST", 0),
+        f_str("KEY", session_key),
+        f_int("LAST", now),
+        f_int("LLOG", now),
+        f_str("MAIL", email),
+        f_int("PID", user_id),
+        f_int("PLAT", 4),                              # pc
+        f_int("UID", user_id),
+        f_int("USTP", 0),
+        f_int("XREF", 0),
+    ])
+    return build_notification(component, command, payload, seq=seq, msg_type=msg_type)
+
+
+# ---------------------------------------------------------------- RPC po zalogowaniu
+# Numery komend z emulacji getCommandName w binarce (scratchpad rpcnames.py):
+#   Authentication 0xf20180, Util 0xf28720, Stats 0xf28460, AssociationLists 0xf200b0,
+#   NFS (komponent 2050) 0xf68100. Uklady klas z docs/recon/tdf_members.json.
+
+def f_list_struct(tag: str, items: list[list[Field]]) -> Field:
+    """Lista heat2 struktur: typ elementu(struct) + licznik + kazda struktura
+    (pola + terminator 0x00) bez tagow elementow."""
+    body = bytes((T_STRUCT,)) + enc_int(len(items))
+    for fields in items:
+        body += b"".join(f.encode() for f in fields) + b"\x00"
+    return Field(tag, T_LIST, body)
+
+
+def f_list_str(tag: str, values: list[str]) -> Field:
+    body = bytes((T_STRING,)) + enc_int(len(values))
+    for v in values:
+        body += enc_str(v)
+    return Field(tag, T_LIST, body)
+
+
+def build_user_settings_load_response(seq: int, key: str, data: str = "", *,
+                                      msg_type: int = MSG_REPLY) -> bytes:
+    """Util.userSettingsLoad (9/10) -> UserSettingsResponse @0x1416c3f80 {DATA mData, KEY mKey}.
+    Brak zapisanego ustawienia = pusty DATA."""
+    payload = encode_tdf([f_str("DATA", data), f_str("KEY", key)])
+    return Fire2(component=9, command=10, payload=payload, error=0, seq=seq,
+                 msg_type=msg_type).encode()
+
+
+def build_key_scopes_response(seq: int, *, msg_type: int = MSG_REPLY) -> bytes:
+    """Stats.getKeyScopesMap (7/15) -> KeyScopes @0x1416c5a68 {KSIT mKeyScopesMap}
+    (mapa nazwa -> KeyScopeItem). Brak zakresow = pusta mapa."""
+    payload = encode_tdf([f_map_empty("KSIT", T_STRING, T_STRUCT)])
+    return Fire2(component=7, command=15, payload=payload, error=0, seq=seq,
+                 msg_type=msg_type).encode()
+
+
+def build_stat_group_response(seq: int, name: str, *, msg_type: int = MSG_REPLY) -> bytes:
+    """Stats.getStatGroup (7/4) -> StatGroupResponse @0x1416c4a10
+    {CNAM DESC ETYP KSUM META NAME STAT}. ETYP (objtype) i KSUM pomijamy - brak pola
+    = wartosc domyslna; STAT (lista StatDescSummary) pusta."""
+    payload = encode_tdf([
+        f_str("CNAM", ""),
+        f_str("DESC", ""),
+        f_str("META", ""),
+        f_str("NAME", name),
+        f_list_struct("STAT", []),
+    ])
+    return Fire2(component=7, command=4, payload=payload, error=0, seq=seq,
+                 msg_type=msg_type).encode()
+
+
+def build_get_lists_response(seq: int, *, msg_type: int = MSG_REPLY) -> bytes:
+    """AssociationLists.getLists (25/6) -> Lists @0x1416aeb50 {LMAP mListMembersVector}.
+    Bez znajomych = pusta lista ListMembers."""
+    payload = encode_tdf([f_list_struct("LMAP", [])])
+    return Fire2(component=25, command=6, payload=payload, error=0, seq=seq,
+                 msg_type=msg_type).encode()
+
+
+def build_geolocation_info_response(seq: int, blaze_id: int, *, country: str = "PL",
+                                    msg_type: int = MSG_REPLY) -> bytes:
+    """NFS (komponent 2050) getGeolocationInfo (38) -> GetGeolocationInfoResponse
+    @0x1416d9890 {CNTY CTY ID LAT LON OPT OVER ST}."""
+    payload = encode_tdf([
+        f_str("CNTY", country),
+        f_str("CTY", ""),
+        f_int("ID", blaze_id),
+        f_int("LAT", 0),
+        f_int("LON", 0),
+        f_int("OPT", 0),                    # mOptIn
+        f_int("OVER", 0),                   # mIsOverridden
+        f_str("ST", ""),
+    ])
+    return Fire2(component=2050, command=38, payload=payload, error=0, seq=seq,
+                 msg_type=msg_type).encode()
+
+
+STATS_NOTIFY_GET_STATS_ASYNC = 0x32   # nazwa notyfikacji Stats 0xf29610: 0x32 -> GetStatsAsyncNotification
+
+
+def build_stats_async_notification(view_id: int, group_name: str, entity_ids: list[int], *,
+                                   seq: int = 0, msg_type: int = MSG_NOTIFY_BYTE) -> bytes:
+    """Wynik Stats.getStatsByGroupAsync (7/16) - przychodzi NOTYFIKACJA 7/0x32, nie odpowiedz.
+    GetStatsAsyncNotification @0x1416c55d0 {GRNM mGroupName, KEY mKeyString, LAST mLast,
+    STS mStatValues, VID mViewId}; STS = StatValues @0x1416c4310 {AGGR, STAT list<EntityStats>},
+    EntityStats @0x1416c5d60 {EID ETYP POFF STAT list<string>}. LAST=1 zamyka widok VID -
+    bez tej notyfikacji zapytanie asynchroniczne nigdy sie nie konczy."""
+    entities = [[f_int("EID", eid), f_int("POFF", 0), f_list_str("STAT", [])]
+                for eid in entity_ids]
+    payload = encode_tdf([
+        f_str("GRNM", group_name),
+        f_str("KEY", ""),
+        f_int("LAST", 1),
+        f_struct("STS", [f_list_struct("AGGR", []), f_list_struct("STAT", entities)]),
+        f_int("VID", view_id),
+    ])
+    return build_notification(7, STATS_NOTIFY_GET_STATS_ASYNC, payload, seq=seq,
+                              msg_type=msg_type)
+
+
+def build_get_auth_token_response(seq: int, token: str, *, msg_type: int = MSG_REPLY) -> bytes:
+    """Authentication.getAuthToken (1/36) -> @0x1416ad9f8 {AUTH mAuthToken}. Gra wstawia ten
+    token do naglowka Authorization zapytan ByteVault (bez niego szedl pusty)."""
+    payload = encode_tdf([f_str("AUTH", token)])
+    return Fire2(component=1, command=36, payload=payload, error=0, seq=seq,
+                 msg_type=msg_type).encode()
+
+
+# ---------------------------------------------------------------- GameManager (komponent 4)
+# Numery z tablic nazw w binarce: RPC 0xf68420 (1 createGame, 2 destroyGame, 3 advanceGameState,
+# 15 finalizeGameCreation, 29 updateMeshConnection), notyfikacje 0xf69450 (20 NotifyGameSetup,
+# 30 NotifyPlayerJoinCompleted, 100 NotifyGameStateChange). Enumy z tablic {nazwa, wartosc}.
+GM_NOTIFY_GAME_SETUP = 20
+GM_NOTIFY_PLAYER_JOIN_COMPLETED = 30
+GM_NOTIFY_GAME_STATE_CHANGE = 100
+GAME_STATE = {"NEW_STATE": 0, "INITIALIZING": 1, "INACTIVE_VIRTUAL": 2, "PRE_GAME": 130,
+              "IN_GAME": 131, "POST_GAME": 4, "MIGRATING": 5, "DESTRUCTING": 6, "RESETABLE": 7}
+PLAYER_STATE = {"RESERVED": 0, "QUEUED": 1, "ACTIVE_CONNECTING": 2, "ACTIVE_MIGRATING": 3,
+                "ACTIVE_CONNECTED": 4, "ACTIVE_KICK_PENDING": 5}
+JOIN_STATE_JOINED_GAME = 0
+SETUP_CONTEXT_CREATE_GAME = 0
+
+
+def _ip_pair_fields(exip: int, export: int, inip: int, inport: int, maci: int) -> list[Field]:
+    """Pola IpPairAddress w kolejnosci tagow: EXIP{IP MACI PORT} INIP{IP MACI PORT} MACI."""
+    return [f_struct("EXIP", [f_int("IP", exip), f_int("MACI", 0), f_int("PORT", export)]),
+            f_struct("INIP", [f_int("IP", inip), f_int("MACI", 0), f_int("PORT", inport)]),
+            f_int("MACI", maci)]
+
+
+def f_union_ip_pair(tag: str, exip: int, export: int, inip: int, inport: int, maci: int) -> Field:
+    """Pole-unia NetworkAddress z aktywnym IpPairAddress (wariant 2), jak ADDR w ExtendedData."""
+    return f_union(tag, 2, f_struct("VALU", _ip_pair_fields(exip, export, inip, inport, maci)))
+
+
+def f_list_ip_pair(tag: str, exip: int, export: int, inip: int, inport: int, maci: int) -> Field:
+    """Lista NetworkAddress (HNET). Typ elementu na drucie = 3 (struct), ale element to UNIA:
+    bajt wariantu (2 = IpPairAddress) + pola czlonu + terminator 0x00. Uklad podpatrzony w
+    zadaniu createGame wyslanym przez klienta (HNET: 03 01 02 EXIP... MACI... 00)."""
+    body = bytes((T_STRUCT,)) + enc_int(1) + bytes((2,))
+    body += b"".join(f.encode() for f in _ip_pair_fields(exip, export, inip, inport, maci)) + b"\x00"
+    return Field(tag, T_LIST, body)
+
+
+def build_create_game_response(seq: int, game_id: int, *, command: int = 1,
+                               msg_type: int = MSG_REPLY) -> bytes:
+    """GameManager.createGame (4/1) -> @0x141a300b0 {GID mGameId, JGS mJoinState, REX}."""
+    payload = encode_tdf([f_int("GID", game_id), f_int("JGS", JOIN_STATE_JOINED_GAME),
+                          f_list_struct("REX", [])])
+    return Fire2(component=4, command=command, payload=payload, error=0, seq=seq,
+                 msg_type=msg_type).encode()
+
+
+def build_reset_dedicated_server_response(seq: int, game_id: int, *,
+                                          msg_type: int = MSG_REPLY) -> bytes:
+    """GameManager.resetDedicatedServer (4/25) -> ta sama klasa co createGame: w binarce NIE MA
+    stringu "ResetDedicatedServerResponse" (jest tylko ...SetupContext), a CreateGameResponse
+    @0x141a300b0 to jedyna odpowiedz GameManagera z samym GID."""
+    return build_create_game_response(seq, game_id, command=25, msg_type=msg_type)
+
+
+# SlotType z tablicy {nazwa, wartosc} @0x1416d9790 (MAX_PARTICIPANT_SLOT_TYPE = 2, INVALID = -1).
+SLOT_TYPE = {"SLOT_PUBLIC_PARTICIPANT": 0, "SLOT_PRIVATE_PARTICIPANT": 1,
+             "SLOT_PUBLIC_SPECTATOR": 2, "SLOT_PRIVATE_SPECTATOR": 3}
+
+
+def build_replicated_player(game_id: int, player: dict) -> list[Field]:
+    """ReplicatedGamePlayer @0x141a2f3a0 (18 z 20 pol) - gracz w rosterze NotifyGameSetup i w
+    NotifyPlayerJoining. player = {uid, persona, slot, state, addr=(exip, export, inip, inport, maci)}.
+    Numer miejsca gracza idzie do SID (mSlotId) i CSID (mConnectionSlotId); SLOT to mSlotType, czyli
+    rodzaj miejsca, nie numer. Do 15.09 numer trafial do SLOT, a SID/CSID byly 0 u kazdego gracza -
+    dolaczajacy dostawal to samo miejsce polaczenia co host (log-29: obie gry meldowaly STAT=0)."""
+    import time
+    uid = player["uid"]
+    slot = player.get("slot", 0)
+    return [                                           # tagi rosnaco
+        f_int("CONG", uid),
+        f_int("CSID", slot),
+        f_int("EXID", 0),
+        f_int("GID", game_id),
+        f_int("JFPS", 0),
+        f_int("LOC", 1701729619),
+        f_str("NAME", player["persona"]),
+        f_map_str("PATT", {}),
+        f_int("PID", uid),
+        f_union_ip_pair("PNET", *player["addr"]),
+        f_str("ROLE", ""),
+        f_int("SID", slot),
+        f_int("SLOT", SLOT_TYPE["SLOT_PUBLIC_PARTICIPANT"]),
+        f_int("STAT", player.get("state", PLAYER_STATE["ACTIVE_CONNECTED"])),
+        f_int("TIDX", 0),
+        f_int("TIME", int(time.time())),
+        f_int("UID", uid),
+        f_str("UUID", ""),
+    ]
+
+
+def build_notify_game_setup(game_id: int, host_id: int, players: list[dict], *, game_name: str,
+                            game_settings: int, network_topology: int, presence_mode: int,
+                            voip: int, version_string: str, max_players: int,
+                            slot_capacities: list[int], team_ids: list[int],
+                            attributes: dict[str, str],
+                            host_addr: tuple[int, int, int, int, int], game_state: int = 1,
+                            setup_context: tuple[int, int, int] | str | None = None,
+                            seq: int = 0, msg_type: int = MSG_NOTIFY_BYTE) -> bytes:
+    """NotifyGameSetup (4/20) @0x1416d7cf0 {GAME mGameData, LFPJ, PROS mGameRoster, QUEU,
+    REAS mGameSetupReason}. GAME = ReplicatedGameData @0x141a2f590 (tu 32 z 42 pol, reszta
+    domyslna), PROS = roster (build_replicated_player dla kazdego gracza z `players`), host
+    (ADMN, HSES, OGHI, PHST/THST) = host_id, HNET = adres hosta. REAS = unia: wariant 0
+    DatalessSetupContext {DCTX = CREATE_GAME_SETUP_CONTEXT}, 1 ResetDedicatedServerSetupContext
+    (setup_context="reset_dedicated", bez pol) albo 3 MatchmakingSetupContext.
+    Wartosci gry (nazwa, ustawienia, topologia, VSTR, pojemnosc) bierzemy z zadania klienta
+    tworzacego gre, zeby dostal to, o co prosil; dolaczajacy dostaje te same."""
+    host_info = [f_int("CONG", host_id), f_int("CSID", 0), f_int("HPID", host_id), f_int("HSLT", 0)]
+    exip, export, inip, inport, maci = host_addr
+    user_id = host_id
+    game = [                                           # tagi rosnaco
+        f_list_int("ADMN", [user_id]),
+        f_map_str("ATTR", attributes),
+        f_list_int("CAP", slot_capacities),
+        f_int("GID", game_id),
+        f_int("GMRG", 0),
+        f_str("GNAM", game_name),
+        f_int("GPVH", 0),
+        f_int("GSET", game_settings),
+        f_int("GSID", game_id),
+        f_int("GSTA", game_state),
+        f_str("GTYP", ""),
+        f_str("GURL", ""),
+        f_list_ip_pair("HNET", exip, export, inip, inport, maci),
+        f_int("HSES", user_id),
+        f_int("IGNO", 0),
+        f_map_str("MATR", {}),
+        f_int("MCAP", max_players),
+        f_struct("NQOS", [f_int("DBPS", 100000), f_int("NATT", 0), f_int("UBPS", 100000)]),
+        f_int("NRES", 0),
+        f_int("NTOP", network_topology),
+        f_int("OGHI", user_id),
+        f_str("PGID", ""),
+        f_struct("PHST", host_info),
+        f_int("PRES", presence_mode),
+        f_str("PSAS", "ams"),
+        f_int("QCAP", 0),
+        f_int("SEED", 0x5EED),
+        f_struct("THST", host_info),
+        f_list_int("TIDS", team_ids),
+        f_str("UUID", f"turborivals-game-{game_id}"),
+        f_int("VOIP", voip),
+        f_str("VSTR", version_string),
+    ]
+    if setup_context == "reset_dedicated":             # resetDedicatedServer: kontekst bez pol
+        reas = f_union("REAS", GAME_SETUP_REASON_RESET_DEDICATED, f_struct("VALU", []))
+    elif setup_context is None:                        # createGame: DatalessSetupContext
+        reas = f_union("REAS", 0, f_struct("VALU", [f_int("DCTX", SETUP_CONTEXT_CREATE_GAME)]))
+    else:                                              # matchmaking: (MSID, RSLT, USID)
+        mm_session_id, mm_result, user_session_id = setup_context
+        reas = f_union("REAS", GAME_SETUP_REASON_MATCHMAKING, f_struct("VALU", [
+            f_int("FIT", MM_FIT_SCORE), f_int("MAXF", MM_FIT_SCORE), f_int("MSID", mm_session_id),
+            f_int("RSLT", mm_result), f_int("USID", user_session_id)]))
+    payload = encode_tdf([
+        f_struct("GAME", game),
+        f_int("LFPJ", 0),
+        f_list_struct("PROS", [build_replicated_player(game_id, p) for p in players]),
+        f_list_struct("QUEU", []),
+        reas,
+    ])
+    return build_notification(4, GM_NOTIFY_GAME_SETUP, payload, seq=seq, msg_type=msg_type)
+
+
+def build_notify_game_state_change(game_id: int, state: int, *, seq: int = 0,
+                                   msg_type: int = MSG_NOTIFY_BYTE) -> bytes:
+    """NotifyGameStateChange (4/100) @0x141a2ff08 {GID mGameId, GSTA mNewGameState}."""
+    payload = encode_tdf([f_int("GID", game_id), f_int("GSTA", state)])
+    return build_notification(4, GM_NOTIFY_GAME_STATE_CHANGE, payload, seq=seq, msg_type=msg_type)
+
+
+def build_notify_player_join_completed(game_id: int, player_id: int, *, seq: int = 0,
+                                       msg_type: int = MSG_NOTIFY_BYTE) -> bytes:
+    """NotifyPlayerJoinCompleted (4/30) - kandydat klasy {GID mGameId, PID mPlayerId}."""
+    payload = encode_tdf([f_int("GID", game_id), f_int("PID", player_id)])
+    return build_notification(4, GM_NOTIFY_PLAYER_JOIN_COMPLETED, payload, seq=seq,
+                              msg_type=msg_type)
+
+
+# ---------------------------------------------------------------- GameManager: matchmaking (4/13)
+# StartMatchmakingRequest @0x141a30840 (stringi "StartMatchmakingRequest::m..."): MODE mSessionMode
+# (run-26: 3 = szukaj i utworz), DUR mSessionDurationMS (6000), CRIT mCriteriaData, GNAM, GSET, GVER,
+# NTOP, PMAX, PNET, PRES, TID, VOIP. Enum MatchmakingResult z tablicy {nazwa, wartosc} @0x1416d8f00.
+MATCHMAKING_RESULT = {"SUCCESS_CREATED_GAME": 0, "SUCCESS_JOINED_NEW_GAME": 1,
+                      "SUCCESS_JOINED_EXISTING_GAME": 2, "SESSION_TIMED_OUT": 3,
+                      "SESSION_CANCELED": 4, "SESSION_TERMINATED": 5,
+                      "SESSION_ERROR_GAME_SETUP_FAILED": 6}
+GM_NOTIFY_MATCHMAKING_FAILED = 10
+# Unia GameSetupReason: tablice czlonow @0x141a30280.. kolejno Dataless(0), ResetDedicatedServer(1),
+# IndirectJoinGame(2), Matchmaking(3), IndirectMatchmaking(4). Wariant 0 dziala od run-23 (createGame).
+# MatchmakingSetupContext @0x141a30120 {FIT mFitScore, MAXF mMaxPossibleFitScore, MSID mSessionId,
+# RSLT mMatchmakingResult, USID mUserSessionId}.
+GAME_SETUP_REASON_MATCHMAKING = 3
+# Wariant 1 unii = mResetDedicatedServerSetupContext (tablica @0x141a30298). Sama klasa
+# NIE MA pol: miedzy DatalessSetupContext {DCTX} @0x141a30100 a MatchmakingSetupContext
+# {FIT...} @0x141a30120 nie ma zadnej tablicy czlonkow, wiec VALU zostaje puste.
+GAME_SETUP_REASON_RESET_DEDICATED = 1
+MM_FIT_SCORE = 100      # FIT = MAXF: dopasowanie to ulamek FIT/MAXF - nie wysylamy zer
+
+
+def build_start_matchmaking_response(seq: int, session_id: int, *,
+                                     msg_type: int = MSG_REPLY) -> bytes:
+    """StartMatchmakingResponse {MSID}. Tag MSID maja w binarce dwie klasy-kandydaci: @0x1416da370
+    {MSID mMatchmakingSessionId} i @0x1416d9ef0 {COID ESNM MSID mSessionId SCID STMN} (pola sesji
+    zewnetrznej Xbox) - samo MSID pasuje do obu, reszta zostaje domyslna."""
+    payload = encode_tdf([f_int("MSID", session_id)])
+    return Fire2(component=4, command=13, payload=payload, error=0, seq=seq,
+                 msg_type=msg_type).encode()
+
+
+def build_notify_matchmaking_failed(session_id: int, user_session_id: int, result: int, *,
+                                    seq: int = 0, msg_type: int = MSG_NOTIFY_BYTE) -> bytes:
+    """NotifyMatchmakingFailed (4/10) @0x141a30a90 {MAXF mMaxPossibleFitScore, MSID mSessionId,
+    RSLT mMatchmakingResult, USID mUserSessionId}."""
+    payload = encode_tdf([f_int("MAXF", MM_FIT_SCORE), f_int("MSID", session_id),
+                          f_int("RSLT", result), f_int("USID", user_session_id)])
+    return build_notification(4, GM_NOTIFY_MATCHMAKING_FAILED, payload, seq=seq, msg_type=msg_type)
+
+
+# ---------------------------------------------------------------- GameManager: kilku graczy
+# Numery notyfikacji z tablicy nazw 0xf69450. Enumy z tablic {nazwa, wartosc} w zrzucie:
+#   PlayerRemovedReason @0x1416d9d70, PlayerNetConnectionStatus @0x1416d9ae8,
+#   GameDestructionReason @0x1416d9ba0.
+GM_NOTIFY_GAME_REMOVED = 16
+GM_NOTIFY_PLAYER_JOINING = 21
+GM_NOTIFY_PLAYER_REMOVED = 40
+PLAYER_REMOVED_REASON = {"PLAYER_JOIN_TIMEOUT": 0, "PLAYER_CONN_LOST": 1, "BLAZESERVER_CONN_LOST": 2,
+                         "GAME_DESTROYED": 4, "GAME_ENDED": 5, "PLAYER_LEFT": 6, "GROUP_LEFT": 7,
+                         "PLAYER_KICKED": 8}
+GAME_DESTRUCTION_REASON = {"SYS_GAME_ENDING": 0, "HOST_LEAVING": 3, "LOCAL_PLAYER_LEAVING": 6}
+MESH_STATUS = {"DISCONNECTED": 0, "ESTABLISHING_CONNECTION": 1, "CONNECTED": 2}
+
+
+def build_notify_player_joining(game_id: int, player: dict, *, seq: int = 0,
+                                msg_type: int = MSG_NOTIFY_BYTE) -> bytes:
+    """NotifyPlayerJoining (4/21) @0x1416d8220 {GID mGameId, PDAT mJoiningPlayer} - do graczy juz
+    bedacych w grze, gdy ktos dolacza. PDAT = ReplicatedGamePlayer dolaczajacego."""
+    payload = encode_tdf([f_int("GID", game_id),
+                          f_struct("PDAT", build_replicated_player(game_id, player))])
+    return build_notification(4, GM_NOTIFY_PLAYER_JOINING, payload, seq=seq, msg_type=msg_type)
+
+
+def build_notify_player_removed(game_id: int, player_id: int, reason: int, *, seq: int = 0,
+                                msg_type: int = MSG_NOTIFY_BYTE) -> bytes:
+    """NotifyPlayerRemoved (4/40), kandydat klasy @0x141a30560 {CNTX mPlayerRemovedTitleContext,
+    GID mGameId, LFPJ mLockedForPreferredJoins, PID mPlayerId, REAS mPlayerRemovedReason} -
+    uklad z nazw pol (zadania removePlayer maja te same tagi bez LFPJ)."""
+    payload = encode_tdf([f_int("CNTX", 0), f_int("GID", game_id), f_int("LFPJ", 0),
+                          f_int("PID", player_id), f_int("REAS", reason)])
+    return build_notification(4, GM_NOTIFY_PLAYER_REMOVED, payload, seq=seq, msg_type=msg_type)
+
+
+def build_notify_game_removed(game_id: int, reason: int, *, seq: int = 0,
+                              msg_type: int = MSG_NOTIFY_BYTE) -> bytes:
+    """NotifyGameRemoved (4/16), kandydat klasy @0x141a303a8 {GID mGameId, REAS mDestructionReason}."""
+    payload = encode_tdf([f_int("GID", game_id), f_int("REAS", reason)])
+    return build_notification(4, GM_NOTIFY_GAME_REMOVED, payload, seq=seq, msg_type=msg_type)
+
+
+# Numery notyfikacji GameManager odczytane z tablicy skokow getNotificationName 0xf69450 (indeks =
+# id-10: bajt @0xf6963c, offset RVA @0xf695a8): 10 MatchmakingFailed, 12 MatchmakingAsyncStatus,
+# 16 GameRemoved, 20 GameSetup, 21 PlayerJoining, 22 JoiningPlayerInitiateConnections, 23 PlayerJoiningQueue,
+# 24 PlayerPromotedFromQueue, 25 PlayerClaimingReservation, 30 PlayerJoinCompleted, 40 PlayerRemoved,
+# 60 HostMigrationFinished, 70 HostMigrationStart, 71 PlatformHostInitialized, 80 GameAttribChange,
+# 90 PlayerAttribChange, 95 PlayerCustomDataChange, 100 GameStateChange, 110 GameSettingsChange,
+# 111 GameCapacityChange, 112 GameReset, 113 GameReportingIdChange, 115 GameSessionUpdated,
+# 116 GamePlayerStateChange, 117 GamePlayerTeamRoleSlotChange, 118 GameTeamIdChange, 119 ProcessQueue,
+# 120 PresenceModeChanged, 121 QueueChanged, 122 GameRecreateRequested, 123 GameModRegisterChanged,
+# 124 GameEntryCriteriaChanged, 201 GameListUpdate, 202 AdminListChange,
+# 220 CreateDynamicDedicatedServerGame, 230 GameNameChange.
+GM_NOTIFY_ADMIN_LIST_CHANGE = 202
+# UpdateAdminListOperation z tablicy {nazwa, wartosc} @0x1416da628.
+GM_ADMIN_OPERATION = {"GM_ADMIN_ADDED": 0, "GM_ADMIN_REMOVED": 1, "GM_ADMIN_MIGRATED": 2}
+
+
+def build_notify_admin_list_change(game_id: int, admin_id: int, operation: int, updater_id: int, *,
+                                   seq: int = 0, msg_type: int = MSG_NOTIFY_BYTE) -> bytes:
+    """NotifyAdminListChange (4/202) @0x141a30480 {ALST mAdminPlayerId, GID mGameId, OPER mOperation,
+    UID mUpdaterPlayerId} - do wszystkich graczy gry po addAdminPlayer (4/106) i removeAdminPlayer
+    (4/107). Zadanie tych RPC to @0x1416d8978 {GID mGameId, PID mAdminPlayerId}."""
+    payload = encode_tdf([f_int("ALST", admin_id), f_int("GID", game_id), f_int("OPER", operation),
+                          f_int("UID", updater_id)])
+    return build_notification(4, GM_NOTIFY_ADMIN_LIST_CHANGE, payload, seq=seq, msg_type=msg_type)
+
+
+# ---------------------------------------------------------------- Authentication.listUserEntitlements2
+# Enumy z tablic {nazwa, wartosc} w .rdata: EntitlementType @0x1416aeac0, EntitlementStatus @0x1416ac490.
+ENTITLEMENT_TYPE = {"UNKNOWN": 0, "ONLINE_ACCESS": 1, "TRIAL_ONLINE_ACCESS": 2, "SUBSCRIPTIONS": 3,
+                    "PARENTAL_APPROVAL": 4, "DEFAULT": 5}
+ENTITLEMENT_STATUS = {"UNKNOWN": 0, "ACTIVE": 1, "DISABLED": 2, "PENDING": 3, "DELETED": 4, "BANNED": 5}
+
+
+def build_list_entitlements_response(seq: int, entitlements: list[dict], *,
+                                     msg_type: int = MSG_REPLY) -> bytes:
+    """Authentication.listUserEntitlements2 (1/29) -> Entitlements @0x1416adfe8 {NLST mEntitlements},
+    element Entitlement @0x141a2b2b0 {DEVI GDAY GNAM ID ISCO PID PJID PRCA PRID STAT STRC TAG TDAY TYPE
+    UCNT VER}. entitlements = [{id, group, type, tag, persona_id, product_id, project_id, status,
+    grant_date}] - brakujace pola zostaja domyslne."""
+    rows = [[
+        f_str("DEVI", ""),
+        f_str("GDAY", e.get("grant_date", "")),
+        f_str("GNAM", e["group"]),
+        f_int("ID", e["id"]),
+        f_int("ISCO", 0),
+        f_int("PID", e.get("persona_id", 0)),
+        f_str("PJID", e.get("project_id", "")),
+        f_int("PRCA", 0),
+        f_str("PRID", e.get("product_id", "")),
+        f_int("STAT", e.get("status", ENTITLEMENT_STATUS["ACTIVE"])),
+        f_int("STRC", 0),
+        f_str("TAG", e.get("tag", "")),
+        f_str("TDAY", ""),
+        f_int("TYPE", e["type"]),
+        f_int("UCNT", 0),
+        f_int("VER", 0),
+    ] for e in entitlements]
+    payload = encode_tdf([f_list_struct("NLST", rows)])
+    return Fire2(component=1, command=29, payload=payload, error=0, seq=seq,
+                 msg_type=msg_type).encode()
+
+
+# ---------------------------------------------------------------- Util.filterForProfanity
+# Nazwy enuma FilterResult w .rdata @0x16c70d0.. w tej kolejnosci; klient wysyla w zadaniu
+# DIRT=2 dla tekstu jeszcze nie sprawdzonego, co zgadza sie z numeracja od zera (UNPROCESSED).
+FILTER_RESULT = {"PASSED": 0, "OFFENSIVE": 1, "UNPROCESSED": 2, "STRING_TOO_LONG": 3, "OTHER": 4}
+
+
+def build_filter_profanity_response(seq: int, texts: list[str], *,
+                                    msg_type: int = MSG_REPLY) -> bytes:
+    """Util.filterForProfanity (9/20). Zadanie i odpowiedz to ta sama klasa @0x1416c41d8
+    {TLST mFilteredTextList}, element @0x141a2e150 {DIRT mResult, UTXT mFilteredText}.
+    Nie filtrujemy: kazdy tekst wraca bez zmian z wynikiem PASSED, w kolejnosci zadania."""
+    items = [[f_int("DIRT", FILTER_RESULT["PASSED"]), f_str("UTXT", t)] for t in texts]
+    payload = encode_tdf([f_list_struct("TLST", items)])
+    return Fire2(component=9, command=20, payload=payload, error=0, seq=seq,
+                 msg_type=msg_type).encode()
+
+
+# ---------------------------------------------------------------- nazwy komend RPC
+# Z emulacji 13 funkcji getCommandName w binarce (switch po numerze -> `lea rax, nazwa; ret`),
+# zrzut NFS14-0912.DMP.dmp. Numery komponentow z ruchu. Komponent 28 nie ma w binarce tablicy
+# nazw - "GameReporting" wynika z klasy zadania {FNSH PRVT RPRT} (@0x141a32ad0).
+_RPC_TABLES = {
+    (1, "Authentication"): """20 updateAccount 21 upgradeAccount 29 listUserEntitlements2
+        30 getAccount 31 grantEntitlement 32 listEntitlements 34 getUseCount 35 decrementUseCount
+        36 getAuthToken 38 getPasswordRules 39 grantEntitlement2 43 modifyEntitlement2
+        44 consumecode 45 passwordForgot 47 getPrivacyPolicyContent 48 listPersonaEntitlements2
+        51 checkAgeReq 52 getOptIn 53 enableOptIn 54 disableOptIn 60 expressLogin 70 logout
+        90 getPersona 100 listPersonas 101 expressCreateAccount 152 originLogin
+        210 validateSessionKey 230 createWalUserSession 241 acceptLegalDocs
+        242 getEmailOptInSettings 246 getTermsOfServiceContent 260 getOriginPersona
+        270 checkEmail 280 getPersonaNameSuggestions 290 guestLogin""",
+    (4, "GameManager"): """1 createGame 2 destroyGame 3 advanceGameState 4 setGameSettings
+        5 setPlayerCapacity 6 setPresenceMode 7 setGameAttributes 8 setPlayerAttributes 9 joinGame
+        11 removePlayer 13 startMatchmaking 14 cancelMatchmaking 15 finalizeGameCreation
+        18 setPlayerCustomData 19 replayGame 20 returnDedicatedServerToPool 22 leaveGameByGroup
+        23 migrateGame 24 updateGameHostMigrationStatus 25 resetDedicatedServer
+        26 updateGameSession 27 banPlayer 29 updateMeshConnection 30 joinGameByUserList
+        31 removePlayerFromBannedList 32 clearBannedList 33 getBannedList
+        38 addQueuedPlayerToGame 39 updateGameName 40 ejectHost 41 setGameModRegister
+        42 setGameEntryCriteria 43 preferredJoinOptOut 100 getGameListSnapshot
+        101 getGameListSubscription 102 destroyGameList 103 getFullGameData
+        104 getMatchmakingConfig 105 getGameDataFromId 106 addAdminPlayer 107 removeAdminPlayer
+        109 changeGameTeamId 110 migrateAdminPlayer 111 getUserSetGameListSubscription
+        112 swapPlayers 113 getGameDataByUser 152 getGameListSnapshotSync""",
+    (5, "Redirector"): "1 getServerInstance",
+    (7, "Stats"): """1 getStatDescs 2 getStats 3 getStatGroupList 4 getStatGroup 5 getStatsByGroup
+        6 getDateRange 7 getEntityCount 10 getLeaderboardGroup 11 getLeaderboardFolderGroup
+        12 getLeaderboard 13 getCenteredLeaderboard 14 getFilteredLeaderboard 15 getKeyScopesMap
+        16 getStatsByGroupAsync 17 getLeaderboardTreeAsync 18 getLeaderboardEntityCount
+        19 getStatCategoryList 20 getPeriodIds 21 getLeaderboardRaw 22 getCenteredLeaderboardRaw
+        23 getFilteredLeaderboardRaw 24 changeKeyscopeValue 25 getEntityRank""",
+    (9, "Util"): """1 fetchClientConfig 2 ping 3 setClientData 4 localizeStrings
+        5 getTelemetryServer 6 getTickerServer 7 preAuth 8 postAuth 10 userSettingsLoad
+        11 userSettingsSave 12 userSettingsLoadAll 14 deleteUserSettings 20 filterForProfanity
+        21 fetchQosConfig 22 setClientMetrics 23 setConnectionState 24 getPssConfig
+        25 getUserOptions 26 setUserOptions 27 suspendUserPing 28 setClientState""",
+    (25, "AssociationLists"): """1 addUsersToList 2 removeUsersFromList 3 clearLists
+        4 setUsersToList 5 getListForUser 6 getLists 7 subscribeToLists 8 unsubscribeFromLists
+        9 getConfigListsInfo 10 getMemberHash""",
+    (28, "GameReporting"): "",
+    (2050, "NFS"): """11 getBestScores 14 uploadEntitlements 20 getInGameSpeedWalls
+        21 getInGameRecommendations 25 sendTwoWayCommunicationCustomMessage
+        26 getFriendsRecommendations 27 ignoreFriendRecommendation 29 getAutologPlaylist
+        30 setAutologPlaylist 31 setRecommendationRivalScore 32 setRichPresenceWatchList
+        33 setInGameRichPresence 34 getInGameRichPresence 35 setOverwatchWeaponFeedback
+        37 setGeolocationInfo 38 getGeolocationInfo 39 getSpecialGuestInfo
+        40 setSpecialGuestAttempt 41 getSpecialGuestSpeedWall 42 setGeoLocationOptOut
+        43 getGeolocationFromIP 44 getOverwatchStats 45 incrementOverwatchStats
+        46 resetOverwatchStats 47 getOverwatchStatsConfig
+        48 sendTwoWayCommunicationCustomMessageSpendFuel 61 reportContent 62 fetchContent
+        63 showContent""",
+    (0x7802, "UserSessions"): """3 fetchExtendedData 5 updateExtendedDataAttribute
+        8 updateHardwareFlags 12 lookupUser 13 lookupUsers 14 lookupUsersByPrefix
+        15 lookupUsersIdentification 20 updateNetworkInfo 23 lookupUserGeoIPData
+        24 overrideUserGeoIPData 25 updateUserSessionClientData 26 setUserInfoAttribute
+        27 resetUserGeoIPData 32 lookupUserSessionId 33 fetchLastLocaleUsedAndAuthError
+        34 fetchUserFirstLastAuthTime 35 resumeSession 37 setUserGeoOptIn
+        41 enableUserAuditLogging 42 disableUserAuditLogging""",
+}
+COMPONENT_NAMES = {comp: name for comp, name in _RPC_TABLES}
+RPC_NAMES = {}
+for (_comp, _cname), _spec in _RPC_TABLES.items():
+    _tok = _spec.split()
+    for _num, _name in zip(_tok[::2], _tok[1::2]):
+        RPC_NAMES[(_comp, int(_num))] = f"{_cname}.{_name}"
+
+
+def rpc_name(component: int, command: int) -> str:
+    """"Komponent.komenda" z tablic binarki; sam komponent, gdy komendy nie znamy; "" gdy nic."""
+    if (component, command) in RPC_NAMES:
+        return RPC_NAMES[(component, command)]
+    return f"{COMPONENT_NAMES[component]}#{command}" if component in COMPONENT_NAMES else ""
+
+
+# ---------------------------------------------------------------- NFS.getInGameSpeedWalls (2050/20)
+# Klasy przypiete do tablic pol po stringach "Klasa::mPole" z binarki (np.
+# "InGameSpeedWallResponseRow::mStatsFlt"):
+#   InGameSpeedWallsRequest          @0x1416b76c0 {BLID mBlazeId, SWIS mSpeedWallIds, USGE, USPG}
+#   InGameSpeedWallResponseSpeedWall @0x1416b7120 {ROWS mSpeedWall, SWID mSpeedWallId}
+#   InGameSpeedWallResponseRow       @0x1416b87a0 {BLUS mBlazeUser, STAF mStatsFlt, STAI mStatsInt,
+#                                                  STAS mStatsStr}
+#   BlazeUser (kandydat, nazwy pol)  @0x141a2c040 {BLIS mBlazeId, PENA mPersonaName, URTY mRelationType}
+# Wiersz ma te same mapy STAF/STAI/STAS, co wpis gracza w raporcie GameReporting ({ENTI STAF STAI
+# STAS}), a id speed walla to ENTI z raportu - serwer odsyla zapisane statystyki obiektu.
+# InGameSpeedWallResponse::mSpeedwalls ma w binarce dwie mozliwe tablice pol: lista pod tagiem ROWS
+# (@0x1416b50f0, @0x1416b61e8) albo SPWA (@0x1416b5870). Wysylamy OBA tagi z ta sama lista - dekoder
+# heat2 klienta pomija tagi nieznane swojej klasie.
+
+def f_map_int(tag: str, items: dict[str, int]) -> Field:
+    """Mapa heat2 string -> int, klucze posortowane (jak f_map_str)."""
+    body = bytes((T_STRING, T_INT)) + enc_int(len(items))
+    for k, v in sorted(items.items()):
+        body += enc_str(k) + enc_int(int(v))
+    return Field(tag, T_MAP, body)
+
+
+def f_map_float(tag: str, items: dict[str, float]) -> Field:
+    """Mapa heat2 string -> float: 4 B big-endian, tak jak czyta _dec_value (wartosci z raportow
+    wychodza sensowne, np. speed=69.1). Klucze posortowane."""
+    body = bytes((T_STRING, T_FLOAT)) + enc_int(len(items))
+    for k, v in sorted(items.items()):
+        body += enc_str(k) + struct.pack(">f", float(v))
+    return Field(tag, T_MAP, body)
+
+
+def build_in_game_speed_walls_response(seq: int, walls: list[tuple[int, list[dict]]], *,
+                                       msg_type: int = MSG_REPLY) -> bytes:
+    """walls = [(id speed walla, [wiersz, ...])], wiersz = {blaze_id, persona, int, float, str}.
+    Speed wall bez zapisanych danych idzie z pusta lista wierszy - gra dostaje odpowiedz na kazde
+    zapytane id."""
+    items = []
+    for swid, rows in walls:
+        row_structs = [[
+            f_struct("BLUS", [f_int("BLIS", r["blaze_id"]), f_str("PENA", r.get("persona", "")),
+                              f_int("URTY", 0)]),
+            f_map_float("STAF", r.get("float", {})),
+            f_map_int("STAI", r.get("int", {})),
+            f_map_str("STAS", r.get("str", {})),
+        ] for r in rows]
+        items.append([f_list_struct("ROWS", row_structs), f_int("SWID", swid)])
+    payload = encode_tdf([f_list_struct("ROWS", items), f_list_struct("SPWA", items)])
+    return Fire2(component=2050, command=20, payload=payload, error=0, seq=seq,
+                 msg_type=msg_type).encode()
 
 
 def _dec_value(buf: bytes, p: int, wtype: int, end: int) -> tuple[object, int]:
@@ -716,6 +1377,16 @@ def _dec_value(buf: bytes, p: int, wtype: int, end: int) -> tuple[object, int]:
         n, p = dec_int(buf, p)
         items = []
         for _ in range(n):
+            if elem == T_STRUCT and 0 < buf[p] < 0x80:
+                # Element listy struktur bywa UNIA: bajt wariantu przed polami czlonu. Tak
+                # klient koduje HNET (createGame, resetDedicatedServer) i tak samo koduje to
+                # nasz f_list_ip_pair. Poznajemy po tym, ze pierwszy bajt TAGA ma zawsze
+                # ustawiony bit 7 (pierwszy znak taga >= '@'), a numer wariantu jest mniejszy;
+                # zero zostawiamy terminatorowi pustej struktury.
+                variant = buf[p]; p += 1
+                v, p = _dec_value(buf, p, elem, end)
+                items.append(("union", variant, v))
+                continue
             v, p = _dec_value(buf, p, elem, end)
             items.append(v)
         return items, p
@@ -739,6 +1410,16 @@ def _dec_value(buf: bytes, p: int, wtype: int, end: int) -> tuple[object, int]:
         return (a, b, c), p
     if wtype == T_FLOAT:
         return struct.unpack_from(">f", buf, p)[0], p + 4
+    if wtype == T_VARIABLE:
+        # Pole "variable" (obiekt TDF dowolnej klasy): bajt obecnosci; gdy 1 - tdfId klasy
+        # (varint) i pola obiektu zakonczone 0x00. Tak wyglada raport GameReporting 28/2:
+        # PRVT = 00 (brak), RPRT.GAME = 01 + id + struktura.
+        present = buf[p]; p += 1
+        if not present:
+            return ("variable", None), p
+        tdf_id, p = dec_int(buf, p)
+        fields, p = _dec_fields(buf, p, end)
+        return ("variable", tdf_id, fields), p
     raise ValueError(f"nieznany typ TDF 0x{wtype:02x} na offsecie {p - 1}")
 
 
@@ -785,6 +1466,12 @@ def dump_tdf(fields: list[tuple], indent: int = 0) -> str:
             else:
                 lines.append(f"{pad}{tag} (union, wariant {val[1]})")
                 lines.append(dump_tdf([val[2]], indent + 1))
+        elif wtype == T_VARIABLE and isinstance(val, tuple) and val[0] == "variable":
+            if val[1] is None:
+                lines.append(f"{pad}{tag} (variable) = BRAK")
+            else:
+                lines.append(f"{pad}{tag} (variable, tdfId 0x{val[1]:x})")
+                lines.append(dump_tdf(val[2], indent + 1))
         else:
             lines.append(f"{pad}{tag} = {val!r}")
     return "\n".join(l for l in lines if l)
