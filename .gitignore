@@ -19,3 +19,7 @@ __pycache__/
 
 # Rust (fazy 3-4)
 target/
+
+# Logi serwera i Fridy z przebiegow testowych - duze, generowane lokalnie przy kazdym tescie
+log-*.txt
+frida-*.txt

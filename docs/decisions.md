@@ -625,3 +625,85 @@ Offline na ramkach run-27: dwie symulowane sesje (lokalna i z LAN) - utworzenie 
 publicznej, dolaczenie drugiego gracza z rosterem dwoch graczy, zakonczenie dolaczania po
 `updateMeshConnection`, wyjscie, rozlaczenie hosta, solo `createGame` bez zmian, adresy QoS
 per klient. Regresja zapisu postepu i speed walli. Test na zywo z drugim komputerem w toku.
+
+## 2026-09-16 - multiplayer na zywo: run-38 do run-40
+
+### Run-38 (20:51) - pierwsze udane dolaczenie
+
+Drugi gracz po raz pierwszy wszedl do gry pierwszego. `startMatchmaking` dolaczajacego trafil
+w `find_public_game`, mesh zestawil sie w obie strony (`STAT=2`), poszedl `addAdminPlayer`,
+a w UI hosta pojawila sie ikonka kolegi "w garazu". Wczesniej (run-36/37) klient dolaczajacego
+w ogole nie matchmakowal - wysylal `resetDedicatedServer` (4/25), na co nie bylo handlera.
+
+Sesja rozpadla sie przy przejsciu z garazu do swiata: klient wyslal drugi `startMatchmaking`,
+dostal NOWA gre, a `removePlayer` ze starej przyszedl klatke pozniej. Skutek: dwie gry zamiast
+jednej i dwoch samotnych graczy.
+
+### Run-39 (21:21) - zamiana rol i znaleziona przyczyna
+
+Kluczowa zmiana metodyczna: **Frida na maszynie DOLACZAJACEGO** (do tej pory chodzila u hosta,
+ktory niczego nie tracil). Dopiero to pokazalo mechanizm:
+
+```
+19:19:52.711  [mm-status] edx=2  SUCCESS_JOINED_EXISTING_GAME, obiekt gry 0xd3ab4680
+19:19:59.542  [gra-utracona] rdx=0xd3ab4680 sledzona=0xd3ab4680 r8=0x80
+19:19:59.610  [mm-ponow] licznik=1
+19:20:01.210  [mm-status] edx=0  -> wlasna nowa gra
+```
+
+**6,83 s** od dolaczenia do zniszczenia obiektu gry po stronie klienta. W calym tym oknie
+dolaczajacy wyslal 11 zadan - nie odpytywal, nie ponawial, czekal. To wyklucza brakujaca
+ODPOWIEDZ na RPC. Ponowny matchmaking i wyjscie z gry sa SKUTKIEM utraty obiektu, nie przyczyna.
+
+Slepa uliczka po drodze: `--mm-delay` (odroczenie decyzji matchmakingu, zeby zdazyl dojsc
+`removePlayer`). Nie moglo zadzialac - klient wysyla `removePlayer` dopiero PO otrzymaniu wyniku
+matchmakingu. Kod zostaje z domyslnym `0`; przyda sie, gdy klient kiedys wyjdzie z gry przed
+szukaniem. Przy okazji doszedl handler `cancelMatchmaking` (4/14), wczesniej bez obslugi.
+
+### Przyczyna
+
+Serwer ustawial dolaczajacemu `ACTIVE_CONNECTED` tylko we wlasnym rejestrze i wysylal
+`NotifyPlayerJoinCompleted` (4/30). To **dwie rozne notyfikacje**: 30 mowi "dolaczanie
+zakonczone", a stan gracza niesie `NotifyGamePlayerStateChange` (4/116), ktorej nie wysylalismy
+nigdy. Obiekt gracza u dolaczajacego zostawal w `ACTIVE_CONNECTING` i timeout sprawdzany po
+wczytaniu swiata kasowal gre.
+
+### Co wzielismy z binarki
+
+`NotifyGamePlayerStateChange` @0x141a30660 `{GID mGameId, PID mPlayerId, STAT mPlayerState}` -
+klasa wyodrebniona z `tdf_members.json` miedzy `{GID, PID}` a `{GID, PID, ROLE, SLOT}`. Klasy
+leza w tej samej kolejnosci co numery notyfikacji (116 GamePlayerStateChange,
+117 GamePlayerTeamRoleSlotChange), co domyka identyfikacje. Mapowanie `meta[0]` -> typ TDF
+wyprowadzone z `build_in_game_speed_walls_response`, zweryfikowanego wczesniej na kliencie:
+4/21/22/23/24 -> int, 5 -> string, 2 -> lista, 1 -> mapa, 10 -> struktura.
+
+### Decyzja
+
+`Lobby.mesh()` przy przejsciu gracza na `ACTIVE_CONNECTED` wysyla do wszystkich graczy gry
+**116 przed 30**. `--no-player-state-notify` wraca do zachowania do run-39 wlacznie (A/B).
+
+### Wynik (run-40, 21:52)
+
+| | run-39 | run-40 |
+|---|---|---|
+| czas w grze | 6,83 s | **14 min 42 s** |
+| `[gra-utracona]` | 2x | **0** |
+| `[mm-ponow]` | licznik=1 | brak ponowienia |
+| gry w rejestrze | 2 (rozpad) | **1** |
+
+`cmd=116` poszlo do obu graczy, nikt nie wyszedl, zero Tracebackow, rozlaczenie na koniec
+przez uzytkownika. Multiplayer w LAN dziala.
+
+### Otwarte
+
+- **Nietestowane na zywo:** wyjscie hosta w trakcie sesji (poprawka `remove_player` z 15.09:
+  samo `NotifyGameRemoved`, bez `NotifyPlayerRemoved`), 3+ graczy, sciezka timera
+  `--mm-delay > 0`.
+- **RPC bez handlera widoczne dopiero przy dluzszej sesji:** `UserSessions.lookupUsers` (14x),
+  `NFS.getInGameRecommendations` (4x), `NFS.getAutologPlaylist` (4x). Dalej bez handlera:
+  `getSpecialGuestInfo` (42x, uklad odpowiedzi odtworzony @0x141a2c0d0 - `BLIS mSpecialGuests`,
+  `STAI mSpecialGuestRealNames`, `SPGT`, `SPGN`, `SPLA`), `getOverwatchStatsConfig`,
+  `getAccount`, `createWalUserSession`.
+- **Nieustalone:** znaczenie `r8` w `[gra-utracona]` (`0x80` przy pierwszej utracie, `0x40` przy
+  drugiej) - do dezasemblacji `0xa1b770`, gdyby wrocil podobny objaw. Typ TDF `0x70`
+  (`blaze.py:1423`) wciaz nieznany dekoderowi.

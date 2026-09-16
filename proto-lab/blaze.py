@@ -462,8 +462,8 @@ def build_preauth_response(seq: int, *, msg_type: int = MSG_REPLY,
                  msg_type=msg_type).encode()
 
 
-def build_login_response(seq: int, *, msg_type: int = MSG_REPLY,
-                         user_id: int = REDACTED_EA_USER_ID, persona: str = "PayTonkaaa",
+def build_login_response(seq: int, user_id: int, persona: str, *,
+                         msg_type: int = MSG_REPLY,
                          email: str = "player@nfsrivals.local") -> bytes:
     """Odpowiedz Authentication.login (component 1, command 152) = FullLoginResponse.
 
@@ -557,9 +557,8 @@ def _telemetry_fields(ip: str = "127.0.0.1", *, locale: int = 1701729619,
     ]
 
 
-def build_postauth_response(seq: int, *, msg_type: int = MSG_REPLY,
+def build_postauth_response(seq: int, user_id: int, *, msg_type: int = MSG_REPLY,
                             ip: str = "127.0.0.1",
-                            user_id: int = REDACTED_EA_USER_ID,
                             subsystems: bool = True) -> bytes:
     """Odpowiedz Util.postAuth (component 9, command 8) = PostAuthResponse.
     Struktura (@0x1416c3b50): { PSS TELE TICK UROP } - 4 zagniezdzone struktury.
@@ -659,7 +658,7 @@ def reseq(frame: bytes, seq: int) -> bytes:
     return frame[:10] + struct.pack(">H", seq & 0xFFFF) + frame[12:]
 
 
-def build_useradded_notify(user_id: int = REDACTED_EA_USER_ID, persona: str = "PayTonkaaa",
+def build_useradded_notify(user_id: int, persona: str,
                            session_key: str | None = None, *, component: int = 0x7802,
                            command: int = 2, seq: int = 0,
                            msg_type: int = MSG_NOTIFY_BYTE,
@@ -715,7 +714,7 @@ def build_useradded_notify(user_id: int = REDACTED_EA_USER_ID, persona: str = "P
     return build_notification(component, command, payload, seq=seq, msg_type=msg_type)
 
 
-def build_usersession_update(user_id: int = REDACTED_EA_USER_ID, *, component: int = 0x7802,
+def build_usersession_update(user_id: int, *, component: int = 0x7802,
                              command: int = 1, seq: int = 0,
                              msg_type: int = MSG_NOTIFY_BYTE,
                              rich_data: bool = True) -> bytes:
@@ -737,7 +736,7 @@ def f_objid(tag: str, component: int, obj_type: int, obj_id: int) -> Field:
     return Field(tag, T_OBJID, enc_int(component) + enc_int(obj_type) + enc_int(obj_id))
 
 
-def build_user_authenticated_notify(user_id: int = REDACTED_EA_USER_ID, persona: str = "PayTonkaaa",
+def build_user_authenticated_notify(user_id: int, persona: str,
                                     session_key: str | None = None, *,
                                     component: int = 0x7802, command: int = 8, seq: int = 0,
                                     msg_type: int = MSG_NOTIFY_BYTE,
@@ -1159,8 +1158,24 @@ def build_notify_game_removed(game_id: int, reason: int, *, seq: int = 0,
 # 124 GameEntryCriteriaChanged, 201 GameListUpdate, 202 AdminListChange,
 # 220 CreateDynamicDedicatedServerGame, 230 GameNameChange.
 GM_NOTIFY_ADMIN_LIST_CHANGE = 202
+GM_NOTIFY_GAME_PLAYER_STATE_CHANGE = 116
 # UpdateAdminListOperation z tablicy {nazwa, wartosc} @0x1416da628.
 GM_ADMIN_OPERATION = {"GM_ADMIN_ADDED": 0, "GM_ADMIN_REMOVED": 1, "GM_ADMIN_MIGRATED": 2}
+
+
+def build_notify_game_player_state_change(game_id: int, player_id: int, state: int, *,
+                                          seq: int = 0, msg_type: int = MSG_NOTIFY_BYTE) -> bytes:
+    """NotifyGamePlayerStateChange (4/116) @0x141a30660 {GID mGameId, PID mPlayerId,
+    STAT mPlayerState}; `state` z PLAYER_STATE.
+
+    Klasa wyodrebniona z tdf_members.json miedzy {GID, PID} a {GID, PID, ROLE, SLOT} - klasy leza
+    w tej samej kolejnosci co numery notyfikacji (116 GamePlayerStateChange, 117
+    GamePlayerTeamRoleSlotChange). Rozna od NotifyPlayerJoinCompleted (30): 30 mowi "dolaczanie
+    zakonczone", 116 niesie STAN gracza. Do run-39 wysylalismy tylko 30, a stan zmienialismy
+    wylacznie u siebie - obiekt gracza u dolaczajacego zostawal w ACTIVE_CONNECTING."""
+    payload = encode_tdf([f_int("GID", game_id), f_int("PID", player_id), f_int("STAT", state)])
+    return build_notification(4, GM_NOTIFY_GAME_PLAYER_STATE_CHANGE, payload, seq=seq,
+                              msg_type=msg_type)
 
 
 def build_notify_admin_list_change(game_id: int, admin_id: int, operation: int, updater_id: int, *,

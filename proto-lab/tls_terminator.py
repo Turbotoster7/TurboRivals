@@ -1,27 +1,32 @@
 #!/usr/bin/env python3
-"""Serwer zastepczy terminujacy TLS - pierwszy odszyfrowany pakiet Blaze.
+"""TurboRivals replacement server for Need for Speed Rivals.
 
-Tor A pokazal, ze zywy klient NFS Rivals laczy sie z redirectorem przez `hosts`
-i po handshake od razu wysyla zaszyfrowany ApplicationData (pierwszy pakiet
-Blaze), ktorego pasywne proxy nie odczyta. Ten serwer prowadzi wlasny handshake,
-przedstawia cert zastepczy (patchowany bugiem ProtoSSL - patrz make_stub_cert.py),
-odszyfrowuje premaster wlasnym kluczem prywatnym i wypisuje ladunek OTWARTYM
-TEKSTEM. To most do pierwszego czytelnego naglowka Fire/Fire2 + TDF.
+Terminates TLS, speaks Blaze, and stands in for the online services EA shut down
+on 2025-10-07. Handles login, the client config, QoS, matchmaking, shared
+AllDrive sessions and progress saving.
 
-Parametry handshake (z docs/protocol.md, Tor A i sondy):
-  - wersja negocjowana: TLS 1.1 (0x0302),
-  - wymiana kluczy: RSA (klient szyfruje premaster naszym kluczem publicznym),
-  - szyfr: TLS_RSA_WITH_RC4_128_SHA (0x0005) - jest na liscie klienta; wybieramy
-    RC4, bo bez IV/paddingu ochrona rekordow jest trywialna (prosciej niz AES-CBC).
-  - kryptografia TLS 1.0/1.1: PRF = P_MD5 XOR P_SHA1, MAC = HMAC-SHA1.
+It runs its own TLS handshake, presents a stand-in certificate (patched around a
+ProtoSSL bug - see make_stub_cert.py), decrypts the premaster with its own
+private key and reads the payload in the clear. That was originally the bridge to
+the first readable Fire/Fire2 + TDF header; the game client will not talk to a
+passive proxy, because it sends encrypted ApplicationData straight after the
+handshake.
 
-Bez zaleznosci zewnetrznych: RSA-decrypt i RC4 sa czysto w Pythonie (spojnie z
-reszta proto-lab, ktora recznie sklada TLS). Klucz (n, d) wyciagamy raz na
-starcie przez `openssl rsa -text`. `cryptography` nie jest wymagane.
+Handshake parameters (see docs/protocol.md):
+  - negotiated version: TLS 1.1 (0x0302),
+  - key exchange: RSA (the client encrypts the premaster with our public key),
+  - cipher: TLS_RSA_WITH_RC4_128_SHA (0x0005) - offered by the client; we pick
+    RC4 because without an IV or padding, record protection is trivial to
+    implement compared with AES-CBC,
+  - TLS 1.0/1.1 crypto: PRF = P_MD5 XOR P_SHA1, MAC = HMAC-SHA1.
 
-Uzycie (hosts kieruje gosredirector.online.ea.com -> 127.0.0.1):
-    python proto-lab/make_stub_cert.py          # raz, generuje pki/
-    python proto-lab/tls_terminator.py           # potem uruchom i wystartuj gre
+No external dependencies: RSA decryption and RC4 are pure Python, in keeping with
+the rest of proto-lab, which assembles TLS by hand. The key (n, d) is read once at
+startup via `openssl rsa -text`. `cryptography` is not required.
+
+Usage (the hosts file points gosredirector.ea.com at this machine):
+    python proto-lab/make_stub_cert.py    # once, generates pki/
+    python proto-lab/tls_terminator.py    # then start it and launch the game
 """
 
 from __future__ import annotations
@@ -111,7 +116,7 @@ def load_rsa_priv(key_path: Path) -> tuple[int, int, int]:
         # pola (linia bez wciecia zaczynajaca sie od litery).
         m = re.search(rf"{field}:\s*\n((?:\s+[0-9a-f:]+\s*\n)+)", txt)
         if not m:
-            raise SystemExit(f"nie znalazlem pola '{field}' w openssl rsa -text")
+            raise SystemExit(f"could not find field '{field}' in openssl rsa -text")
         hexstr = re.sub(r"[^0-9a-f]", "", m.group(1))
         return int(hexstr, 16)
 
@@ -129,7 +134,7 @@ def rsa_decrypt_pkcs1(ct: bytes, n: int, d: int, k: int) -> bytes:
         raise ValueError(f"zly padding PKCS#1: {em[:2].hex()}")
     sep = em.find(b"\x00", 2)
     if sep < 10:                       # PS musi miec >= 8 bajtow
-        raise ValueError("nie znalazlem separatora paddingu")
+        raise ValueError("could not find the padding separator")
     return em[sep + 1:]
 
 
@@ -186,8 +191,8 @@ class Wire:
         body, mac = plain[:-MAC_LEN], plain[-MAC_LEN:]
         want = self._mac(self.rx_mac, self.rx_seq, rtype, ver, body)
         if mac != want:
-            print(f"    [!] zly MAC rekordu (seq {self.rx_seq}) - "
-                  f"kontynuuje, to diagnostyka")
+            print(f"    [!] bad record MAC (seq {self.rx_seq}) - "
+                  f"continuing, this is diagnostics")
         self.rx_seq += 1
         return body
 
@@ -275,7 +280,7 @@ def handle(conn: socket.socket, addr, args, out_dir: Path,
     except OSError:
         local_port = 0
     role = "BLAZE" if local_port == args.blaze_port else "redirector"
-    print(f"\n=== [{tag}] klient {addr[0]}:{addr[1]} -> nasz port {local_port} "
+    print(f"\n=== [{tag}] client {addr[0]}:{addr[1]} -> our port {local_port} "
           f"({role}) ===")
 
     w = Wire(conn)
@@ -285,15 +290,15 @@ def handle(conn: socket.socket, addr, args, out_dir: Path,
         # 1. ClientHello
         rtype, ver, ch = w.recv_record()
         if rtype != RT_HANDSHAKE or not ch or ch[0] != HS_CLIENT_HELLO:
-            print(f"  spodziewalem sie ClientHello, dostalem typ {rtype}")
+            print(f"  expected ClientHello, got type {rtype}")
             return
         transcript += ch
         # NIE odbijamy wersji rekordu klienta (0x0300 z ClientHello) - zywy serwer
         # odpowiadal 0x0302 na wszystkim (patrz komentarz w Wire). record_version
         # zostaje VER_TLS11.
         client_random, suites = parse_client_hello(ch)
-        print(f"  ClientHello: rekord {hex(ver)}, {len(suites)} szyfrow"
-              f"{' (RC4_SHA obecny)' if CIPHER_RC4_SHA in suites else ' (!) brak RC4_SHA'}")
+        print(f"  ClientHello: record {hex(ver)}, {len(suites)} cipher suites"
+              f"{' (RC4_SHA offered)' if CIPHER_RC4_SHA in suites else ' (!) no RC4_SHA'}")
 
         # 2-4. ServerHello + Certificate + ServerHelloDone (osobne rekordy)
         server_random, sh = build_server_hello()
@@ -308,12 +313,12 @@ def handle(conn: socket.socket, addr, args, out_dir: Path,
         try:
             rtype, ver, cke = w.recv_record()
         except ConnectionError:
-            print("  [!] klient zerwal polaczenie tuz po Certificate (RST, bez "
-                  "Alertu) - najpewniej ODRZUCIL cert. Sprawdz issuer leafa: "
-                  "musi byc DN OTG3 (make_stub_cert.py).")
+            print("  [!] client dropped the connection right after Certificate (RST, no "
+                  "Alert) - it most likely REJECTED the cert. Check the leaf issuer: "
+                  "it must be DN OTG3 (make_stub_cert.py).")
             raise
         if rtype != RT_HANDSHAKE or not cke or cke[0] != HS_CLIENT_KEY_EXCHANGE:
-            print(f"  spodziewalem sie ClientKeyExchange, dostalem typ {rtype}")
+            print(f"  expected ClientKeyExchange, got type {rtype}")
             _drain_alert(rtype, cke)
             return
         transcript += cke
@@ -321,7 +326,7 @@ def handle(conn: socket.socket, addr, args, out_dir: Path,
         enc = enc[2:] if len(enc) > (rsa[2]) else enc  # zdejmij 2B dlugosci (TLS)
         pre_master = rsa_decrypt_pkcs1(enc, *rsa)
         print(f"  ClientKeyExchange: premaster {len(pre_master)} B, "
-              f"wersja w premaster {pre_master[:2].hex()}")
+              f"version inside premaster {pre_master[:2].hex()}")
 
         master, cmac, smac, ckey, skey = derive_keys(
             pre_master, client_random, server_random)
@@ -329,17 +334,17 @@ def handle(conn: socket.socket, addr, args, out_dir: Path,
         # 6-7. ChangeCipherSpec + Finished klienta
         rtype, ver, ccs = w.recv_record()
         if rtype != RT_CCS:
-            print(f"  spodziewalem sie ChangeCipherSpec, dostalem typ {rtype}")
+            print(f"  expected ChangeCipherSpec, got type {rtype}")
             _drain_alert(rtype, ccs)
             return
         w.activate_read(RC4(ckey), cmac)              # od teraz klient szyfruje
         rtype, ver, fin = w.recv_record()
         if rtype != RT_HANDSHAKE or not fin or fin[0] != HS_FINISHED:
-            print(f"  spodziewalem sie Finished, dostalem typ {rtype}")
+            print(f"  expected Finished, got type {rtype}")
             return
         want = finished_verify(master, b"client finished", transcript)
         got = fin[4:16]
-        print(f"  Finished klienta: verify_data {'OK' if got == want else 'ROZNI SIE'}")
+        print(f"  client Finished: verify_data {'OK' if got == want else 'MISMATCH'}")
         transcript += fin                             # do Finished serwera
 
         # 8. ChangeCipherSpec + Finished serwera
@@ -347,14 +352,14 @@ def handle(conn: socket.socket, addr, args, out_dir: Path,
         w.activate_write(RC4(skey), smac)
         sfin = hs_msg(HS_FINISHED, finished_verify(master, b"server finished", transcript))
         w.send_record(RT_HANDSHAKE, sfin)
-        print("  -> ChangeCipherSpec + Finished serwera")
+        print("  -> ChangeCipherSpec + server Finished")
 
         # 9. Pierwszy ApplicationData = pierwszy pakiet Blaze otwartym tekstem
         rtype, ver, app = w.recv_record()
         while rtype == RT_HANDSHAKE:                  # ignoruj ewentualne powtorki
             rtype, ver, app = w.recv_record()
         if rtype != RT_APPDATA:
-            print(f"  po handshake dostalem typ {rtype}, nie ApplicationData")
+            print(f"  after the handshake got type {rtype}, not ApplicationData")
             _drain_alert(rtype, app)
             return
 
@@ -363,7 +368,7 @@ def handle(conn: socket.socket, addr, args, out_dir: Path,
         # ByteVault laczy sie na TEN SAM port, ale mowi HTTP (REST), nie Fire2. W run-22
         # takie polaczenia wisialy na "ogon ... czekam na reszte ramki".
         if bytes(app[:7]).split(b" ")[0] in (b"GET", b"POST", b"PUT", b"DELETE", b"HEAD"):
-            print("  (to HTTP, nie Fire2 - obsluga ByteVault)")
+            print("  (this is HTTP, not Fire2 - ByteVault handling)")
             _serve_http(w, bytearray(app), args)
             return
 
@@ -397,7 +402,7 @@ def handle(conn: socket.socket, addr, args, out_dir: Path,
                     try:
                         fr = blaze.Fire2.decode(pkt)
                     except Exception as e:            # noqa: BLE001
-                        print(f"  [!] nie zdekodowalem Fire2: {e}")
+                        print(f"  [!] could not decode Fire2: {e}")
                         print(hexdump(pkt, 256)); continue
                     if fr.component == GAME_REPORTING and fr.msg_type == 0:
                         _ack_game_report(sess, fr, args)
@@ -410,11 +415,11 @@ def handle(conn: socket.socket, addr, args, out_dir: Path,
                         try:
                             print(blaze.dump_tdf(blaze.decode_tdf(fr.payload), 3))
                         except Exception as e:            # noqa: BLE001
-                            print(f"      (nie zdekodowalem TDF zadania: {e})")
+                            print(f"      (could not decode the request TDF: {e})")
                     resp = _dispatch_blaze(fr, args, sess)
                     if resp is not None:
                         sess.send(resp)
-                        print(f"  -> odpowiedz comp={fr.component} cmd={fr.command} "
+                        print(f"  -> reply comp={fr.component} cmd={fr.command} "
                               f"({len(resp)} B)")
                         # Po loginie wlaczamy krotki timeout, zeby budzic sie co
                         # keepalive sekund i podtrzymywac polaczenie Blaze (patrz
@@ -427,9 +432,9 @@ def handle(conn: socket.socket, addr, args, out_dir: Path,
                         if name and "#" not in name:
                             # Komenda znana z binarki; surowa ramka i tak lezy w capture, a
                             # pola pokazuje --dump-tdf - hexdump tylko zasmiecal log.
-                            print(f"  *** brak handlera: {name} ***")
+                            print(f"  *** no handler: {name} ***")
                         else:
-                            print("  *** brak handlera - zrzut (kolejny etap do zbudowania) ***")
+                            print("  *** no handler - hexdump (next piece to build) ***")
                             print(hexdump(pkt, 384))
                         # Domyslnie odpowiadamy pustym potwierdzeniem (err=0, pusty
                         # payload = odpowiedz z wartosciami domyslnymi). Bez tego RPC gry
@@ -440,10 +445,10 @@ def handle(conn: socket.socket, addr, args, out_dir: Path,
                             ack = blaze.build_empty_reply(fr.component, fr.command, fr.seq,
                                                           msg_type=args.reply_msgtype)
                             sess.send(ack)
-                            print(f"  -> puste potwierdzenie comp={fr.component} "
+                            print(f"  -> empty acknowledgement comp={fr.component} "
                                   f"cmd={fr.command} ({len(ack)} B)")
                 if buf:
-                    print(f"  (ogon {len(buf)} B - czekam na reszte ramki)")
+                    print(f"  ({len(buf)} B tail - waiting for the rest of the frame)")
 
                 # b) dobierz kolejny rekord ze strumienia
                 try:
@@ -461,22 +466,24 @@ def handle(conn: socket.socket, addr, args, out_dir: Path,
                         print(f"  -> keepalive PING seq={ping_seq}")
                         ping_seq += 1
                         continue
-                    print(f"  (cisza {args.idle_timeout} s - polaczenie trzymane, czekam)")
+                    print(f"  ({args.idle_timeout} s of silence - connection held, waiting)")
                     continue
                 while rtype == RT_HANDSHAKE:
                     rtype, ver, rec = w.recv_record()
                 if rtype == RT_ALERT:
                     _drain_alert(rtype, rec); break
                 if rtype != RT_APPDATA:
-                    print(f"  po odpowiedzi dostalem typ {rtype}, nie ApplicationData")
+                    print(f"  after the reply got type {rtype}, not ApplicationData")
                     break
                 buf += rec
         except ConnectionError:
-            print("  (klient zamknal polaczenie)")
+            print("  (client closed the connection)")
 
     except (ConnectionError, ValueError, struct.error) as e:
-        print(f"  blad sesji: {e}")
+        print(f"  session error: {e}")
     finally:
+        if sess is not None:
+            _cancel_matchmaking(sess)
         if sess is not None and sess.uid:
             # Rozlaczenie = wyjscie ze wszystkich gier; pozostali gracze dostaja notyfikacje.
             _deliver(sess, _lobby(args).logout(sess))
@@ -495,7 +502,7 @@ def _deliver(sess, notes) -> None:
         try:
             seq = target.notify(note)
         except OSError as e:
-            print(f"  -> NOTIFY comp={nfr.component} cmd={nfr.command}{who} NIE WYSLANE ({e})")
+            print(f"  -> NOTIFY comp={nfr.component} cmd={nfr.command}{who} NOT SENT ({e})")
             continue
         print(f"  -> async NOTIFY comp={nfr.component} cmd={nfr.command} seq={seq} "
               f"({len(note)} B){who}")
@@ -518,11 +525,11 @@ def _bind_exclusive(s: socket.socket, port: int, opis: str) -> None:
     try:
         s.bind(("0.0.0.0", port))
     except OSError as e:
-        sys.exit(f"\nPORT {port} ({opis}) JEST JUZ ZAJETY: {e}\n"
-                 f"Najpewniej chodzi jeszcze terminator z poprzedniego przebiegu "
-                 f"(a gra rozmawia wtedy z NIM, nie z tym procesem).\n"
-                 f"Sprawdz:  netstat -ano | Select-String {port}\n"
-                 f"i zakoncz tamten proces przed startem.")
+        sys.exit(f"\nPORT {port} ({opis}) IS ALREADY IN USE: {e}\n"
+                 f"Most likely a terminator from an earlier run is still running "
+                 f"(and the game then talks to THAT one, not to this process).\n"
+                 f"Check:  netstat -ano | Select-String {port}\n"
+                 f"and stop that process before starting this one.")
 
 
 def _qos_body(req: bytes, args, peer=None) -> bytes:
@@ -700,14 +707,13 @@ def _dispatch_blaze(fr, args, sess):
     if fr.component == 9 and fr.command == 2:           # Util.ping
         return blaze.build_ping_response(fr.seq, msg_type=args.reply_msgtype)
     if fr.component == 1 and fr.command == 152:         # Authentication.login (Origin)
-        # Tozsamosc per gracz (lobby.py): 127.0.0.1 = PayTonkaaa, inny komputer = uid z players.json.
+        # Tozsamosc per gracz z players.json (lobby.py): nadana raz przy pierwszym logowaniu.
         sess.outbox += _lobby(args).login(sess)
-        print(f"  [gracz] {sess.ip} -> {sess.persona} (uid {sess.uid})")
-        return blaze.build_login_response(fr.seq, msg_type=args.reply_msgtype,
-                                          user_id=sess.uid, persona=sess.persona)
+        print(f"  [player] {sess.ip} -> {sess.persona} (uid {sess.uid})")
+        return blaze.build_login_response(fr.seq, sess.uid, sess.persona,
+                                          msg_type=args.reply_msgtype)
     if fr.component == 9 and fr.command == 8:           # Util.postAuth
-        return blaze.build_postauth_response(fr.seq, msg_type=args.reply_msgtype,
-                                             user_id=sess.uid or LOCAL_USER_ID,
+        return blaze.build_postauth_response(fr.seq, sess.uid, msg_type=args.reply_msgtype,
                                              subsystems=not args.postauth_minimal)
     # --- komendy Util wolane PO postAuth (numeracja z emulatora BF3, ten sam
     #     silnik; NFS uzywa component 9 dla Util). Brak odpowiedzi na ktoras z
@@ -771,7 +777,7 @@ def _dispatch_blaze(fr, args, sess):
                          tag="ONLINE_ACCESS", persona_id=sess.persona_id,
                          product_id="Origin.OFR.50.0000676", grant_date="2013-11-19T00:00Z")
                     for i, g in enumerate(groups)]
-            print(f"  [entitlements] {sess.persona}: {len(ents)} wpis(y) ONLINE_ACCESS dla {groups}")
+            print(f"  [entitlements] {sess.persona}: {len(ents)} ONLINE_ACCESS entry/entries for {groups}")
             return blaze.build_list_entitlements_response(fr.seq, ents, msg_type=mt)
         return None
     # --- GameManager (run-22: "Wyszukiwanie gry" = createGame bez odpowiedzi).
@@ -782,7 +788,7 @@ def _dispatch_blaze(fr, args, sess):
         lb.learn_persona(sess, _raw_str(fr.payload, "GNAM", ""))
         g = lb.create_game(sess, _create_game_params(fr.payload), getattr(args, "gm_player_state", 4))
         sess.pending = ("created_game", 0, g)
-        print(f"  [gra] {sess!r} tworzy gre {g.gid:#x} ({'publiczna' if g.public else 'prywatna'})")
+        print(f"  [game] {sess!r} creates game {g.gid:#x} ({'public' if g.public else 'private'})")
         return blaze.build_create_game_response(fr.seq, g.gid, msg_type=mt)
     if fr.component == 4 and fr.command == 25:          # GameManager.resetDedicatedServer
         # run-36/37: gra z sesja PRYWATNA nie matchmakuje - zamiast startMatchmaking prosi o
@@ -797,38 +803,40 @@ def _dispatch_blaze(fr, args, sess):
         g = lb.create_game(sess, _create_game_params(fr.payload),
                            getattr(args, "gm_player_state", 4))
         sess.pending = ("reset_dedicated", 0, g)
-        print(f"  [gra] {sess!r} resetuje serwer dedykowany -> gra {g.gid:#x} "
-              f"({'publiczna' if g.public else 'prywatna'})")
+        print(f"  [game] {sess!r} resets the dedicated server -> game {g.gid:#x} "
+              f"({'public' if g.public else 'private'})")
         return blaze.build_reset_dedicated_server_response(fr.seq, g.gid, msg_type=mt)
     if fr.component == 4 and fr.command == 13:          # GameManager.startMatchmaking
         # run-26: "wyszukaj sesje" = leaveGameByGroup + startMatchmaking (MODE 3 = szukaj i utworz);
         # wynik matchmakingu przychodzi notyfikacja. Najpierw szukamy publicznej gry innego gracza
         # (dolaczenie, SUCCESS_JOINED_EXISTING_GAME), a gdy jej nie ma - nowa gra z graczem jako
         # hostem (SUCCESS_CREATED_GAME). --mm-fail: NotifyMatchmakingFailed SESSION_TIMED_OUT (A/B).
+        # Adres i nick czytamy TU, w watku polaczenia: sess.addr trafia potem do rosteru, a nick
+        # z GNAM ma byc znany, zanim ktokolwiek zobaczy tego gracza. Sama decyzja (ktora gra) idzie
+        # na timer - patrz _resolve_matchmaking i --mm-delay.
         lb = _lobby(args)
         msid = lb.new_msid()
-        if getattr(args, "mm_fail", False):
-            sess.pending = ("mm_failed", msid, None)
-            print(f"  [matchmaking] sesja {msid} -> NotifyMatchmakingFailed SESSION_TIMED_OUT (--mm-fail)")
-            return blaze.build_start_matchmaking_response(fr.seq, msid, msg_type=mt)
         pnet = _union_ip_pair(req.get("PNET"))
         if pnet and pnet[0]:
             sess.addr = pnet
         lb.learn_persona(sess, str(req.get("GNAM", "")))
-        crit = {t.strip(): v for t, _w, v in (req.get("CRIT") or [])}
-        agam = {t.strip(): v for t, _w, v in (crit.get("AGAM") or [])}
-        g = lb.find_public_game(sess, {int(x) for x in (agam.get("GIDL") or [])})
-        if g is not None:
-            lb.join(sess, g)
-            sess.pending = ("mm_joined", msid, g)
-            print(f"  [matchmaking] sesja {msid}: {sess!r} DOLACZA do gry {g.gid:#x} hosta "
-                  f"{lb.persona_of(g.host_uid)} (graczy: {len(g.players)})")
-        else:
-            g = lb.create_game(sess, _mm_game_params(req), getattr(args, "gm_player_state", 4))
-            sess.pending = ("mm_created", msid, g)
-            print(f"  [matchmaking] sesja {msid}, MODE={req.get('MODE')} DUR={req.get('DUR')} ms -> "
-                  f"nowa gra {g.gid:#x} (SUCCESS_CREATED_GAME)")
+        delay = int(getattr(args, "mm_delay", 0) or 0)
+        dur = int(req.get("DUR", 0) or 0)
+        if dur > 0:
+            delay = min(delay, dur)
+        if delay > 0:
+            _arm_matchmaking(lb, args, sess, msid, req, delay)
+            print(f"  [matchmaking] session {msid}, MODE={req.get('MODE')} DUR={dur} ms -> "
+                  f"deciding in {delay} ms")
+        else:                                           # --mm-delay 0: jak do run-38 wlacznie
+            sess.outbox.extend(_resolve_matchmaking(lb, args, sess, msid, req))
         return blaze.build_start_matchmaking_response(fr.seq, msid, msg_type=mt)
+    if fr.component == 4 and fr.command == 14:          # GameManager.cancelMatchmaking
+        # run-38: leci przy rezygnacji z wyszukiwania i wpadalo w "brak handlera". Przy odlozonej
+        # decyzji trzeba ubic timer, inaczej gracz dostalby gre, z ktorej wlasnie zrezygnowal.
+        _cancel_matchmaking(sess)
+        print(f"  [matchmaking] {sess!r} cancels the search")
+        return blaze.build_empty_reply(4, fr.command, fr.seq, msg_type=mt)
     if fr.component == 4 and fr.command in (2, 3, 11, 15, 22, 29, 106, 107):
         # destroyGame, advanceGameState, removePlayer, finalizeGameCreation, leaveGameByGroup,
         # updateMeshConnection, addAdminPlayer, removeAdminPlayer - samo potwierdzenie; skutki
@@ -845,7 +853,7 @@ def _dispatch_blaze(fr, args, sess):
             for r in rows:
                 r["persona"] = _lobby(args).persona_of(r["blaze_id"])
             walls.append((int(swid), rows))
-            print(f"  [speed wall] {swid}: {len(rows)} wiersz(y)"
+            print(f"  [speed wall] {swid}: {len(rows)} row(s)"
                   + (f" {rows[0]['float'] or rows[0]['int']}" if rows else ""))
         return blaze.build_in_game_speed_walls_response(fr.seq, walls, msg_type=mt)
     if fr.component == 9 and fr.command == 20:          # Util.filterForProfanity
@@ -908,8 +916,7 @@ def _player_store(args):
         return _STORE[root]
 
 
-LOCAL_USER_ID = lobby.LOCAL_USER_ID  # BlazeId gracza lokalnego (to samo w odpowiedzi na login)
-LOCAL_PERSONA = lobby.LOCAL_PERSONA
+DEFAULT_GAME_NAME = "Gracz"          # gdy zadanie nie niesie GNAM (nazwa gry = nick zalozyciela)
 _LOBBY: dict = {}
 
 
@@ -919,7 +926,11 @@ def _lobby(args) -> lobby.Lobby:
         if "lobby" not in _LOBBY:
             root = Path(getattr(args, "data_dir", None) or player_store.DATA_DIR)
             forced = dict(p.split("=", 1) for p in (getattr(args, "player", None) or []) if "=" in p)
-            _LOBBY["lobby"] = lobby.Lobby(root / "players.json", forced)
+            _LOBBY["lobby"] = lobby.Lobby(
+                root / "players.json", forced,
+                player_state_notify=getattr(args, "player_state_notify", True),
+                local_id=getattr(args, "local_id", 0),
+                local_persona=getattr(args, "local_persona", ""))
         return _LOBBY["lobby"]
 
 
@@ -1048,7 +1059,7 @@ def _create_game_params(p: bytes) -> dict:
     cap = _raw_list_int(p, "PCAP", [6, 0, 0, 0])
     # resetDedicatedServer przysyla PMAX=0, a pojemnosc wylacznie w PCAP ([6,0,0,0]) - gdy PMAX
     # jest zerowy, bierzemy sume miejsc, inaczej gra dostaje MCAP=0 i nie ma gdzie wejsc.
-    return dict(game_name=_raw_str(p, "GNAM", LOCAL_PERSONA), game_settings=_raw_int(p, "GSET", 0),
+    return dict(game_name=_raw_str(p, "GNAM", DEFAULT_GAME_NAME), game_settings=_raw_int(p, "GSET", 0),
                 network_topology=_raw_int(p, "NTOP", 0), presence_mode=_raw_int(p, "PRES", 1),
                 voip=_raw_int(p, "VOIP", 0), version_string=_raw_str(p, "VSTR", ""),
                 max_players=_raw_int(p, "PMAX", 0) or sum(cap) or 6,
@@ -1068,7 +1079,7 @@ def _mm_game_params(req: dict) -> dict:
         rf = {t.strip(): v for t, _w, v in rule}
         if rf.get("NAME") == "gameMembershipRule" and rf.get("VALU"):
             attrs.setdefault("gameMembershipRequirements", str(rf["VALU"][0]))
-    return dict(game_name=str(req.get("GNAM", LOCAL_PERSONA)), game_settings=int(req.get("GSET", 0)),
+    return dict(game_name=str(req.get("GNAM", DEFAULT_GAME_NAME)), game_settings=int(req.get("GSET", 0)),
                 network_topology=int(req.get("NTOP", 0)), presence_mode=int(req.get("PRES", 1)),
                 voip=int(req.get("VOIP", 0)), version_string=str(req.get("GVER", "")),
                 max_players=pmax, slot_capacities=[pmax, 0, 0, 0],
@@ -1081,6 +1092,77 @@ def _game_setup(lb, g, setup_context) -> bytes:
     host_addr = next((p["addr"] for p in roster if p["uid"] == g.host_uid), lobby.DEFAULT_ADDR)
     return blaze.build_notify_game_setup(g.gid, g.host_uid, roster, host_addr=host_addr,
                                          game_state=g.state, setup_context=setup_context, **g.params)
+
+
+def _resolve_matchmaking(lb, args, sess, msid, req) -> list:
+    """Decyzja matchmakingu wraz z notyfikacjami, jako lista (sesja, ramka).
+
+    Najpierw szukamy publicznej gry innego gracza (SUCCESS_JOINED_EXISTING_GAME), a gdy jej nie ma -
+    nowa gra z graczem jako hostem (SUCCESS_CREATED_GAME). --mm-fail: NotifyMatchmakingFailed.
+
+    Do run-38 decyzja zapadala synchronicznie, w chwili zadania - i to ja wywracalo. Gdy gracz
+    wychodzi z garazu do swiata, klient wysyla startMatchmaking, a removePlayer dla starej gry
+    dopiero KLATKE pozniej (log-38: seq=95 i seq=96). Gracz byl wiec nadal czlonkiem tamtej gry,
+    find_public_game pomijalo ja przez `sess.uid not in g.players` i serwer tworzyl nowa zamiast
+    wpuscic go z powrotem. Prawdziwy Blaze oddaje wynik notyfikacja po DUR z zadania, wiec widzi
+    juz wykonane wyjscie - stad odroczenie (--mm-delay)."""
+    if getattr(args, "mm_fail", False):
+        print(f"  [matchmaking] session {msid} -> NotifyMatchmakingFailed SESSION_TIMED_OUT (--mm-fail)")
+        return [(sess, blaze.build_notify_matchmaking_failed(
+            msid, sess.uid, blaze.MATCHMAKING_RESULT["SESSION_TIMED_OUT"]))]
+    crit = {t.strip(): v for t, _w, v in (req.get("CRIT") or [])}
+    agam = {t.strip(): v for t, _w, v in (crit.get("AGAM") or [])}
+    g = lb.find_public_game(sess, {int(x) for x in (agam.get("GIDL") or [])})
+    if g is None:
+        g = lb.create_game(sess, _mm_game_params(req), getattr(args, "gm_player_state", 4))
+        print(f"  [matchmaking] session {msid}, MODE={req.get('MODE')} DUR={req.get('DUR')} ms -> "
+              f"new game {g.gid:#x} (SUCCESS_CREATED_GAME)")
+        return [(sess, _game_setup(lb, g, (msid, blaze.MATCHMAKING_RESULT["SUCCESS_CREATED_GAME"],
+                                           sess.uid)))]
+    lb.join(sess, g)
+    print(f"  [matchmaking] session {msid}: {sess!r} JOINS game {g.gid:#x} hosted by "
+          f"{lb.persona_of(g.host_uid)} (players: {len(g.players)})")
+    # Dolaczajacy musi znac pozostalych graczy (UserAdded z ich adresami), zanim dostanie gre
+    # z rosterem; gracze juz w grze dostaja UserAdded dolaczajacego i NotifyPlayerJoining.
+    others = lb.members(g, exclude=sess.uid)
+    out = [(sess, blaze.build_useradded_notify(o.uid, o.persona, component=args.notify_comp,
+                                               command=2, addr=o.addr)) for o in others]
+    out.append((sess, _game_setup(
+        lb, g, (msid, blaze.MATCHMAKING_RESULT["SUCCESS_JOINED_EXISTING_GAME"], sess.uid))))
+    joiner = next(p for p in lb.roster(g) if p["uid"] == sess.uid)
+    for o in others:
+        out.append((o, blaze.build_useradded_notify(sess.uid, sess.persona,
+                                                    component=args.notify_comp,
+                                                    command=2, addr=sess.addr)))
+        out.append((o, blaze.build_notify_player_joining(g.gid, joiner)))
+    return out
+
+
+def _cancel_matchmaking(sess) -> None:
+    """Ubija odlozona decyzje, jesli jakas czeka (cancelMatchmaking, kolejne szukanie, rozlaczenie)."""
+    t = sess.mm_timer
+    if t is not None:
+        t.cancel()
+        sess.mm_timer = None
+
+
+def _arm_matchmaking(lb, args, sess, msid, req, delay_ms: int) -> None:
+    """Uzbraja timer decyzji matchmakingu. Wysylka z watku-timera jest bezpieczna: Session.notify ma
+    wlasna blokade i sekwencje, a _deliver przelyka OSError z zamknietego polaczenia."""
+    _cancel_matchmaking(sess)
+
+    def fire():
+        if not sess.alive:
+            print(f"  [matchmaking] session {msid}: connection closed, not sending the decision")
+            return
+        try:
+            _deliver(sess, _resolve_matchmaking(lb, args, sess, msid, req))
+        except Exception as e:      # watek-timer: nieobsluzony wyjatek zginalby po cichu
+            print(f"  [matchmaking] session {msid}: decision failed: {e!r}")
+
+    sess.mm_timer = threading.Timer(delay_ms / 1000.0, fire)
+    sess.mm_timer.daemon = True
+    sess.mm_timer.start()
 
 
 def _raw_ip_pair(payload: bytes) -> tuple[int, int, int, int, int]:
@@ -1202,36 +1284,16 @@ def _after_reply(fr, args, sess):
         me(blaze.build_stats_async_notification(
             int(req.get("VID", 0) or 0), str(req.get("NAME", "")),
             [int(e) for e in eids if isinstance(e, int)]))
-    if fr.component == 4 and fr.command in (1, 13, 25) and sess.pending:
-        # createGame / startMatchmaking / resetDedicatedServer: decyzje (utworzona / dolaczona /
-        # porazka) podjal dispatch.
-        kind, msid, g = sess.pending
+    if fr.component == 4 and fr.command in (1, 25) and sess.pending:
+        # createGame / resetDedicatedServer: gre utworzyl dispatch. Matchmaking (cmd 13) tu nie
+        # trafia - jego decyzja idzie przez _resolve_matchmaking (od razu do outbox przy
+        # --mm-delay 0, inaczej z watku-timera).
+        kind, _msid, g = sess.pending
         sess.pending = None
-        if kind == "mm_failed":
-            me(blaze.build_notify_matchmaking_failed(msid, sess.uid,
-                                                     blaze.MATCHMAKING_RESULT["SESSION_TIMED_OUT"]))
-        elif kind == "mm_joined":
-            # Dolaczajacy musi znac pozostalych graczy (UserAdded z ich adresami), zanim dostanie
-            # gre z rosterem; gracze juz w grze dostaja UserAdded dolaczajacego i NotifyPlayerJoining.
-            others = lb.members(g, exclude=sess.uid)
-            for o in others:
-                me(blaze.build_useradded_notify(o.uid, o.persona, component=args.notify_comp,
-                                                command=2, addr=o.addr))
-            me(_game_setup(lb, g, (msid, blaze.MATCHMAKING_RESULT["SUCCESS_JOINED_EXISTING_GAME"],
-                                   sess.uid)))
-            joiner = next(p for p in lb.roster(g) if p["uid"] == sess.uid)
-            for o in others:
-                out.append((o, blaze.build_useradded_notify(sess.uid, sess.persona,
-                                                            component=args.notify_comp,
-                                                            command=2, addr=sess.addr)))
-                out.append((o, blaze.build_notify_player_joining(g.gid, joiner)))
-        elif kind == "created_game":                   # DatalessSetupContext
+        if kind == "created_game":                     # DatalessSetupContext
             me(_game_setup(lb, g, None))
         elif kind == "reset_dedicated":                # ResetDedicatedServerSetupContext
             me(_game_setup(lb, g, "reset_dedicated"))
-        else:                                          # MatchmakingSetupContext
-            me(_game_setup(lb, g, (msid, blaze.MATCHMAKING_RESULT["SUCCESS_CREATED_GAME"],
-                                   sess.uid)))
     if fr.component == 4 and fr.command == 3:           # GameManager.advanceGameState
         req = _req_fields(fr)
         gid = int(req.get("GID", 0) or 0)
@@ -1248,7 +1310,7 @@ def _after_reply(fr, args, sess):
         src, tgt = _objid_uid(req.get("SCG")), _objid_uid(req.get("TCG"))
         stat = int(req.get("STAT", 0) or 0)
         if src != tgt:
-            print(f"  [mesh] gra {gid:#x}: {lb.persona_of(src)} -> {lb.persona_of(tgt)} STAT={stat}")
+            print(f"  [mesh] game {gid:#x}: {lb.persona_of(src)} -> {lb.persona_of(tgt)} STAT={stat}")
         out += lb.mesh(gid, src, tgt, stat)
     if fr.component == 4 and fr.command in (106, 107):  # addAdminPlayer, removeAdminPlayer
         # Zmiane listy adminow Blaze rozglasza wszystkim graczom gry. log-30: host dodal goscia jako
@@ -1260,8 +1322,8 @@ def _after_reply(fr, args, sess):
             added = fr.command == 106
             op = blaze.GM_ADMIN_OPERATION["GM_ADMIN_ADDED" if added else "GM_ADMIN_REMOVED"]
             note = blaze.build_notify_admin_list_change(g.gid, pid, op, sess.uid)
-            print(f"  [gra] {lb.persona_of(sess.uid)} {'dodaje' if added else 'zdejmuje'} admina "
-                  f"{lb.persona_of(pid)} w grze {g.gid:#x}")
+            print(f"  [game] {lb.persona_of(sess.uid)} {'adds' if added else 'removes'} admin "
+                  f"{lb.persona_of(pid)} in game {g.gid:#x}")
             out += [(t, note) for t in lb.members(g)]
     if fr.component == 4 and fr.command in (2, 11, 22):  # destroyGame, removePlayer, leaveGameByGroup
         req = _req_fields(fr)
@@ -1273,8 +1335,8 @@ def _after_reply(fr, args, sess):
                 uid = int(req.get("PID", 0) or sess.uid)
                 reason = int(req.get("REAS", blaze.PLAYER_REMOVED_REASON["PLAYER_LEFT"]))
             notes = lb.remove_player(g, uid, reason)
-            print(f"  [gra] {lb.persona_of(uid)} wychodzi z gry {g.gid:#x} (REAS {reason}), "
-                  f"notyfikacji dla innych: {len(notes)}")
+            print(f"  [game] {lb.persona_of(uid)} leaves game {g.gid:#x} (REAS {reason}), "
+                  f"notifications for others: {len(notes)}")
             out += notes
     return out
 
@@ -1291,141 +1353,161 @@ def main() -> int:
     ap.add_argument("-p", "--port", type=int, default=42127)
     pki = Path(__file__).parent / "pki"
     ap.add_argument("--cert", type=Path, default=pki / "server.der",
-                    help="cert DER (patchowany OID); domyslnie pki/server.der")
+                    help="DER certificate (patched OID); defaults to pki/server.der")
     ap.add_argument("--key", type=Path, default=pki / "server.key")
     ap.add_argument("-o", "--out", type=Path, default=Path("docs/recon/capture"))
     ap.add_argument("--redirect-ip", default="127.0.0.1",
-                    help="adres, ktory oddajemy w odpowiedzi getServerInstance "
-                         "(domyslnie my sami, by klient wrocil po kolejny pakiet)")
+                    help="address handed back in the getServerInstance reply (by default "
+                         "ourselves, so the client comes back for the next packet)")
     ap.add_argument("--blaze-port", type=int, default=14219,
-                    help="port serwera Blaze zwracany w odpowiedzi getServerInstance "
-                         "(INNY niz --port redirectora); terminator nasluchuje takze na nim")
+                    help="Blaze server port returned by getServerInstance (DIFFERENT from the "
+                         "redirector's --port); the terminator listens on it as well")
     ap.add_argument("--blaze-host", default="gosredirector.ea.com",
-                    help="nazwa hosta w polu HOST odpowiedzi (musi byc w pliku hosts "
-                         "-> 127.0.0.1 ORAZ pasowac do CN certu). Gra laczy sie z nia.")
+                    help="hostname in the reply's HOST field. Must be in the hosts file and "
+                         "match the certificate CN - the game connects to it.")
     ap.add_argument("--no-bytevault", action="store_true",
-                    help="NIE dopisuj bytevaultHostname/Port/Secure do CONF w preAuth "
-                         "(gra wtedy celuje w domyslny, martwy host EA)")
+                    help="do NOT add bytevaultHostname/Port/Secure to CONF in preAuth (the game "
+                         "then aims at EA's default, dead host)")
     ap.add_argument("--bytevault-host", default=None,
-                    help="bytevaultHostname w CONF (domyslnie = --blaze-host; musi "
-                         "pasowac do CN certu, bo bytevaultSecure=true)")
+                    help="bytevaultHostname in CONF (defaults to --blaze-host; must match the "
+                         "certificate CN, because bytevaultSecure=true)")
     ap.add_argument("--bytevault-port", type=int, default=0,
-                    help="bytevaultPort w CONF (domyslnie = --blaze-port, czyli "
-                         "polaczenie ByteVault trafia do naszego Blaze)")
+                    help="bytevaultPort in CONF (defaults to --blaze-port, so the ByteVault "
+                         "connection lands on our Blaze)")
     ap.add_argument("--addr-index", type=int, default=0,
-                    help="indeks aktywnego skladnika unii ADDR (0=IpAddress dla "
-                         "ServerAddressInfo; do prob, jesli klient nie laczy sie)")
+                    help="index of the active ADDR union member (0=IpAddress for "
+                         "ServerAddressInfo; for experiments when the client will not connect)")
     ap.add_argument("--addr-only", action="store_true",
-                    help="odpowiedz tylko z polem ADDR (izolacja unii, diagnostyka)")
+                    help="reply with the ADDR field only (union isolation, diagnostics)")
     ap.add_argument("--notify-comp", type=lambda x: int(x, 0), default=0x7802,
-                    help="component notyfikacji UserSessions (POTWIERDZONE 0x7802)")
+                    help="component of the UserSessions notification (CONFIRMED 0x7802)")
     ap.add_argument("--notify-cmd", type=lambda x: int(x, 0), default=5,
-                    help="command notyfikacji (5=UserSessionExtendedDataUpdate)")
+                    help="notification command (5=UserSessionExtendedDataUpdate)")
     ap.add_argument("--notify-probe", action="store_true",
-                    help="po loginie wyslij notyfikacje dla command 1..10 (diagnostyka: "
-                         "Frida pokaze, ktory uruchamia dekodowanie)")
+                    help="after login, send notifications for commands 1..10 (diagnostics: "
+                         "Frida shows which one triggers decoding)")
     ap.add_argument("--pad-preauth", type=int, default=0, metavar="N",
-                    help="dopchnij odpowiedz preAuth do ~N bajtow zwyklym stringiem "
-                         "(bez map) - test, czy klienta wywraca ROZMIAR czy TRESC")
+                    help="pad the preAuth reply to roughly N bytes with a plain string (no "
+                         "maps) - tests whether SIZE or CONTENT breaks the client")
     ap.add_argument("--client-config", metavar="K=V,K=V",
-                    help="wlasny zestaw kluczy client configu zamiast domyslnego "
-                         "(do bisekcji: sprawdzanie klucz po kluczu, ktory wywraca gre)")
+                    help="custom set of client config keys instead of the default (for "
+                         "bisection: checking key by key which one breaks the game)")
     ap.add_argument("--no-client-config", action="store_true",
-                    help="odsylaj PUSTE CONF w preAuth (stare zachowanie; klient "
-                         "prosi o config przez FCCR{CFID='BlazeSDK'})")
+                    help="send an EMPTY CONF in preAuth (old behaviour; the client then asks "
+                         "for the config via FCCR{CFID='BlazeSDK'})")
     ap.add_argument("--no-qoss", action="store_true",
-                    help="odsylaj PUSTE QOSS w preAuth (stare zachowanie)")
+                    help="send an EMPTY QOSS in preAuth (old behaviour)")
     ap.add_argument("--qos-port", type=int, default=17502,
-                    help="port ping-site'u QoS podawany w QOSS i nasluchiwany po UDP")
+                    help="QoS ping-site port advertised in QOSS and listened on over UDP")
     ap.add_argument("--no-qos-responder", action="store_true",
-                    help="nie uruchamiaj respondera UDP QoS")
+                    help="do not start the QoS UDP responder")
     ap.add_argument("--qos-numprobes", type=int, default=10,
-                    help="<numprobes> w odpowiedzi /qos/qos (ile sond UDP wysle "
-                         "klient; dla qtyp=2 gra wymaga >= 2)")
+                    help="<numprobes> in the /qos/qos reply (how many UDP probes the client "
+                         "sends; qtyp=2 requires >= 2)")
     ap.add_argument("--qos-probesize", type=int, default=64,
-                    help="<probesize> w odpowiedzi /qos/qos = dlugosc pakietu "
-                         "sondy UDP (musi byc != 0)")
+                    help="<probesize> in the /qos/qos reply = UDP probe packet length "
+                         "(must be non-zero)")
     ap.add_argument("--qos-interfaces", type=int, default=2,
-                    help="ile endpointow QoS wystawiamy (porty qos-port, +1, ...). "
-                         "Test NAT (/qos/firewall?nint=N) porownuje port zewnetrzny "
-                         "widziany z roznych endpointow, wiec potrzebuje >= 2")
+                    help="how many QoS endpoints we expose (ports qos-port, +1, ...). The NAT "
+                         "test (/qos/firewall?nint=N) compares the external port seen from "
+                         "different endpoints, so it needs >= 2")
     ap.add_argument("--qos-requestid", type=int, default=1234,
-                    help="<requestid> w odpowiedzi /qos/qos. MUSI byc >= 2 - to "
-                         "samo pole wybiera sciezke odbioru sondy, a sciezka "
-                         "pasma dziala tylko dla >= 2")
+                    help="<requestid> in the /qos/qos reply. MUST be >= 2 - the same field "
+                         "selects the probe receive path, and the bandwidth path only works "
+                         "for >= 2")
     ap.add_argument("--qos-upstream-bps", type=int, default=100_000_000,
-                    help="pasmo wysylki klienta raportowane w odpowiedzi na "
-                         "pierwsza sonde pasma (bity/s, pole +0x14)")
+                    help="client upstream bandwidth reported in the reply to the first "
+                         "bandwidth probe (bits/s, field +0x14)")
     ap.add_argument("--qos-firetype", type=int, default=1,
-                    help="<firetype> w odpowiedzi /qos/firetype (typ NAT). 5 = "
-                         "sentinel 'nieznany' i gra nie wola callbacka")
+                    help="<firetype> in the /qos/firetype reply (NAT type). 5 = the 'unknown' "
+                         "sentinel, and the game never calls the callback")
     ap.add_argument("--postauth-minimal", action="store_true",
-                    help="w odpowiedzi postAuth wyzeruj PORT i oproznij ADRS w "
-                         "PSS/TELE/TICK (struktury zostaja). A/B do pytania, czy "
-                         "klient rozlacza sie, bo probuje podniesc podsystemy pod "
-                         "adresami, pod ktorymi nikt nie slucha")
+                    help="in the postAuth reply, zero PORT and empty ADRS in PSS/TELE/TICK "
+                         "(the structures stay). A/B for the question of whether the client "
+                         "disconnects because it tries to reach subsystems at addresses where "
+                         "nobody is listening")
     ap.add_argument("--bytevault-format", choices=("json", "heat"), default="json",
-                    help="format odpowiedzi ByteVault (REST po HTTPS na porcie Blaze): json "
-                         "(klucze = nazwy pol bez 'm', niepotwierdzone) albo heat (ten sam TDF binarnie)")
+                    help="ByteVault reply format (REST over HTTPS on the Blaze port): json "
+                         "(keys = field names without the 'm', unconfirmed) or heat (the same "
+                         "TDF in binary)")
     ap.add_argument("--public-ip", default=None, metavar="IP",
-                    help="adres tego komputera widziany z innego komputera (multiplayer). Domyslnie "
-                         "wykryty adres LAN. Graczowi lokalnemu QoS podaje go jako adres zewnetrzny, "
-                         "zeby drugi gracz mogl sie z nim polaczyc; 127.0.0.1 = stare zachowanie")
-    ap.add_argument("--player", action="append", default=[], metavar="IP=NICK",
-                    help="nazwa gracza dla adresu IP (mozna powtarzac); bez tego serwer uczy sie "
-                         "nicku z gry i zapisuje go w players.json")
+                    help="this machine's address as seen from another machine (multiplayer). "
+                         "Defaults to the detected LAN address. QoS reports it to the local "
+                         "player as the external address so others can connect; 127.0.0.1 = "
+                         "old behaviour")
+    ap.add_argument("--local-id", type=int, default=0, metavar="UID",
+                    help="uid of the player at the server; by default assigned once at first "
+                         "login and stored in players.json. Pass it to adopt progress saved "
+                         "earlier under a specific id (stats/<uid>.json)")
+    ap.add_argument("--local-persona", default="", metavar="NAME",
+                    help="name of the player at the server; stored in players.json, so it is "
+                         "only needed once")
+    ap.add_argument("--player", action="append", default=[], metavar="IP=NAME",
+                    help="player name for an IP address (repeatable). The server cannot learn "
+                         "EA names by itself - the login carries only an opaque Origin token")
     ap.add_argument("--mm-fail", action="store_true",
-                    help="GameManager.startMatchmaking: zamiast tworzyc gre publiczna wyslij "
-                         "NotifyMatchmakingFailed SESSION_TIMED_OUT (porownanie A/B)")
+                    help="GameManager.startMatchmaking: send NotifyMatchmakingFailed "
+                         "SESSION_TIMED_OUT instead of creating a public game (A/B)")
+    ap.add_argument("--no-player-state-notify", dest="player_state_notify", action="store_false",
+                    help="do NOT send NotifyGamePlayerStateChange (4/116) when a player moves "
+                         "to ACTIVE_CONNECTED. Up to and including run-39 only notification 30 "
+                         "was sent and the joining player lost the game ~7 s after the world "
+                         "finished loading (A/B)")
+    ap.add_argument("--mm-delay", type=int, default=0, metavar="MS",
+                    help="delay of the matchmaking decision (NotifyGameSetup) in ms; the client "
+                         "gets its MSID immediately. Clamped to DUR from the request. 0 "
+                         "(default) = synchronous decision. Run-39 showed the client only sends "
+                         "removePlayer AFTER the matchmaking result, so waiting has nothing to "
+                         "wait for; kept for a client that leaves its game before searching (A/B)")
     ap.add_argument("--no-speed-walls", action="store_true",
-                    help="na NFS.getInGameSpeedWalls (2050/20) odpowiadaj pustym potwierdzeniem "
-                         "zamiast zapisanych wynikow (porownanie A/B)")
+                    help="answer NFS.getInGameSpeedWalls (2050/20) with an empty acknowledgement "
+                         "instead of saved results (A/B)")
     ap.add_argument("--entitlements", choices=("none", "online"), default="none",
-                    help="Authentication.listUserEntitlements2 (1/29): none = pusta lista (dotychczas), "
-                         "online = wpis typu ONLINE_ACCESS dla grupy NFS14PC (A/B: czy dolaczajacy "
-                         "przestaje wychodzic z cudzej gry)")
+                    help="Authentication.listUserEntitlements2 (1/29): none = empty list, "
+                         "online = an ONLINE_ACCESS entry for the NFS14PC group")
     ap.add_argument("--no-store", action="store_true",
-                    help="NIE zapisuj postepu z raportow GameReporting (28) na dysk")
+                    help="do NOT save progress from GameReporting (28) reports to disk")
     ap.add_argument("--data-dir", default=None,
-                    help="katalog zapisu postepu (domyslnie ~\\TurboRivals\\data)")
+                    help="progress directory (defaults to ~/TurboRivals/data)")
     ap.add_argument("--gm-player-state", type=int, default=4,
-                    help="stan gracza-hosta w NotifyGameSetup: 4 = ACTIVE_CONNECTED, "
-                         "2 = ACTIVE_CONNECTING (enum PlayerState z binarki)")
+                    help="host player state in NotifyGameSetup: 4 = ACTIVE_CONNECTED, "
+                         "2 = ACTIVE_CONNECTING (PlayerState enum from the binary)")
     ap.add_argument("--no-ack-unknown", dest="ack_unknown", action="store_false",
-                    help="NIE odpowiadaj pustym potwierdzeniem na RPC bez handlera (domyslnie "
-                         "odpowiadamy err=0 z pustym payloadem, zeby zapytanie gry sie konczylo)")
+                    help="do NOT answer RPCs without a handler with an empty acknowledgement "
+                         "(by default we reply err=0 with an empty payload so the game's "
+                         "request completes)")
     ap.add_argument("--legacy-user-added", action="store_true",
-                    help="w notyfikacji UserAdded wysylaj USER ze starymi tagami "
-                         "UserSessionLoginInfo zamiast UserIdentification (gra dostaje "
-                         "usera z ID=0) - do A/B")
+                    help="in the UserAdded notification send USER with the old "
+                         "UserSessionLoginInfo tags instead of UserIdentification (the game "
+                         "then gets a user with ID=0) - for A/B")
     ap.add_argument("--empty-user-auth", action="store_true",
-                    help="wysylaj notyfikacje UserAuthenticated (0x7802/8) z PUSTYM "
-                         "payloadem (stare zachowanie; gra dostaje BUID=0) - do A/B")
+                    help="send the UserAuthenticated notification (0x7802/8) with an EMPTY "
+                         "payload (old behaviour; the game gets BUID=0) - for A/B")
     ap.add_argument("--plain-session-data", action="store_true",
-                    help="wysylaj PUSTE UserSessionExtendedData w notyfikacjach po "
-                         "loginie (stare zachowanie - do porownania A/B)")
+                    help="send EMPTY UserSessionExtendedData in the notifications after login "
+                         "(old behaviour - for A/B)")
     ap.add_argument("--dump-tdf", action="store_true",
-                    help="wypisz drzewo TDF kazdego zadania klienta (widac, co gra "
-                         "przysyla w login/postAuth)")
+                    help="print the TDF tree of every client request (shows what the game "
+                         "sends in login/postAuth)")
     ap.add_argument("--idle-timeout", type=int, default=300,
-                    help="ile sekund ciszy zanim wypiszemy 'czekam' (polaczenia NIE "
-                         "zamykamy - gra trzyma sesje Blaze otwarta)")
-    ap.add_argument("--keepalive", type=float, default=3.0, metavar="SEK",
-                    help="po loginie wysylaj serwerowy Fire2 PING co N sekund ciszy, "
-                         "by gra nie zerwala polaczenia Blaze timeoutem bezczynnosci "
-                         "(blad 0x800e0000 -> teardown -> crash). 0 = wylacz")
+                    help="seconds of silence before we print a waiting notice (the connection "
+                         "is NOT closed - the game keeps its Blaze session open)")
+    ap.add_argument("--keepalive", type=float, default=3.0, metavar="SEC",
+                    help="after login, send a server-side Fire2 PING after every N seconds of "
+                         "silence so the game does not drop the Blaze connection on its idle "
+                         "timeout (error 0x800e0000 -> teardown -> crash). 0 = off")
     ap.add_argument("--reply-msgtype", type=lambda x: int(x, 0), default=0x10,
-                    help="bajt msgType w naglowku Fire2 odpowiedzi. 0x10 = REPLY "
-                         "(potwierdzone: gra dekoduje ServerInstanceInfo)")
+                    help="msgType byte in the Fire2 reply header. 0x10 = REPLY (confirmed: the "
+                         "game decodes ServerInstanceInfo)")
     args = ap.parse_args()
 
     if not args.cert.exists() or not args.key.exists():
-        sys.stderr.write("brak pki/ - uruchom najpierw make_stub_cert.py\n")
+        sys.stderr.write("no pki/ - run make_stub_cert.py first\n")
         return 1
 
     cert_der = args.cert.read_bytes()
     rsa = load_rsa_priv(args.key)
-    print(f"klucz RSA zaladowany ({rsa[2] * 8} bit), cert {len(cert_der)} B")
+    print(f"RSA key loaded ({rsa[2] * 8} bit), cert {len(cert_der)} B")
 
     # Nasluch na porcie redirectora ORAZ na porcie Blaze - rozdzielenie pozwala
     # zobaczyc, czy gra faktycznie laczy sie po odpowiedzi getServerInstance.
@@ -1440,7 +1522,7 @@ def main() -> int:
         _bind_exclusive(s, port, "redirector/Blaze")
         s.listen(16)
         role = "redirector" if port == args.port else "BLAZE"
-        print(f"nasluch 0.0.0.0:{port} ({role})")
+        print(f"listening on 0.0.0.0:{port} ({role})")
         while True:
             conn, addr = s.accept()
             threading.Thread(target=handle,
@@ -1458,7 +1540,7 @@ def main() -> int:
         """
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         _bind_exclusive(s, port, "sondy QoS UDP")
-        print(f"nasluch UDP 0.0.0.0:{port} (QoS sondy)")
+        print(f"listening on UDP 0.0.0.0:{port} (QoS probes)")
         n = 0
         while True:
             try:
@@ -1467,14 +1549,14 @@ def main() -> int:
                 return
             n += 1
             if n <= 8:                      # pierwsze pakiety pokazujemy w calosci
-                print(f"\n  [QoS UDP #{n}] {len(data)} B od {peer[0]}:{peer[1]}")
+                print(f"\n  [QoS UDP #{n}] {len(data)} B from {peer[0]}:{peer[1]}")
                 print(hexdump(data, 64))
             elif n % 25 == 0:
-                print(f"  [QoS UDP :{port} #{n}] {len(data)} B od {peer[0]}:{peer[1]}")
+                print(f"  [QoS UDP :{port} #{n}] {len(data)} B from {peer[0]}:{peer[1]}")
             reply = _qos_probe_reply(data, peer, args)
             if n <= 8:
                 kind = "latencja" if len(data) == 0x14 else "pasmo"
-                print(f"    -> odpowiadam {len(reply)} B (sonda: {kind})")
+                print(f"    -> replying {len(reply)} B (probe: {kind})")
                 print(hexdump(reply, 64))
             s.sendto(reply, peer)
 
@@ -1490,7 +1572,7 @@ def main() -> int:
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         _bind_exclusive(s, port, "QoS HTTP")
         s.listen(8)
-        print(f"nasluch TCP 0.0.0.0:{port} (QoS HTTP)")
+        print(f"listening on TCP 0.0.0.0:{port} (QoS HTTP)")
         while True:
             try:
                 conn, peer = s.accept()
@@ -1499,13 +1581,13 @@ def main() -> int:
             try:
                 conn.settimeout(5)
                 req = conn.recv(4096)
-                print(f"\n  [QoS HTTP] od {peer[0]}:{peer[1]}, {len(req)} B")
+                print(f"\n  [QoS HTTP] from {peer[0]}:{peer[1]}, {len(req)} B")
                 try:
                     print("    " + req.decode("latin1").replace("\r\n", "\n    ").strip())
                 except Exception:                     # noqa: BLE001
                     print(hexdump(req, 128))
                 body = _qos_body(req, args, peer)
-                print(f"    -> odpowiadam: {body.decode('latin1')}")
+                print(f"    -> replying: {body.decode('latin1')}")
                 conn.sendall(b"HTTP/1.1 200 OK\r\n"
                              b"Content-Type: text/xml\r\n"
                              b"Connection: close\r\n"
@@ -1526,19 +1608,19 @@ def main() -> int:
             threading.Thread(target=serve_qos, args=(args.qos_port + i,),
                              daemon=True).start()
         threading.Thread(target=serve_qos_http, args=(args.qos_port,), daemon=True).start()
-    print(f"oddajemy grze adres Blaze: {args.redirect_ip}:{args.blaze_port}. "
-          f"Ctrl+C konczy.")
-    print("zapis postepu: " + ("WYLACZONY (--no-store)" if args.no_store
+    print(f"handing the game this Blaze address: {args.redirect_ip}:{args.blaze_port}. "
+          f"Ctrl+C to stop.")
+    print("progress saving: " + ("OFF (--no-store)" if args.no_store
                                else str(args.data_dir or player_store.DATA_DIR)))
     lan = _public_ip(args)
-    print(f"multiplayer: adres serwera w sieci {lan}. Drugi komputer: w pliku hosts wpis "
-          f"'{lan} {args.blaze_host}'. Firewall Windows: Python TCP {args.port}, {args.blaze_port}, "
-          f"{args.qos_port} i UDP {args.qos_port}-{args.qos_port + args.qos_interfaces - 1}; "
-          f"gra UDP 3659.\n")
+    print(f"multiplayer: server address on this network is {lan}. On every other machine add a hosts "
+          f"entry '{lan} {args.blaze_host}'. Windows firewall: Python TCP {args.port}, {args.blaze_port}, "
+          f"{args.qos_port} and UDP {args.qos_port}-{args.qos_port + args.qos_interfaces - 1}; "
+          f"game UDP 3659.\n")
     try:
         serve(ports[0])
     except KeyboardInterrupt:
-        print("\nkoniec")
+        print("\nstopped")
     return 0
 
 
