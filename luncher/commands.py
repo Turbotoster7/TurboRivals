@@ -1,0 +1,69 @@
+import subprocess
+import os
+
+# session menager just autoamcticly turns on commands. 
+# =======================================================================================
+#                               CLIENT COMMANDS
+#========================================================================================
+HOSTS_PATH = os.path.join(os.environ['windir'], 'System32', 'drivers', 'etc', 'hosts')
+ENTRY = "26.230.135.6 gosredirector.ea.com"
+
+def add_entry(path, entry):
+    with open(path, 'r') as file_handle:
+        if(entry in file_handle.read()):
+            return
+    with open(path, 'a') as  file_handle :
+        file_handle.write(f"\n{entry}\n")
+    clearDNS()
+
+def remove_entry(path, entry):
+    # Najpierw wczytujemy linie do zmiennej
+    with open(path, 'r') as file_handle:
+        lines = file_handle.readlines()
+
+    with open(path, 'w') as file_handle:
+        for line in lines:
+            if entry not in line:
+                file_handle.write(line)
+    clearDNS()
+
+
+def clearDNS():
+    result = subprocess.run(["ipconfig", "/flushdns"], capture_output=True)
+    if result.returncode == 0:
+        return True
+    return False
+
+# =======================================================================================
+#                               HOST COMMANDS
+#========================================================================================
+
+# PS C:\Users\bar-t\OneDrive\Dokumenty\TurboRivals> python -u proto-lab\tls_terminator.py --public-ip 26.230.135.6 `
+# >>   --entitlements online `
+# >>   --local-persona "Bartek" `
+# >>   --player 26.45.138.207=filip | Tee-Object log-66.txt
+
+PATH = "../proto-lab/"
+COMMAND = ["python", "-u", r"proto-lab\tls_terminator.py", "--public-ip", "26.230.135.6", "--entitlements", "online"]
+
+def buildCommand(entry, localName, listPlayers):
+    """listPlayers must be a tuple of (name, ip)"""
+    if len(listPlayers) > 5:
+        return "too many players!"
+    command = COMMAND.copy()
+    command.extend(["--local-persona", localName])
+    for player in listPlayers:
+        ip, nick = player
+        command.extend(["--player", f"{ip}={nick}"])
+    return command
+
+def runCommand(command):
+    """returns kurde krotka stdout and stderr runs main comand of tls terminator"""
+    proces = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    stdout, stderr = proces.communicate()
+    return (stdout, stderr)
+
+
+
+
+
