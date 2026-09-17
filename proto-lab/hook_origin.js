@@ -964,57 +964,122 @@ if (!base) {
   hookConnect("connect");
   hookConnect("WSAConnect");
 
+  // >>> P2P-BEGIN (blok testowany osobno: scratchpad/test_p2p_hook.py)
   // --- UDP: test QoS Blaze idzie po UDP, nie TCP. Jesli gra po preAuth sonduje
   //     ping-site'y, zobaczymy tu dokad i ile razy. CISZA tutaj = hipoteza QoS
   //     upada i blokada siedzi w danych sesji (UserSessionExtendedData).
   //     sendto(s, buf, len, flags, to, tolen) - adres celu w args[4].
+  //
+  //     Test 61: gra WYSYLA przez sendto, ale ODBIERA przez WSARecvFrom - a zaczep byl tylko na
+  //     recvfrom, ktorego gra nie uzywa. Zadnego odebranego pakietu P2P nigdy nie widzielismy,
+  //     wiec nie dalo sie ustalic, czy po powrocie do zmigrowanej gry ruch gry w ogole plynie.
+  const udpTs = () => new Date().toISOString().substr(11, 12);
   const udpSeen = {};                       // adres -> licznik (nie zalewamy logu)
-  function hookSendto(name, addrArgIdx) {
+  function sockaddrIn(sa) {                 // -> [ip, port] albo null
+    if (sa.isNull() || sa.readU16() !== 2) return null;   // tylko AF_INET
+    const port = (sa.add(2).readU8() << 8) | sa.add(3).readU8();
+    const ip = sa.add(4).readU8() + "." + sa.add(5).readU8() + "." +
+               sa.add(6).readU8() + "." + sa.add(7).readU8();
+    return [ip, port];
+  }
+
+  // Ruch P2P gry: 3659 = tunel gry, 6000 = najpewniej VoIP. Liczniki na peera i podsumowanie co
+  // 2 s - pokaze, KIEDY ruch w ktoras strone ustaje. "cisza" wypisujemy raz, gdy peer zamilknie.
+  const P2P_PORTS = { 3659: true, 6000: true };
+  const p2p = {};                           // "ip:port" -> {sent, sentB, recv, recvB, quiet}
+  function p2pCount(ip, port, dir, bytes) {
+    if (!P2P_PORTS[port]) return;
+    const k = ip + ":" + port;
+    const e = p2p[k] || (p2p[k] = { sent: 0, sentB: 0, recv: 0, recvB: 0, quiet: false });
+    if (dir === "out") { e.sent++; e.sentB += bytes; } else { e.recv++; e.recvB += bytes; }
+  }
+  setInterval(() => {
+    for (const k in p2p) {
+      const e = p2p[k];
+      if (e.sent || e.recv) {
+        console.log("[p2p] (" + udpTs() + ") " + k + " wyslane=" + e.sent + " (" + e.sentB +
+                    " B) odebrane=" + e.recv + " (" + e.recvB + " B)");
+        e.quiet = false;
+      } else if (!e.quiet) {
+        console.log("[p2p] (" + udpTs() + ") " + k + " cisza w obie strony");
+        e.quiet = true;
+      }
+      e.sent = e.sentB = e.recv = e.recvB = 0;
+    }
+  }, 2000);
+
+  function logUdp(key, arrow, ip, port, n, head) {
+    udpSeen[key] = (udpSeen[key] || 0) + 1;
+    // pierwsze 3 pakiety na adres logujemy z trescia, potem co 50.
+    if (udpSeen[key] <= 3 || udpSeen[key] % 50 === 0)
+      console.log("[UDP " + key.split(" ")[0] + " #" + udpSeen[key] + "] " + arrow + " " + ip + ":" +
+                  port + "  " + n + " B  " + head + " (" + udpTs() + ")");
+  }
+
+  function hookSendto(name, addrArgIdx, wsaBufs) {
     const ex = findExport("ws2_32.dll", name) || findExport("wsock32.dll", name);
     if (!ex) { console.log("[!] nie znalazlem eksportu " + name); return; }
     Interceptor.attach(ex, {
       onEnter(args) {
         try {
-          const sa = args[addrArgIdx];
-          if (sa.isNull()) return;
-          if (sa.readU16() !== 2) return;   // tylko AF_INET
-          const port = (sa.add(2).readU8() << 8) | sa.add(3).readU8();
-          const ip = sa.add(4).readU8() + "." + sa.add(5).readU8() + "." +
-                     sa.add(6).readU8() + "." + sa.add(7).readU8();
-          const key = name + " " + ip + ":" + port;
-          udpSeen[key] = (udpSeen[key] || 0) + 1;
-          // pierwsze 3 pakiety na adres logujemy z trescia, potem co 50.
-          if (udpSeen[key] <= 3 || udpSeen[key] % 50 === 0) {
-            let head = "";
-            try { head = bin2hex(args[1].readByteArray(Math.min(args[2].toInt32(), 32))); } catch (e) {}
-            console.log("[UDP " + name + " #" + udpSeen[key] + "] -> " + ip + ":" + port +
-                        "  " + args[2].toInt32() + " B  " + head);
-          }
+          const addr = sockaddrIn(args[addrArgIdx]);
+          if (!addr) return;
+          // sendto: (s, buf, len, ...); WSASendTo: (s, WSABUF[], count, ...) - WSABUF {ULONG len; char* buf}
+          const buf = wsaBufs ? args[1].add(8).readPointer() : args[1];
+          let n = 0;
+          if (wsaBufs) { for (let i = 0; i < args[2].toInt32(); i++) n += args[1].add(16 * i).readU32(); }
+          else n = args[2].toInt32();
+          p2pCount(addr[0], addr[1], "out", n);
+          let head = "";
+          try { head = bin2hex(buf.readByteArray(Math.min(n, 32))); } catch (e) {}
+          logUdp(name + " " + addr[0] + ":" + addr[1], "->", addr[0], addr[1], n, head);
         } catch (e) {}
       }
     });
     console.log("[+] net " + name + " @ " + ex);
   }
-  hookSendto("sendto", 4);
-  hookSendto("WSASendTo", 6);              // (s, bufs, cnt, sent, flags, to, tolen, ...)
+  hookSendto("sendto", 4, false);
+  hookSendto("WSASendTo", 5, true);        // (s, bufs, cnt, sent, flags, to, tolen, ...)
 
-  // recvfrom: czy sonda QoS dostaje ODPOWIEDZ. Jesli gra wysyla, a nic nie wraca,
-  // to nasz serwer musi odbijac pakiety QoS (responder UDP).
-  const rfEx = findExport("ws2_32.dll", "recvfrom");
-  if (rfEx) {
-    Interceptor.attach(rfEx, {
-      onEnter(a) { this.buf = a[1]; },
+  // Odbior. recvfrom(s, buf, len, flags, from, fromlen) zwraca liczbe bajtow; WSARecvFrom(s, WSABUF[],
+  // count, lpRecvd, lpFlags, from, fromlen, lpOverlapped, ...) zwraca 0, a liczbe bajtow wpisuje pod
+  // lpRecvd. Operacje nakladane (WSA_IO_PENDING) pomijamy - dlugosci i nadawcy jeszcze nie ma.
+  function hookRecvfrom(name, wsa) {
+    const ex = findExport("ws2_32.dll", name);
+    if (!ex) { console.log("[!] nie znalazlem eksportu " + name); return; }
+    Interceptor.attach(ex, {
+      onEnter(a) {
+        this.buf = a[1];                    // recvfrom: bufor; WSARecvFrom: tablica WSABUF
+        this.nread = wsa ? a[3] : null;
+        this.from = wsa ? a[5] : a[4];
+      },
       onLeave(ret) {
-        const n = ret.toInt32();
-        if (n > 0) {
+        try {
+          let n;
+          if (wsa) {
+            if (ret.toInt32() !== 0 || this.nread.isNull()) return;
+            n = this.nread.readU32();
+          } else {
+            n = ret.toInt32();
+          }
+          if (n <= 0 || this.from.isNull()) return;
+          const addr = sockaddrIn(this.from);
+          if (!addr) return;
+          p2pCount(addr[0], addr[1], "in", n);
           let head = "";
-          try { head = bin2hex(this.buf.readByteArray(Math.min(n, 32))); } catch (e) {}
-          console.log("[UDP recvfrom] " + n + " B  " + head);
-        }
+          try {
+            const data = wsa ? this.buf.add(8).readPointer() : this.buf;
+            head = bin2hex(data.readByteArray(Math.min(n, 32)));
+          } catch (e) {}
+          logUdp(name + " " + addr[0] + ":" + addr[1], "<-", addr[0], addr[1], n, head);
+        } catch (e) {}
       }
     });
-    console.log("[+] net recvfrom @ " + rfEx);
+    console.log("[+] net " + name + " @ " + ex);
   }
+  hookRecvfrom("recvfrom", false);
+  hookRecvfrom("WSARecvFrom", true);
+  // <<< P2P-END
 
   // recv: czy gra ODCZYTUJE nasza odpowiedz? (zaszyfrowane, ale dlugosc/timing
   // powie, czy cokolwiek przyszlo po getServerInstance). Logujemy tylko zwroty >0.

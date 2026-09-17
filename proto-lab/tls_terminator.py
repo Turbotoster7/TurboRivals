@@ -487,6 +487,7 @@ def handle(conn: socket.socket, addr, args, out_dir: Path,
         if sess is not None and sess.uid:
             # Rozlaczenie = wyjscie ze wszystkich gier; pozostali gracze dostaja notyfikacje.
             _deliver(sess, _lobby(args).logout(sess))
+            _arm_migrations(_lobby(args), args)
         try:
             conn.close()
         except OSError:
@@ -837,6 +838,11 @@ def _dispatch_blaze(fr, args, sess):
         _cancel_matchmaking(sess)
         print(f"  [matchmaking] {sess!r} cancels the search")
         return blaze.build_empty_reply(4, fr.command, fr.seq, msg_type=mt)
+    if fr.component == 4 and fr.command == 24:          # GameManager.updateGameHostMigrationStatus
+        # The new host reports on its migration. Nobody has seen this RPC from NFS Rivals yet, so
+        # print every field - the first live migration shows what the client actually sends.
+        print(f"  [migration] {sess!r} reports status: {req}")
+        return blaze.build_empty_reply(4, fr.command, fr.seq, msg_type=mt)
     if fr.component == 4 and fr.command in (2, 3, 11, 15, 22, 29, 106, 107):
         # destroyGame, advanceGameState, removePlayer, finalizeGameCreation, leaveGameByGroup,
         # updateMeshConnection, addAdminPlayer, removeAdminPlayer - samo potwierdzenie; skutki
@@ -930,8 +936,64 @@ def _lobby(args) -> lobby.Lobby:
                 root / "players.json", forced,
                 player_state_notify=getattr(args, "player_state_notify", True),
                 local_id=getattr(args, "local_id", 0),
-                local_persona=getattr(args, "local_persona", ""))
+                local_persona=getattr(args, "local_persona", ""),
+                host_migration=getattr(args, "host_migration", True),
+                migration_player_removed=getattr(args, "migration_player_removed", True),
+                migration_type=getattr(args, "migration_type", 2),
+                platform_host_init=getattr(args, "platform_host_init", True),
+                admin_tracking=getattr(args, "admin_tracking", True),
+                join_migrated=getattr(args, "join_migrated", False))
         return _LOBBY["lobby"]
+
+
+_MIGRATION_TIMERS: dict[int, threading.Timer] = {}
+
+
+def _arm_migrations(lb, args) -> None:
+    """Logs every host migration that started since the last call and arms its safety timer: if
+    the new host never reports updateGameHostMigrationStatus, the timer finishes the migration
+    anyway and says so, instead of leaving the game stuck in MIGRATING. Called after anything
+    that can remove a player - a game RPC in _after_reply and a disconnect in the session loop."""
+    timeout = float(getattr(args, "migration_timeout", 10.0) or 0)
+    for gid in lb.take_migrations_started():
+        g = lb.game(gid)
+        if g is None:
+            continue
+        print(f"  [migration] game {gid:#x}: host {lb.persona_of(g.migrating_from)} left -> "
+              f"new host {lb.persona_of(g.host_uid)} (slot {g.players[g.host_uid]['slot']})")
+        old = _MIGRATION_TIMERS.pop(gid, None)
+        if old is not None:
+            old.cancel()
+        if timeout <= 0:
+            continue
+
+        def fire(gid=gid):
+            _MIGRATION_TIMERS.pop(gid, None)
+            notes = lb.finish_migration(gid)
+            if notes:
+                print(f"  [migration] game {gid:#x}: no status from the new host after "
+                      f"{timeout:g} s - finishing anyway (timeout)")
+                _deliver(None, notes)
+
+        t = threading.Timer(timeout, fire)
+        t.daemon = True
+        _MIGRATION_TIMERS[gid] = t
+        t.start()
+
+
+def _migration_status(lb, gid: int, migration_type: int, who) -> list:
+    """Feeds one status report of the new host into the lobby; when it completes the migration,
+    cancels the safety timer."""
+    notes, finished = lb.migration_status(gid, migration_type)
+    if finished:
+        t = _MIGRATION_TIMERS.pop(gid, None)
+        if t is not None:
+            t.cancel()
+        print(f"  [migration] game {gid:#x}: finished (status from {who!r})")
+    elif notes:
+        print(f"  [migration] game {gid:#x}: platform host initialized (MTYP {migration_type}), "
+              f"waiting for the rest")
+    return notes
 
 
 def _public_ip(args) -> str:
@@ -1089,9 +1151,14 @@ def _mm_game_params(req: dict) -> dict:
 def _game_setup(lb, g, setup_context) -> bytes:
     """NotifyGameSetup gry z rejestru: roster wszystkich graczy, adres hosta, biezacy stan gry."""
     roster = lb.roster(g)
-    host_addr = next((p["addr"] for p in roster if p["uid"] == g.host_uid), lobby.DEFAULT_ADDR)
+    host = next((p for p in roster if p["uid"] == g.host_uid), None)
+    host_addr = host["addr"] if host else lobby.DEFAULT_ADDR
     return blaze.build_notify_game_setup(g.gid, g.host_uid, roster, host_addr=host_addr,
-                                         game_state=g.state, setup_context=setup_context, **g.params)
+                                         game_state=g.state, setup_context=setup_context,
+                                         host_slot=host["slot"] if host else 0,
+                                         creator_id=g.creator_uid,
+                                         admins=g.admins if lb.admin_tracking else None,
+                                         **g.params)
 
 
 def _resolve_matchmaking(lb, args, sess, msid, req) -> list:
@@ -1114,9 +1181,14 @@ def _resolve_matchmaking(lb, args, sess, msid, req) -> list:
     agam = {t.strip(): v for t, _w, v in (crit.get("AGAM") or [])}
     g = lb.find_public_game(sess, {int(x) for x in (agam.get("GIDL") or [])})
     if g is None:
+        skipped = lb.migrated_games_skipped(sess)
         g = lb.create_game(sess, _mm_game_params(req), getattr(args, "gm_player_state", 4))
         print(f"  [matchmaking] session {msid}, MODE={req.get('MODE')} DUR={req.get('DUR')} ms -> "
               f"new game {g.gid:#x} (SUCCESS_CREATED_GAME)")
+        if skipped:
+            print(f"  [matchmaking] skipped game(s) after a host migration: "
+                  f"{', '.join(f'{x:#x}' for x in skipped)} - a player joining one never gets game "
+                  f"traffic from the migrated host (test 62). Players in it rejoin with 'Search session'.")
         return [(sess, _game_setup(lb, g, (msid, blaze.MATCHMAKING_RESULT["SUCCESS_CREATED_GAME"],
                                            sess.uid)))]
     lb.join(sess, g)
@@ -1320,6 +1392,7 @@ def _after_reply(fr, args, sess):
         pid = int(req.get("PID", 0) or 0)
         if g is not None and pid:
             added = fr.command == 106
+            lb.set_admin(g, pid, added)
             op = blaze.GM_ADMIN_OPERATION["GM_ADMIN_ADDED" if added else "GM_ADMIN_REMOVED"]
             note = blaze.build_notify_admin_list_change(g.gid, pid, op, sess.uid)
             print(f"  [game] {lb.persona_of(sess.uid)} {'adds' if added else 'removes'} admin "
@@ -1338,6 +1411,14 @@ def _after_reply(fr, args, sess):
             print(f"  [game] {lb.persona_of(uid)} leaves game {g.gid:#x} (REAS {reason}), "
                   f"notifications for others: {len(notes)}")
             out += notes
+    if fr.component == 4 and fr.command == 24:          # updateGameHostMigrationStatus
+        req = _req_fields(fr)
+        g = lb.game(int(req.get("GID", 0) or 0))
+        if g is not None and g.migrating_from and sess.uid == g.host_uid:
+            out += _migration_status(lb, g.gid, int(req.get("MTYP", 0) or 0), sess)
+    # Any path above can start a host migration (removePlayer, leaveGameByGroup, destroyGame, and a
+    # re-login that drops the player's old session) - arm the safety timers in one place.
+    _arm_migrations(lb, args)
     return out
 
 
@@ -1453,6 +1534,35 @@ def main() -> int:
                          "to ACTIVE_CONNECTED. Up to and including run-39 only notification 30 "
                          "was sent and the joining player lost the game ~7 s after the world "
                          "finished loading (A/B)")
+    ap.add_argument("--no-host-migration", dest="host_migration", action="store_false",
+                    help="when the host leaves, end the game for everyone (NotifyGameRemoved) "
+                         "instead of handing it to another player - behaviour up to 17.09 (A/B)")
+    ap.add_argument("--migration-skip-player-removed", dest="migration_player_removed",
+                    action="store_false",
+                    help="during a host migration, do NOT send the old host's NotifyPlayerRemoved "
+                         "after NotifyHostMigrationStart (A/B, in case the client crashes on it)")
+    ap.add_argument("--join-migrated-games", dest="join_migrated", action="store_true",
+                    help="let matchmaking put players into a game that went through a host "
+                         "migration. Off by default: in test 62 the migrated host's game never "
+                         "sent game traffic to such a joiner, who left after ~50 s. With it off, "
+                         "a returning player gets a fresh session and the players who stayed "
+                         "regroup with 'Search session' (A/B)")
+    ap.add_argument("--no-admin-tracking", dest="admin_tracking", action="store_false",
+                    help="keep no server-side admin list: NotifyGameSetup carries ADMN = [host] "
+                         "and nobody is told when an admin leaves - behaviour up to test 59, where "
+                         "a player returning to the same game was never re-promoted to admin and "
+                         "its game abandoned the join after ~8 s (A/B)")
+    ap.add_argument("--migration-type", type=int, choices=(0, 1, 2), default=2,
+                    help="HostMigrationType sent in NotifyHostMigrationStart: 0 topology host only, "
+                         "1 platform host only, 2 both (default - the Rivals host is both). Test "
+                         "53 used 0: the new host kept the mesh but stopped acting as the game's "
+                         "owner, and a player joining the migrated game left after ~8 s")
+    ap.add_argument("--no-platform-host-init", dest="platform_host_init", action="store_false",
+                    help="do NOT send NotifyPlatformHostInitialized (4/71) after a migration that "
+                         "moves the platform host (A/B)")
+    ap.add_argument("--migration-timeout", type=float, default=10.0, metavar="SEC",
+                    help="finish a host migration after this many seconds even if the new host "
+                         "never reports updateGameHostMigrationStatus. 0 = never")
     ap.add_argument("--mm-delay", type=int, default=0, metavar="MS",
                     help="delay of the matchmaking decision (NotifyGameSetup) in ms; the client "
                          "gets its MSID immediately. Clamped to DUR from the request. 0 "

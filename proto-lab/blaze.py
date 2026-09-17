@@ -986,6 +986,8 @@ def build_notify_game_setup(game_id: int, host_id: int, players: list[dict], *, 
                             attributes: dict[str, str],
                             host_addr: tuple[int, int, int, int, int], game_state: int = 1,
                             setup_context: tuple[int, int, int] | str | None = None,
+                            host_slot: int = 0, creator_id: int = 0,
+                            admins: list[int] | None = None,
                             seq: int = 0, msg_type: int = MSG_NOTIFY_BYTE) -> bytes:
     """NotifyGameSetup (4/20) @0x1416d7cf0 {GAME mGameData, LFPJ, PROS mGameRoster, QUEU,
     REAS mGameSetupReason}. GAME = ReplicatedGameData @0x141a2f590 (tu 32 z 42 pol, reszta
@@ -995,11 +997,16 @@ def build_notify_game_setup(game_id: int, host_id: int, players: list[dict], *, 
     (setup_context="reset_dedicated", bez pol) albo 3 MatchmakingSetupContext.
     Wartosci gry (nazwa, ustawienia, topologia, VSTR, pojemnosc) bierzemy z zadania klienta
     tworzacego gre, zeby dostal to, o co prosil; dolaczajacy dostaje te same."""
-    host_info = [f_int("CONG", host_id), f_int("CSID", 0), f_int("HPID", host_id), f_int("HSLT", 0)]
+    # The host's slot has to be the real one. It used to be hardwired to 0, which held while the
+    # host was always the creator of the game (slot 0). After a host migration the new host keeps
+    # its own slot (1 in test 50) and a returning player gets the freed slot 0 - so a joiner was
+    # told the topology host sat in its OWN slot, never opened a mesh connection and gave up.
+    host_info = [f_int("CONG", host_id), f_int("CSID", host_slot), f_int("HPID", host_id),
+                 f_int("HSLT", host_slot)]
     exip, export, inip, inport, maci = host_addr
     user_id = host_id
     game = [                                           # tagi rosnaco
-        f_list_int("ADMN", [user_id]),
+        f_list_int("ADMN", list(admins) if admins else [user_id]),
         f_map_str("ATTR", attributes),
         f_list_int("CAP", slot_capacities),
         f_int("GID", game_id),
@@ -1019,7 +1026,9 @@ def build_notify_game_setup(game_id: int, host_id: int, players: list[dict], *, 
         f_struct("NQOS", [f_int("DBPS", 100000), f_int("NATT", 0), f_int("UBPS", 100000)]),
         f_int("NRES", 0),
         f_int("NTOP", network_topology),
-        f_int("OGHI", user_id),
+        # OGHI is mGameCreatorId (ReplicatedGameData @0x141a2f590), not the current host. Same
+        # value until a host migration; after one, a joiner must see the same creator as the host.
+        f_int("OGHI", creator_id or user_id),
         f_str("PGID", ""),
         f_struct("PHST", host_info),
         f_int("PRES", presence_mode),
@@ -1175,6 +1184,65 @@ def build_notify_game_player_state_change(game_id: int, player_id: int, state: i
     wylacznie u siebie - obiekt gracza u dolaczajacego zostawal w ACTIVE_CONNECTING."""
     payload = encode_tdf([f_int("GID", game_id), f_int("PID", player_id), f_int("STAT", state)])
     return build_notification(4, GM_NOTIFY_GAME_PLAYER_STATE_CHANGE, payload, seq=seq,
+                              msg_type=msg_type)
+
+
+# ---------------------------------------------------------------- GameManager: host migration
+# The game itself supports migration, not just the SDK: NFS14.exe carries
+# ClientHostMigrationManagerEntity, WaitingForHostMigration and the UI string
+# ID_ONLINE_HOST_MIGRATION_FAILED. HostMigrationType read from the {name, value} table
+# @0x1416da118 in NFS14.exe.
+GM_NOTIFY_HOST_MIGRATION_FINISHED = 60
+GM_NOTIFY_HOST_MIGRATION_START = 70
+HOST_MIGRATION_TYPE = {"TOPOLOGY_HOST_MIGRATION": 0, "PLATFORM_HOST_MIGRATION": 1,
+                       "TOPOLOGY_PLATFORM_HOST_MIGRATION": 2}
+
+
+def build_notify_host_migration_start(game_id: int, new_host_id: int, slot: int, *,
+                                      migration_type: int = 0, seq: int = 0,
+                                      msg_type: int = MSG_NOTIFY_BYTE) -> bytes:
+    """NotifyHostMigrationStart (4/70) @0x141a305e0 {CSLT mNewHostConnectionSlotId, GID mGameId,
+    HOST mNewHostId, PMIG mMigrationType, SLOT mNewHostSlotId}.
+
+    Found in the run of GameManager notification classes laid out in id order, between
+    NotifyPlayerRemoved (40) @0x141a30560 and NotifyGamePlayerStateChange (116) @0x141a30660 -
+    the same method that recovered the working 4/116. Here SLOT is the new host's slot NUMBER
+    (mNewHostSlotId), unlike the roster, where SLOT is the slot type; the number that goes to
+    SID/CSID in the roster goes to both SLOT and CSLT here.
+
+    Must reach clients BEFORE NotifyPlayerRemoved of the old host: on 15.09 (log-29) a client
+    that got the host removed with no migration announced tore the game down and crashed."""
+    payload = encode_tdf([f_int("CSLT", slot), f_int("GID", game_id), f_int("HOST", new_host_id),
+                          f_int("PMIG", migration_type), f_int("SLOT", slot)])
+    return build_notification(4, GM_NOTIFY_HOST_MIGRATION_START, payload, seq=seq,
+                              msg_type=msg_type)
+
+
+def build_notify_host_migration_finished(game_id: int, *, seq: int = 0,
+                                         msg_type: int = MSG_NOTIFY_BYTE) -> bytes:
+    """NotifyHostMigrationFinished (4/60). ASSUMED layout {GID mGameId}: a single-field class
+    cannot be isolated from tdf_members.json by tag order, and {GID} is what BlazeSDK uses.
+    First suspect if a migration hangs in WaitingForHostMigration."""
+    payload = encode_tdf([f_int("GID", game_id)])
+    return build_notification(4, GM_NOTIFY_HOST_MIGRATION_FINISHED, payload, seq=seq,
+                              msg_type=msg_type)
+
+
+GM_NOTIFY_PLATFORM_HOST_INITIALIZED = 71
+
+
+def build_notify_platform_host_initialized(game_id: int, host_id: int, slot: int, *, seq: int = 0,
+                                           msg_type: int = MSG_NOTIFY_BYTE) -> bytes:
+    """NotifyPlatformHostInitialized (4/71). PROBABLE layout @0x1416d8db8 {BUID mUserId,
+    GID mGameId, PHID mPlatformHostId, PHST mPlatformHostSlotId} - the only class carrying both
+    mPlatformHostId and mPlatformHostSlotId.
+
+    Closes the platform half of a TOPOLOGY_PLATFORM_HOST_MIGRATION. In test 53 we migrated only
+    the topology host: the new host kept the mesh but stopped acting as the game's owner (no
+    addAdminPlayer for a joiner), and a player joining the migrated game left after ~8 s."""
+    payload = encode_tdf([f_int("BUID", host_id), f_int("GID", game_id), f_int("PHID", host_id),
+                          f_int("PHST", slot)])
+    return build_notification(4, GM_NOTIFY_PLATFORM_HOST_INITIALIZED, payload, seq=seq,
                               msg_type=msg_type)
 
 

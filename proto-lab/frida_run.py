@@ -10,12 +10,17 @@ Uzycie (gra juz uruchomiona przez EA App):
 
 Albo odwrotnie - najpierw skrypt, potem gra:
     python proto-lab/frida_run.py --wait                # czeka 120 s na start gry
+
+Test z restartem gry (np. powrot do sesji po migracji hosta):
+    python proto-lab/frida_run.py --wait --follow       # po zamknieciu gry czeka na kolejne
+                                                        # uruchomienie i podpina sie znowu
 """
 
 from __future__ import annotations
 
 import argparse
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -103,6 +108,35 @@ def attach(proc: str, wait_seconds: int, settle: int = 0):
     return None
 
 
+def follow(session, js: str, args) -> int:
+    """Tryb --follow: podpiecie przezywa restart gry. Po odlaczeniu (gra zamknieta albo
+    padla) czekamy na nowy proces i wstrzykujemy skrypt od nowa. Ctrl+C konczy."""
+    run = 1
+    try:
+        while True:
+            detached = threading.Event()
+            session.on("detached", lambda *a: detached.set())
+            script = session.create_script(js)
+            script.on("message", on_message)
+            script.load()
+            print(f"[*] skrypt zaladowany (uruchomienie gry #{run}). Ctrl+C konczy.\n")
+            while not detached.wait(1):
+                pass
+            print(f"\n[*] ===== gra #{run} odlaczona o {time.strftime('%H:%M:%S')} (czas "
+                  f"lokalny) - czekam na kolejne uruchomienie =====\n")
+            time.sleep(2)            # nie lap jeszcze umierajacego procesu
+            session = None
+            while session is None:
+                try:
+                    session = attach(args.proc, 3600, args.settle)
+                except Exception as e:  # swiezo startujacy proces potrafi odmowic (VirtualAllocEx)
+                    print(f"[!] nie udalo sie podpiac ({e}) - ponawiam za 2 s")
+                    time.sleep(2)
+            run += 1
+    except KeyboardInterrupt:
+        return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -124,6 +158,10 @@ def main() -> int:
                          "function'. Domyslnie 8 s (przebieg 2026-09-12: bez tego "
                          "padly OriginRequestTicket, raport bledow i 2 dekodery). "
                          "0 = podpnij natychmiast")
+    ap.add_argument("--follow", action="store_true",
+                    help="po zamknieciu gry czekaj na kolejne uruchomienie i podepnij sie "
+                         "znowu - caly test z restartami gry w jednym logu (testy 53, 54 i 57 "
+                         "zlapaly tylko PIERWSZA instancje, a wyrzucalo te po powrocie)")
     args = ap.parse_args()
 
     js = Path(args.script).read_text(encoding="utf-8")
@@ -132,6 +170,8 @@ def main() -> int:
     session = attach(args.proc, args.wait, args.settle)
     if session is None:
         return 1
+    if args.follow:
+        return follow(session, js, args)
 
     script = session.create_script(js)
     script.on("message", on_message)
