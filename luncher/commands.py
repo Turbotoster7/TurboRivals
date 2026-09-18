@@ -46,6 +46,41 @@ def clearDNS():
 PATH = "../proto-lab/"
 COMMAND = ["python", "-u", r"proto-lab\tls_terminator.py", "--public-ip", "26.230.135.6", "--entitlements", "online"]
 
+class Game:
+    def __init__(self):
+        # Przypisujemy zmienne do instancji obiektu używając 'self.'
+        self.player_count = 0
+        self.list_players = []
+
+    def get_player_count(self):
+        return self.player_count
+
+    def get_list_players(self):
+        return self.list_players
+
+    def addPlayer(self, nick_add, ip_add):
+        current_players = self.get_list_players()
+        
+        if current_players:
+            for player in current_players:
+                ip, nick = player
+                if ip == ip_add or nick == nick_add:
+                    return False 
+
+        self.list_players.append((ip_add, nick_add))
+        self.player_count += 1
+        return True
+
+    def removePlayer(self, nick_remove): 
+        current_players = self.get_list_players()
+        
+        for player in current_players:
+            ip, nick = player
+            if nick_remove == nick:
+                self.list_players.remove(player)
+                self.player_count -= 1
+                break  
+            
 def buildCommand(entry, localName, listPlayers):
     """listPlayers must be a tuple of (name, ip)"""
     if len(listPlayers) > 5:
