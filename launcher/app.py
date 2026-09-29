@@ -5,7 +5,7 @@ logic in commands.py. This Api class is the only bridge between them: every
 public method is called from JavaScript as `pywebview.api.<name>()`.
 
 Run it with:
-    python luncher/app.py
+    python launcher/app.py
 The hosts file and the firewall rules need administrator rights - without
 them the launcher still runs, but those actions report an error and offer to
 restart elevated.

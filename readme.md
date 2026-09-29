@@ -26,12 +26,14 @@ needed to play** — launch the game normally through Steam.
 
 ## The launcher
 
-`luncher/` is a windowed launcher that does the `hosts` entry, the firewall rules and the
+![The TurboRivals launcher](docs/launcher.png)
+
+`launcher/` is a windowed launcher that does the `hosts` entry, the firewall rules and the
 player names for you, and streams the server log. It is the easy path; the console commands
 below still work and remain the reference.
 
 ```powershell
-venv\Scripts\pythonw.exe luncher\app.py      # pythonw = no console window
+venv\Scripts\pythonw.exe launcher\app.py      # pythonw = no console window
 ```
 
 ### Building the standalone version
@@ -54,7 +56,8 @@ Two things come out of `dist\`:
 
 **Hand people the installer, not a zip of the folder.** Every file extracted from a
 downloaded archive inherits Mark-of-the-Web, and .NET then refuses to load
-`pythonnetuntime\Python.Runtime.dll`, which pywebview needs — the launcher dies with
+`pythonnet
+untime\Python.Runtime.dll`, which pywebview needs — the launcher dies with
 `Failed to resolve Python.Runtime.Loader.Initialize`. Inno Setup writes the files fresh, so
 an installed copy never hits this. A zip works only if the recipient unblocks it first
 (`Get-ChildItem -Recurse <folder> | Unblock-File`).
@@ -160,6 +163,18 @@ Origin token, which only EA's own service could resolve. So names are supplied b
 - progress saved from GameReporting reports (`~/TurboRivals/data`)
 - speed walls served from saved results
 
+## Known issues that are not bugs
+
+Two warnings come up on a fresh machine and neither means anything is wrong:
+
+- **"Windows protected your PC" (SmartScreen).** The build is not code-signed, so Windows
+  has no reputation for it. Choose *More info* -> *Run anyway*.
+- **The launcher fails with `Failed to resolve Python.Runtime.Loader.Initialize`.** That
+  happens when the program was run out of a folder extracted from a downloaded archive:
+  those files carry Mark-of-the-Web and .NET refuses to load them. Install with
+  `TurboRivalsSetup.exe` instead, or unblock the folder first
+  (`Get-ChildItem -Recurse <folder> | Unblock-File`).
+
 ## What is missing
 
 - **host migration** — when the host leaves, the game ends and everyone else gets
@@ -172,7 +187,7 @@ Origin token, which only EA's own service could resolve. So names are supplied b
 ## Repository layout
 
 ```
-luncher/     the windowed launcher (pywebview UI + the system plumbing)
+launcher/     the windowed launcher (pywebview UI + the system plumbing)
 tools/       recon tooling (binary analysis, hosts switcher)
 proto-lab/   the server and the protocol decoders
 docs/        protocol notes, decision log, raw recon output

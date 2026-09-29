@@ -13,11 +13,13 @@ Deliberately a one-FOLDER build, not one file. A onefile exe unpacks ~30 MB
 into %TEMP%\\_MEIxxxxx on every start and deletes it on exit; when something
 still holds a file there, the bootloader reports "Failed to remove temporary
 directory", which looks like a crash but is only failed cleanup. One folder
-touches %TEMP% not at all and starts instantly. The folder ships either through
-installer/TurboRivals.iss or zipped as a portable build.
+touches %TEMP% not at all and starts instantly. The folder ships through
+installer/TurboRivals.iss - NOT as a zip: files extracted from a downloaded
+archive carry Mark-of-the-Web, and .NET then refuses to load
+pythonnet/runtime/Python.Runtime.dll, which pywebview needs.
 
 What goes in and why:
-  * luncher/web      - the interface; app.py looks for it next to itself, which
+  * launcher/web      - the interface; app.py looks for it next to itself, which
                        inside the bundle means the unpack directory.
   * proto-lab/*.py   - the Blaze server. The exe re-invokes itself behind
                        --run-server (see commands.build_command), so these have
@@ -33,10 +35,10 @@ exit.
 """
 
 a = Analysis(
-    ['luncher/app.py'],
+    ['launcher/app.py'],
     pathex=['proto-lab', 'tools'],
     binaries=[],
-    datas=[('luncher/web', 'web')],
+    datas=[('launcher/web', 'web')],
     hiddenimports=[
         # the server and everything it imports by bare name
         'tls_terminator', 'blaze', 'lobby', 'player_store', 'tcp_proxy',
@@ -75,7 +77,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon='luncher/web/icon.ico',
+    icon='launcher/web/icon.ico',
 )
 
 coll = COLLECT(

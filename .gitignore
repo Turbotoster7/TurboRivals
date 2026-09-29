@@ -25,11 +25,11 @@ log-*.txt
 frida-*.txt
 
 # launcher: lokalne nicki i adresy graczy
-luncher/config.json
+launcher/config.json
 
 # PyInstaller
 build/
 dist/
 
-# pozostalosc po wersji na customtkinter - UI jest teraz w luncher/web/
-luncher/background.png
+# pozostalosc po wersji na customtkinter - UI jest teraz w launcher/web/
+launcher/background.png
