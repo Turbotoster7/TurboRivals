@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>TurboRivals Launcher</title>
+    <!-- Fonts are served from web/fonts/, never from a CDN: pywebview only injects
+         its JS bridge on NavigationCompleted, so a blocking cross-origin request
+         would hold the whole UI hostage (and break the launcher offline). -->
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<div class="loader-screen" id="loader">
+    <div class="hud-circle"></div>
+    <div class="loader-content">
+        <div class="loader-text">
+            <div class="log-line">&gt; BOOT SEQUENCE... <span class="ok">INIT</span></div>
+            <div class="log-line">&gt; CHECKING HOSTS... <span class="ok">OK</span></div>
+            <div class="log-line">&gt; ARMING BLAZE... <span class="blink">READY</span></div>
+        </div>
+        <div class="loader-bar-bg"><div class="loader-bar-fill" id="loaderBar"></div></div>
+        <div class="loader-percent" id="loaderPercent">0%</div>
+    </div>
+</div>
+
+<div class="cockpit-bg"><div class="grid-overlay"></div></div>
+
+<header class="tech-header pywebview-drag-region">
+    <div class="tech-brand">
+        <div class="brand-icon-box">TR</div>
+        <div class="brand-text">
+            <span class="brand-title">TURBORIVALS<span class="highlight">.LAUNCHER</span></span>
+            <span class="brand-subtitle">NFS RIVALS // ALLDRIVE</span>
+        </div>
+    </div>
+
+    <div class="nav-widgets">
+        <div class="system-status" id="adminStatus">
+            <span class="status-indicator"></span>
+            <span class="status-text">CHECKING...</span>
+        </div>
+        <button class="win-btn" id="btnMinimize" title="Minimize">&minus;</button>
+        <button class="win-btn win-close" id="btnClose" title="Close">&times;</button>
+    </div>
+</header>
+
+<main class="workspace">
+
+    <!-- ================= LEFT COLUMN: CONFIGURATION ================= -->
+    <section class="column column-config">
+
+        <nav class="tech-menu" id="modeMenu">
+            <button class="nav-link active" data-mode="host">
+                <span class="link-bracket">[</span> HOST A SESSION <span class="link-bracket">]</span>
+            </button>
+            <button class="nav-link" data-mode="client">
+                <span class="link-bracket">[</span> JOIN A SESSION <span class="link-bracket">]</span>
+            </button>
+        </nav>
+
+        <!-- --- PRE-FLIGHT --- -->
+        <div class="hud-panel">
+            <div class="panel-header">
+                <span class="panel-title">PRE-FLIGHT CHECK</span>
+                <span class="panel-tag" id="checkSummary">--</span>
+            </div>
+            <div class="panel-body">
+                <div class="check-row" id="checkAdmin">
+                    <span class="check-dot"></span>
+                    <div class="check-text">
+                        <span class="check-label">ADMINISTRATOR RIGHTS</span>
+                        <span class="check-note">required for hosts and firewall</span>
+                    </div>
+                    <button class="btn btn-mini" data-action="elevate">ELEVATE</button>
+                </div>
+
+                <div class="check-row" id="checkCert">
+                    <span class="check-dot"></span>
+                    <div class="check-text">
+                        <span class="check-label">STAND-IN CERTIFICATE</span>
+                        <span class="check-note">proto-lab/pki/server.der</span>
+                    </div>
+                    <button class="btn btn-mini" data-action="cert">GENERATE</button>
+                </div>
+
+                <div class="check-row" id="checkHosts">
+                    <span class="check-dot"></span>
+                    <div class="check-text">
+                        <span class="check-label">HOSTS REDIRECT</span>
+                        <span class="check-note" id="hostsNote">gosredirector.ea.com</span>
+                    </div>
+                    <button class="btn btn-mini" data-action="hosts-toggle" id="btnHosts">TURN ON</button>
+                </div>
+
+                <div class="check-row" id="checkFirewall">
+                    <span class="check-dot neutral"></span>
+                    <div class="check-text">
+                        <span class="check-label">FIREWALL RULES</span>
+                        <span class="check-note" id="firewallNote">server ports + P2P 3659</span>
+                    </div>
+                    <button class="btn btn-mini" data-action="firewall">ADD</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- --- HOST MODE --- -->
+        <div class="hud-panel mode-panel" data-panel="host">
+            <div class="panel-header">
+                <span class="panel-title">SESSION SETUP</span>
+                <span class="panel-tag" id="slotsTag">0/5 SLOTS</span>
+            </div>
+            <div class="panel-body">
+                <label class="field">
+                    <span class="field-label">YOUR NAME</span>
+                    <input type="text" id="persona" class="tech-input" placeholder="Bartek" autocomplete="off">
+                </label>
+
+                <div class="field">
+                    <span class="field-label">ADDRESS THE OTHER PLAYERS REACH YOU ON (NOT YOUR OWN REDIRECT)</span>
+                    <div class="addr-chips" id="addrChips"></div>
+                    <input type="text" id="publicIp" class="tech-input" placeholder="or type an address" autocomplete="off">
+                </div>
+                <p class="field-hint" id="ipHint">&nbsp;</p>
+
+                <div class="player-add">
+                    <input type="text" id="newNick" class="tech-input" placeholder="PLAYER NAME" autocomplete="off">
+                    <input type="text" id="newIp" class="tech-input" placeholder="THEIR ADDRESS" autocomplete="off">
+                    <button class="btn btn-outline btn-add" id="btnAddPlayer">+ ADD</button>
+                </div>
+
+                <ul class="player-list" id="playerList"></ul>
+            </div>
+        </div>
+
+        <!-- --- CLIENT MODE --- -->
+        <div class="hud-panel mode-panel hidden" data-panel="client">
+            <div class="panel-header">
+                <span class="panel-title">CONNECT TO HOST</span>
+                <span class="panel-tag">CLIENT</span>
+            </div>
+            <div class="panel-body">
+                <label class="field">
+                    <span class="field-label">SERVER ADDRESS (READ OUT BY THE HOST)</span>
+                    <input type="text" id="serverIp" class="tech-input" placeholder="the address the host's launcher shows" autocomplete="off">
+                </label>
+                <p class="field-hint">
+                    The launcher writes this address into <span class="mono">hosts</span> as
+                    <span class="mono">gosredirector.ea.com</span> and flushes the DNS cache.
+                    Turn the redirect off when you are done &mdash; a leftover entry breaks the EA App.
+                </p>
+                <div class="client-steps">
+                    <div class="step"><span class="step-num">01</span> EA App running in the background</div>
+                    <div class="step"><span class="step-num">02</span> same network as the host, or on their VPN</div>
+                    <div class="step"><span class="step-num">03</span> HOSTS REDIRECT = ON</div>
+                    <div class="step"><span class="step-num">04</span> in game: "Search for session"</div>
+                </div>
+            </div>
+        </div>
+
+    </section>
+
+    <!-- ================= RIGHT COLUMN: TELEMETRY ================= -->
+    <section class="column column-telemetry">
+
+        <div class="hud-panel full-height">
+            <div class="panel-header">
+                <span class="panel-title">SERVER LOG</span>
+                <div class="panel-actions">
+                    <span class="status" id="serverStatus">OFFLINE</span>
+                    <button class="btn btn-mini" id="btnClearLog">CLEAR</button>
+                </div>
+            </div>
+            <div class="panel-body log-body" id="logBody">
+                <div class="log-empty">&gt; server is down &mdash; start it to watch the Blaze traffic</div>
+            </div>
+            <div class="panel-footer">
+                <span class="cmd-preview mono" id="cmdPreview">&nbsp;</span>
+            </div>
+        </div>
+
+        <div class="action-bar">
+            <button class="btn btn-primary" id="btnServer" data-panel="host">START SERVER</button>
+            <button class="btn btn-primary" id="btnConnect" data-panel="client">REDIRECT AND PLAY</button>
+            <button class="btn btn-outline" id="btnGame">LAUNCH GAME</button>
+        </div>
+
+    </section>
+
+</main>
+
+<div class="toast-stack" id="toasts"></div>
+
+<script src="js/app.js"></script>
+</body>
+</html>

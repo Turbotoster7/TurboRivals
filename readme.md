@@ -16,12 +16,70 @@ a service the publisher switched off. [MIT licensed](LICENSE).
 ## What you need
 
 - **Need for Speed Rivals** (Steam or EA App) — each player needs their own copy
-- **EA App** running in the background
-- **Python 3.10+** — only on the machine hosting the server
+- **EA App** running in the background — the game is launched through it, not through Steam
+- **Edge WebView2 Runtime** for the launcher — built into Windows 11, a free download on older Windows 10
+- **Python 3.10+** — only if you run from source; the packaged launcher needs nothing installed
 - **Radmin VPN** or Hamachi if you are playing over the internet (not needed on a shared LAN)
 
 Frida, memory dumps and `launch_direct.py` exist purely for protocol analysis. **They are not
 needed to play** — launch the game normally through Steam.
+
+## The launcher
+
+`luncher/` is a windowed launcher that does the `hosts` entry, the firewall rules and the
+player names for you, and streams the server log. It is the easy path; the console commands
+below still work and remain the reference.
+
+```powershell
+venv\Scripts\pythonw.exe luncher\app.py      # pythonw = no console window
+```
+
+### Building the standalone version
+
+No Python, no repository and no `openssl` on the target machine — for handing to the people
+you play with.
+
+```powershell
+venv\Scripts\python.exe -m pip install pyinstaller pywebview cryptography
+winget install JRSoftware.InnoSetup      # once, for the installer
+.\build.ps1
+```
+
+Two things come out of `dist\`:
+
+| | |
+| --- | --- |
+| `TurboRivals\` | 35 MB folder — the portable build, zip it and hand it over as is |
+| `TurboRivalsSetup.exe` | 14 MB installer — Start Menu entry, uninstaller, no UAC prompt |
+
+The installer is per-user: it lands in `%LOCALAPPDATA%\Programs\TurboRivals` and needs no
+administrator rights, because the launcher asks for them itself when it touches `hosts` or
+the firewall. Uninstalling takes the `hosts` redirect down first — otherwise you would be
+left with an entry that breaks the EA App and no tool to remove it. Your data in
+`%LOCALAPPDATA%\TurboRivals` (config, `pki/`, captures) survives.
+
+[TurboRivals.spec](TurboRivals.spec) and [installer/TurboRivals.iss](installer/TurboRivals.iss)
+document what goes in and why.
+
+**One folder, not one file.** A one-file build unpacks ~30 MB into `%TEMP%` on every start
+and deletes it on exit; when anything still holds a file there, it reports
+`Failed to remove temporary directory`, which looks like a crash but is only failed cleanup.
+One folder never touches `%TEMP%` and starts instantly.
+
+Two more things make this work, and both matter if you change the code:
+
+- **The exe runs the server by re-invoking itself.** Frozen, `sys.executable` is the launcher,
+  not a Python interpreter, so `commands.build_command` emits `TurboRivals.exe --run-server …`
+  and `app.py` dispatches on that flag before it imports the GUI. `--make-cert` and
+  `--hosts-off` do the same for the certificate and for the uninstaller, which is also how the
+  packaged build gets tested without driving the UI. The server mode switches its output to
+  line buffering, or the log panel would sit empty while a session runs.
+- **Nothing needs `openssl` any more.** `make_stub_cert.py` builds the certificate with
+  `cryptography`, and `tls_terminator.load_rsa_priv` reads the key with its own DER parser
+  instead of shelling out to `openssl rsa -text` on every start.
+
+Everything the program writes goes to `%LOCALAPPDATA%\TurboRivals`, never next to the exe,
+so an installed copy and the portable one share the same config, certificate and progress.
 
 ## How to play
 
@@ -101,13 +159,13 @@ Origin token, which only EA's own service could resolve. So names are supplied b
   `NotifyGameRemoved`
 - **internet play without a VPN** — the game connects players directly and EA's relay is gone
 - sessions with three or more players are untested
-- a launcher to handle `hosts`, firewall rules and names for the user
 - a few RPCs still answered with an empty acknowledgement: `UserSessions.lookupUsers`,
   `NFS.getSpecialGuestInfo`, `getInGameRecommendations`, `getAutologPlaylist`
 
 ## Repository layout
 
 ```
+luncher/     the windowed launcher (pywebview UI + the system plumbing)
 tools/       recon tooling (binary analysis, hosts switcher)
 proto-lab/   the server and the protocol decoders
 docs/        protocol notes, decision log, raw recon output
@@ -135,6 +193,6 @@ python proto-lab/frida_run.py                                  # diagnostic hook
 | 0 | binary and endpoint recon | done |
 | 1 | working out the protocol | done |
 | 2 | prototype server, first shared session | done |
-| 3 | launcher: hosts, firewall and names without a console | |
+| 3 | launcher: hosts, firewall and names without a console | done |
 | 4 | host migration, sessions for 3-6 players | |
 | 5 | internet play without a VPN (NAT traversal) | |

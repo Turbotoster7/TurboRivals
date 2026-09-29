@@ -1,0 +1,509 @@
+/* =========================================
+   TURBORIVALS LAUNCHER
+   Visual language carried over from turbotoster.dev
+   (aviation HUD: radar grid, glass panels, cyan + amber)
+   ========================================= */
+
+/* --- FONTS (local, latin subset) ---
+   Self-hosted on purpose. A Google Fonts <link> is render-blocking, and
+   pywebview injects its JS bridge only once navigation completes - so a slow
+   or unreachable CDN leaves the window up but dead. */
+@font-face {
+    font-family: 'Rajdhani'; font-style: normal; font-weight: 300;
+    font-display: swap; src: url('../fonts/rajdhani-300.woff2') format('woff2');
+}
+@font-face {
+    font-family: 'Rajdhani'; font-style: normal; font-weight: 400;
+    font-display: swap; src: url('../fonts/rajdhani-400.woff2') format('woff2');
+}
+@font-face {
+    font-family: 'Rajdhani'; font-style: normal; font-weight: 500;
+    font-display: swap; src: url('../fonts/rajdhani-500.woff2') format('woff2');
+}
+@font-face {
+    font-family: 'Rajdhani'; font-style: normal; font-weight: 600;
+    font-display: swap; src: url('../fonts/rajdhani-600.woff2') format('woff2');
+}
+@font-face {
+    font-family: 'Rajdhani'; font-style: normal; font-weight: 700;
+    font-display: swap; src: url('../fonts/rajdhani-700.woff2') format('woff2');
+}
+@font-face {
+    font-family: 'Share Tech Mono'; font-style: normal; font-weight: 400;
+    font-display: swap; src: url('../fonts/share-tech-mono-400.woff2') format('woff2');
+}
+
+:root {
+    --bg-deep: #0b1026;
+    --bg-panel: rgba(16, 33, 65, 0.7);
+    --primary: #00f0ff;
+    --secondary: #4d8dff;
+    --accent: #ff9d00;
+    --danger: #ff3333;
+    --ok: #00ff41;
+    --text: #e0f7ff;
+    --muted: #6272a4;
+    --grid-line: rgba(0, 240, 255, 0.1);
+
+    --font-tech: 'Rajdhani', 'Segoe UI', sans-serif;
+    --font-mono: 'Share Tech Mono', 'Consolas', monospace;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html, body { height: 100%; }
+
+body {
+    background-color: var(--bg-deep);
+    color: var(--text);
+    font-family: var(--font-tech);
+    overflow: hidden;
+    user-select: none;
+}
+
+::selection { background: var(--primary); color: #000; }
+
+/* --- COCKPIT BACKGROUND (radar grid) --- */
+.cockpit-bg {
+    position: fixed; inset: 0; z-index: -1;
+    background: radial-gradient(circle at 50% 40%, #1a2a4f 0%, #0b1026 100%);
+}
+
+.grid-overlay {
+    position: absolute; width: 100%; height: 100%;
+    background-image:
+        linear-gradient(var(--grid-line) 1px, transparent 1px),
+        linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
+    background-size: 50px 50px;
+    perspective: 1000px;
+    transform: rotateX(60deg) scale(2);
+    transform-origin: top;
+    opacity: 0.3;
+    animation: gridMove 20s linear infinite;
+}
+
+@keyframes gridMove {
+    0%   { transform: rotateX(60deg) scale(2) translateY(0); }
+    100% { transform: rotateX(60deg) scale(2) translateY(50px); }
+}
+
+/* --- BOOT SCREEN --- */
+.loader-screen {
+    position: fixed; inset: 0; z-index: 9999;
+    background: var(--bg-deep);
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    transition: opacity 0.6s, visibility 0.6s;
+}
+/* pointer-events go first: visibility only drops after the 0.6s fade, and
+   until then the overlay would still swallow clicks on a live UI. */
+.loader-screen.done { opacity: 0; visibility: hidden; pointer-events: none; }
+
+.hud-circle {
+    position: absolute;
+    width: 320px; height: 320px;
+    border: 1px solid rgba(0, 240, 255, 0.2);
+    border-top-color: var(--primary);
+    border-radius: 50%;
+    animation: spin 2s linear infinite;
+}
+@keyframes spin { 100% { transform: rotate(360deg); } }
+
+.loader-content { display: flex; flex-direction: column; align-items: center; z-index: 1; }
+.loader-text { font-family: var(--font-mono); margin-bottom: 20px; width: 320px; }
+.log-line {
+    font-size: 0.9rem; color: var(--secondary); margin-bottom: 5px;
+    opacity: 0; animation: fadeIn 0.5s forwards; overflow: hidden;
+}
+.log-line:nth-child(1) { animation-delay: 0.1s; }
+.log-line:nth-child(2) { animation-delay: 0.5s; }
+.log-line:nth-child(3) { animation-delay: 0.9s; }
+.ok { color: var(--primary); font-weight: bold; float: right; }
+.blink { color: var(--accent); animation: blinker 0.5s infinite; float: right; }
+
+.loader-bar-bg { width: 320px; height: 4px; background: rgba(255, 255, 255, 0.1); }
+.loader-bar-fill {
+    height: 100%; width: 0%; background: var(--primary);
+    box-shadow: 0 0 10px var(--primary); transition: width 0.2s;
+}
+.loader-percent { margin-top: 10px; font-family: var(--font-mono); color: var(--primary); }
+
+@keyframes blinker { 50% { opacity: 0; } }
+@keyframes fadeIn { to { opacity: 1; } }
+
+/* --- TOP BAR (doubles as the window title bar) --- */
+.tech-header {
+    height: 64px;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 18px;
+    background: rgba(11, 16, 38, 0.75);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid rgba(0, 240, 255, 0.15);
+    position: relative;
+}
+.tech-header::before {
+    content: '';
+    position: absolute; top: 0; left: 0; width: 100%; height: 2px;
+    background: linear-gradient(90deg, transparent, var(--primary), transparent);
+    opacity: 0.5;
+}
+
+.tech-brand { display: flex; align-items: center; gap: 14px; }
+.brand-icon-box {
+    width: 40px; height: 40px;
+    background: rgba(0, 240, 255, 0.1);
+    border: 1px solid var(--primary);
+    display: flex; align-items: center; justify-content: center;
+    font-family: var(--font-mono); color: var(--primary);
+    box-shadow: 0 0 14px rgba(0, 240, 255, 0.25);
+}
+.brand-text { display: flex; flex-direction: column; }
+.brand-title { font-size: 1.25rem; font-weight: 700; letter-spacing: 1px; line-height: 1; }
+.brand-title .highlight { color: var(--primary); }
+.brand-subtitle {
+    font-size: 0.62rem; color: var(--secondary);
+    letter-spacing: 2px; font-family: var(--font-mono);
+}
+
+.nav-widgets { display: flex; align-items: center; gap: 14px; }
+
+.system-status {
+    display: flex; align-items: center; gap: 8px;
+    font-family: var(--font-mono); font-size: 0.72rem;
+    color: var(--secondary); letter-spacing: 1px;
+    border: 1px solid rgba(77, 141, 255, 0.3);
+    padding: 5px 10px;
+}
+.status-indicator {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--muted);
+    animation: blinkStatus 2s infinite;
+}
+
+/* One colour per meaning, used the same way across the window:
+   blue = working it out, green = healthy, amber = needs you, cyan = live. */
+.system-status.busy { color: var(--secondary); border-color: rgba(77, 141, 255, 0.4); }
+.system-status.busy .status-indicator {
+    background: var(--secondary); box-shadow: 0 0 8px var(--secondary);
+}
+
+.system-status.ok { color: var(--ok); border-color: rgba(0, 255, 65, 0.45); }
+.system-status.ok .status-indicator {
+    background: var(--ok); box-shadow: 0 0 8px var(--ok);
+    animation: none;                /* steady: nothing is pending */
+}
+
+.system-status.warn { color: var(--accent); border-color: rgba(255, 157, 0, 0.45); }
+.system-status.warn .status-indicator {
+    background: var(--accent); box-shadow: 0 0 8px var(--accent);
+}
+
+.system-status.live {
+    color: var(--primary); border-color: rgba(0, 240, 255, 0.5);
+    background: rgba(0, 240, 255, 0.08);
+}
+.system-status.live .status-indicator {
+    background: var(--primary); box-shadow: 0 0 10px var(--primary);
+    animation: pulseDot 1.2s ease-in-out infinite;
+}
+
+@keyframes blinkStatus { 50% { opacity: 0.4; } }
+@keyframes pulseDot {
+    0%, 100% { transform: scale(1);   box-shadow: 0 0 6px var(--primary); }
+    50%      { transform: scale(1.35); box-shadow: 0 0 14px var(--primary); }
+}
+
+.win-btn {
+    -webkit-app-region: no-drag;
+    width: 32px; height: 32px;
+    background: transparent; border: 1px solid rgba(255, 255, 255, 0.12);
+    color: var(--text); font-size: 1rem; cursor: pointer;
+    transition: 0.2s;
+}
+.win-btn:hover { background: rgba(0, 240, 255, 0.15); border-color: var(--primary); }
+.win-close:hover { background: var(--danger); border-color: var(--danger); color: #fff; }
+
+/* --- WORKSPACE LAYOUT --- */
+.workspace {
+    height: calc(100vh - 64px);
+    display: grid;
+    grid-template-columns: minmax(420px, 1fr) minmax(430px, 1.05fr);
+    gap: 18px;
+    padding: 18px;
+    overflow: hidden;
+}
+
+.column { display: flex; flex-direction: column; gap: 14px; min-height: 0; }
+
+.column-config {
+    overflow-y: auto;
+    /* Reserve the scrollbar track always, so panels keep one width whether the
+       column scrolls or not. */
+    scrollbar-gutter: stable;
+    padding-right: 6px;
+}
+
+/* Panels keep their natural height. Without this they inherit flex-shrink: 1,
+   get squeezed when the content is taller than the window, and spill out of
+   their own frames instead of letting the column scroll. */
+.column-config > * { flex: 0 0 auto; }
+
+/* --- MODE TABS --- */
+.tech-menu { display: flex; gap: 10px; }
+.nav-link {
+    flex: 1;
+    background: transparent; border: 1px solid rgba(77, 141, 255, 0.25);
+    color: var(--secondary);
+    font-family: var(--font-mono); font-size: 0.82rem; letter-spacing: 1px;
+    padding: 11px 0; cursor: pointer; transition: 0.3s;
+}
+.link-bracket { opacity: 0; color: var(--primary); transition: 0.3s; display: inline-block; }
+.nav-link:hover { color: #fff; text-shadow: 0 0 8px var(--primary); }
+.nav-link:hover .link-bracket:first-child { opacity: 1; transform: translateX(-4px); }
+.nav-link:hover .link-bracket:last-child  { opacity: 1; transform: translateX(4px); }
+.nav-link.active {
+    color: var(--primary); border-color: var(--primary);
+    background: rgba(0, 240, 255, 0.07);
+}
+.nav-link.active .link-bracket { opacity: 1; }
+
+/* --- HUD PANEL --- */
+.hud-panel {
+    background: rgba(11, 16, 38, 0.7);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(0, 240, 255, 0.2);
+    border-radius: 4px;
+    position: relative;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+    transition: 0.3s;
+    display: flex; flex-direction: column;
+    min-height: 0;
+}
+.hud-panel:hover { border-color: rgba(0, 240, 255, 0.45); }
+.hud-panel.full-height { flex: 1; overflow: hidden; }
+.hud-panel.hidden { display: none; }
+
+.panel-header {
+    background: rgba(0, 240, 255, 0.08);
+    padding: 11px 18px;
+    border-bottom: 1px solid rgba(0, 240, 255, 0.2);
+    display: flex; justify-content: space-between; align-items: center;
+    flex-shrink: 0;
+}
+.panel-title {
+    font-family: var(--font-mono); font-size: 0.82rem;
+    letter-spacing: 2px; color: var(--primary);
+}
+.panel-tag, .panel-actions {
+    font-family: var(--font-mono); font-size: 0.7rem; color: var(--muted);
+    display: flex; align-items: center; gap: 10px;
+}
+.panel-body { padding: 16px 18px; display: flex; flex-direction: column; gap: 12px; min-height: 0; }
+.panel-footer {
+    border-top: 1px solid rgba(0, 240, 255, 0.12);
+    padding: 8px 18px; flex-shrink: 0;
+}
+
+/* --- PRE-FLIGHT --- */
+.check-row { display: flex; align-items: center; gap: 12px; }
+.check-dot {
+    width: 10px; height: 10px; border-radius: 50%;
+    background: var(--danger); box-shadow: 0 0 8px rgba(255, 51, 51, 0.6);
+    flex-shrink: 0; transition: 0.3s;
+}
+.check-row.ok .check-dot { background: var(--ok); box-shadow: 0 0 8px rgba(0, 255, 65, 0.6); }
+.check-row.warn .check-dot { background: var(--accent); box-shadow: 0 0 8px rgba(255, 157, 0, 0.6); }
+.check-dot.neutral { background: var(--muted); box-shadow: none; }
+
+.check-text { display: flex; flex-direction: column; flex: 1; min-width: 0; }
+.check-label { font-size: 0.88rem; letter-spacing: 1px; }
+.check-note {
+    font-family: var(--font-mono); font-size: 0.68rem; color: var(--muted);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.check-row.ok .check-note { color: var(--secondary); }
+
+/* --- FIELDS --- */
+.field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.field { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.field-label {
+    font-family: var(--font-mono); font-size: 0.66rem;
+    letter-spacing: 1.5px; color: var(--muted);
+}
+
+.tech-input {
+    background: rgba(0, 0, 0, 0.35);
+    border: 1px solid rgba(77, 141, 255, 0.3);
+    color: var(--text);
+    font-family: var(--font-mono); font-size: 0.85rem;
+    padding: 9px 11px;
+    outline: none; transition: 0.25s;
+    user-select: text;
+    min-width: 0;
+}
+.tech-input::placeholder { color: rgba(98, 114, 164, 0.7); }
+.tech-input:focus {
+    border-color: var(--primary);
+    box-shadow: 0 0 12px rgba(0, 240, 255, 0.2);
+    background: rgba(0, 240, 255, 0.05);
+}
+
+/* Detected addresses, one chip per adapter. The adapter name is the whole
+   point - it is what tells you which one the other players can reach. */
+.addr-chips { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; }
+.addr-chip {
+    display: flex; flex-direction: column; align-items: center; gap: 2px;
+    background: rgba(0, 0, 0, 0.35);
+    border: 1px solid rgba(77, 141, 255, 0.3);
+    padding: 6px 11px; cursor: pointer; text-align: center;
+    color: var(--text); transition: 0.2s;
+}
+.addr-chip:hover { border-color: var(--primary); background: rgba(0, 240, 255, 0.06); }
+.addr-chip.active { border-color: var(--primary); background: rgba(0, 240, 255, 0.12); }
+.chip-name {
+    font-family: var(--font-mono); font-size: 0.6rem;
+    letter-spacing: 1px; color: var(--muted); text-transform: uppercase;
+}
+.chip-ip { font-family: var(--font-mono); font-size: 0.8rem; color: var(--primary); }
+.addr-chip.vpn .chip-name { color: var(--secondary); }
+.addr-chip.virtual { opacity: 0.55; }
+.addr-chip.virtual .chip-ip { color: var(--muted); }
+
+.field-hint {
+    font-size: 0.78rem; color: #aabcdf; line-height: 1.5;
+}
+.field-hint .mono { font-family: var(--font-mono); color: var(--accent); }
+.field-hint.alert { color: var(--accent); }
+
+/* --- PLAYER LIST --- */
+.player-add { display: grid; grid-template-columns: 1fr 1fr auto; gap: 8px; }
+
+.player-list { list-style: none; display: flex; flex-direction: column; gap: 6px; }
+.player-list:empty::after {
+    content: '> list empty - the server cannot learn EA names, enter them by hand';
+    font-family: var(--font-mono); font-size: 0.72rem; color: var(--muted);
+}
+.player-row {
+    display: flex; align-items: center; gap: 10px;
+    background: #0f182e; border: 1px solid #1f3a6e;
+    padding: 8px 12px; transition: 0.25s;
+}
+.player-row:hover { border-color: var(--accent); }
+.player-slot { font-family: var(--font-mono); font-size: 0.68rem; color: var(--muted); }
+.player-nick { font-weight: 600; letter-spacing: 1px; flex: 1; }
+.player-ip { font-family: var(--font-mono); font-size: 0.74rem; color: var(--primary); }
+.player-kill {
+    background: transparent; border: 1px solid rgba(255, 51, 51, 0.4);
+    color: var(--danger); font-family: var(--font-mono); font-size: 0.7rem;
+    padding: 2px 8px; cursor: pointer; transition: 0.2s;
+}
+.player-kill:hover { background: var(--danger); color: #fff; }
+
+/* --- CLIENT STEPS --- */
+.client-steps { display: flex; flex-direction: column; gap: 7px; margin-top: 4px; }
+.step {
+    display: flex; align-items: center; gap: 10px;
+    font-size: 0.85rem; color: #aabcdf;
+    border-left: 2px solid rgba(0, 240, 255, 0.3); padding-left: 10px;
+}
+.step-num { font-family: var(--font-mono); font-size: 0.7rem; color: var(--primary); }
+
+/* --- LOG CONSOLE --- */
+.log-body {
+    flex: 1; overflow-y: auto;
+    font-family: var(--font-mono); font-size: 0.74rem;
+    line-height: 1.55; gap: 0;
+    padding: 12px 18px;
+    user-select: text;
+}
+.log-empty { color: var(--muted); }
+.log-row { white-space: pre-wrap; word-break: break-word; color: #9fb6d9; }
+.log-row.hit { color: var(--primary); }
+.log-row.warn { color: var(--accent); }
+.log-row.bad { color: var(--danger); }
+.log-row.good { color: var(--ok); }
+
+.status {
+    font-family: var(--font-mono); font-size: 0.68rem;
+    padding: 2px 8px; color: var(--muted); border: 1px solid var(--muted);
+}
+/* Cyan here too, so "server is live" is one colour wherever it appears. */
+.status.running {
+    color: var(--primary); border-color: var(--primary);
+    background: rgba(0, 240, 255, 0.08);
+}
+.status.stopped { color: var(--accent); border-color: var(--accent); }
+
+.cmd-preview {
+    display: block;
+    font-family: var(--font-mono); font-size: 0.66rem; color: var(--muted);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    user-select: text;
+}
+
+/* --- BUTTONS --- */
+.btn {
+    padding: 12px 26px; border: none;
+    font-family: var(--font-mono); font-weight: bold; font-size: 0.8rem;
+    text-transform: uppercase; letter-spacing: 1px;
+    cursor: pointer; transition: 0.3s;
+    display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+    clip-path: polygon(10px 0, 100% 0, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0 100%, 0 10px);
+}
+.btn-primary { background: var(--primary); color: #000; box-shadow: 0 0 20px rgba(0, 240, 255, 0.4); }
+.btn-primary:hover { background: #fff; transform: translateY(-2px); }
+.btn-primary.danger { background: var(--danger); color: #fff; box-shadow: 0 0 20px rgba(255, 51, 51, 0.4); }
+.btn-primary.danger:hover { background: #ff6b6b; }
+.btn-outline { background: transparent; border: 1px solid var(--secondary); color: var(--secondary); }
+.btn-outline:hover { background: rgba(77, 141, 255, 0.2); color: #fff; }
+.btn-mini {
+    padding: 5px 12px; font-size: 0.68rem; letter-spacing: 1px;
+    background: transparent; border: 1px solid rgba(0, 240, 255, 0.35); color: var(--primary);
+    clip-path: none;
+}
+.btn-mini:hover { background: rgba(0, 240, 255, 0.15); }
+.btn-mini.off { border-color: rgba(255, 157, 0, 0.5); color: var(--accent); }
+.btn-mini.off:hover { background: rgba(255, 157, 0, 0.15); }
+.btn:disabled { opacity: 0.35; cursor: not-allowed; transform: none; }
+.btn.hidden { display: none; }
+
+/* A privileged action (netsh, ipconfig /flushdns, cert generation) takes
+   seconds. It runs on its own thread, so the rest of the UI stays live - the
+   button just has to say so. */
+.btn.pending { opacity: 0.6; cursor: progress; transform: none; }
+.btn.pending::after {
+    content: ''; width: 9px; height: 9px;
+    border: 1px solid currentColor; border-top-color: transparent;
+    border-radius: 50%; animation: spin 0.7s linear infinite;
+}
+
+.action-bar { display: flex; gap: 12px; flex-shrink: 0; }
+.action-bar .btn { flex: 1; }
+
+/* --- TOASTS --- */
+.toast-stack {
+    position: fixed; bottom: 18px; right: 18px;
+    display: flex; flex-direction: column; gap: 8px; z-index: 5000;
+}
+.toast {
+    background: rgba(11, 16, 38, 0.95);
+    border: 1px solid var(--primary);
+    border-left-width: 3px;
+    padding: 11px 16px;
+    font-family: var(--font-mono); font-size: 0.75rem;
+    max-width: 400px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
+    animation: toastIn 0.3s ease-out;
+}
+.toast.bad { border-color: var(--danger); color: #ffb3b3; }
+.toast.good { border-color: var(--ok); color: #b6ffcb; }
+.toast.warn { border-color: var(--accent); color: #ffdca8; }
+.toast.out { animation: toastOut 0.3s forwards; }
+
+@keyframes toastIn  { from { opacity: 0; transform: translateX(30px); } }
+@keyframes toastOut { to   { opacity: 0; transform: translateX(30px); } }
+
+/* --- SCROLLBARS --- */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: rgba(0, 0, 0, 0.3); }
+::-webkit-scrollbar-thumb { background: rgba(0, 240, 255, 0.25); }
+::-webkit-scrollbar-thumb:hover { background: rgba(0, 240, 255, 0.5); }

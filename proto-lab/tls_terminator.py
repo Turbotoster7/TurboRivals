@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import base64
 import hashlib
 import hmac
 import os
@@ -103,25 +104,62 @@ def prf_tls10(secret: bytes, label: bytes, seed: bytes, n: int) -> bytes:
     return bytes(a ^ b for a, b in zip(md5, sha))
 
 
+def der_tlv(buf: bytes, pos: int) -> tuple[int, bytes, int]:
+    """Jeden element DER: zwraca (tag, zawartosc, pozycja za elementem)."""
+    tag = buf[pos]
+    length = buf[pos + 1]
+    pos += 2
+    if length & 0x80:                      # dlugosc wielobajtowa
+        count = length & 0x7F
+        length = int.from_bytes(buf[pos:pos + count], "big")
+        pos += count
+    return tag, buf[pos:pos + length], pos + length
+
+
 def load_rsa_priv(key_path: Path) -> tuple[int, int, int]:
-    """Zwraca (n, d, k_bytes) z klucza prywatnego przez `openssl rsa -text`."""
-    proc = subprocess.run(["openssl", "rsa", "-in", str(key_path), "-text",
-                           "-noout"], capture_output=True, text=True)
-    if proc.returncode != 0:
-        raise SystemExit(f"nie moge odczytac klucza {key_path}:\n{proc.stderr}")
-    txt = proc.stdout
+    """Zwraca (n, d, k_bytes) z klucza prywatnego - wlasny parser DER.
 
-    def grab(field: str) -> int:
-        # Bloki hex postaci "field:\n    00:ab:cd:...\n    ..." az do nastepnego
-        # pola (linia bez wciecia zaczynajaca sie od litery).
-        m = re.search(rf"{field}:\s*\n((?:\s+[0-9a-f:]+\s*\n)+)", txt)
-        if not m:
-            raise SystemExit(f"could not find field '{field}' in openssl rsa -text")
-        hexstr = re.sub(r"[^0-9a-f]", "", m.group(1))
-        return int(hexstr, 16)
+    Wczesniej szlo to przez `openssl rsa -text`, co wymagalo binarki openssl w
+    PATH przy KAZDYM starcie serwera. Na czystym Windowsie jej nie ma (u nas
+    byla tylko z Git for Windows), wiec spakowany launcher padalby u kazdego,
+    kto Gita nie ma. Odczyt dwoch liczb z ASN.1 nie potrzebuje kryptografii -
+    zostajemy przy zasadzie "proto-lab bez zaleznosci zewnetrznych".
 
-    n = grab("modulus")
-    d = grab("privateExponent")
+    Obsluguje oba formaty, ktore moga trafic do pki/:
+      PKCS#1  "BEGIN RSA PRIVATE KEY" - SEQUENCE { ver, n, e, d, ... }
+      PKCS#8  "BEGIN PRIVATE KEY"     - SEQUENCE { ver, alg, OCTET STRING{ ^ } }
+    """
+    raw = key_path.read_bytes()
+    if b"-----BEGIN" in raw:
+        body64 = b"".join(line for line in raw.splitlines()
+                          if line and not line.startswith(b"-----"))
+        der = base64.b64decode(body64)
+    else:
+        der = raw
+
+    tag, body, _ = der_tlv(der, 0)
+    if tag != 0x30:
+        raise SystemExit(f"{key_path}: to nie jest sekwencja DER (tag 0x{tag:02x})")
+
+    # Drugi element rozstrzyga format: INTEGER => PKCS#1, SEQUENCE => PKCS#8.
+    _, _, after_version = der_tlv(body, 0)
+    tag2, _, after_alg = der_tlv(body, after_version)
+    if tag2 == 0x30:
+        tag3, inner, _ = der_tlv(body, after_alg)
+        if tag3 != 0x04:
+            raise SystemExit(f"{key_path}: PKCS#8 bez OCTET STRING z kluczem")
+        _, body, _ = der_tlv(inner, 0)
+
+    # RSAPrivateKey ::= SEQUENCE { version, modulus, publicExponent,
+    #                              privateExponent, ... } - bierzemy 4 pierwsze.
+    values, pos = [], 0
+    for _ in range(4):
+        tag, val, pos = der_tlv(body, pos)
+        if tag != 0x02:
+            raise SystemExit(f"{key_path}: oczekiwalem INTEGER, jest 0x{tag:02x}")
+        values.append(int.from_bytes(val, "big"))
+
+    _, n, _, d = values
     k = (n.bit_length() + 7) // 8
     return n, d, k
 
