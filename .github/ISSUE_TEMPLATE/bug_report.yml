@@ -1,0 +1,90 @@
+name: Something does not work
+description: A session will not start, a player cannot join, the launcher misbehaves
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Please check these first — they are the three most common reports and none of them is a bug:**
+
+        - **"Windows protected your PC"** — the build is not signed. Choose *More info* → *Run anyway*.
+        - **`Failed to resolve Python.Runtime.Loader.Initialize`** — you ran it from a folder
+          extracted out of a downloaded archive. Install with `TurboRivalsSetup-x.y.z.exe` instead.
+        - **A player connects and is dropped straight away** — their EA App is not running or not
+          signed in, so the game never gets an Origin token. The launcher's `EA APP` row shows this.
+
+  - type: input
+    id: version
+    attributes:
+      label: Launcher version
+      description: Shown in the window header, next to "NFS RIVALS // ALLDRIVE".
+      placeholder: "1.0.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: role
+    attributes:
+      label: Which side hit the problem?
+      options:
+        - Host (running the server)
+        - Joining player
+        - Both
+    validations:
+      required: true
+
+  - type: dropdown
+    id: network
+    attributes:
+      label: How are the players connected?
+      options:
+        - Same local network
+        - Radmin VPN
+        - Hamachi or another VPN
+        - Only playing alone
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected, what you got instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: preflight
+    attributes:
+      label: PRE-FLIGHT CHECK
+      description: >
+        A screenshot of the launcher window is ideal — it shows every check at once.
+        Otherwise say which rows were green and which were not.
+    validations:
+      required: true
+
+  - type: textarea
+    id: server-log
+    attributes:
+      label: Server log
+      description: >
+        From the SERVER LOG panel, the part around the failure. The lines naming a
+        component and command (`Fire2 comp=… cmd=…`) are the useful ones. Paste them as
+        text rather than a screenshot if you can.
+      render: text
+
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+      placeholder: "Windows 11 24H2"
+
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Before you send this
+      options:
+        - label: The EA App was running and signed in on every affected machine
+          required: true
+        - label: I own the game and launched it through the EA App, not through Steam
+          required: true

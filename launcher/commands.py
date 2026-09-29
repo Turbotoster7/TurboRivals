@@ -63,6 +63,21 @@ HOSTS = hosts_switch.HOSTS
 BEGIN, END = hosts_switch.BEGIN, hosts_switch.END
 REDIRECTOR = hosts_switch.PRIMARY[0]             # gosredirector.ea.com
 
+def _read_version() -> str:
+    """The one place the version lives: the VERSION file at the repository root.
+
+    The spec ships it as bundled data, the Inno script reads the same file, and
+    the window shows what this returns - so a release cannot end up stamped
+    three different ways.
+    """
+    try:
+        return (ROOT / "VERSION").read_text(encoding="utf-8").strip() or "dev"
+    except OSError:
+        return "dev"
+
+
+APP_VERSION = _read_version()
+
 MAX_GUESTS = 5          # host + 5 guests = 6 slots (MaxClientCount in NFS14.exe)
 STEAM_APP_ID = "1262600"
 

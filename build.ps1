@@ -25,7 +25,8 @@ if (-not (Test-Path $python)) {
     throw "PyInstaller is missing from the venv. Run: venv\Scripts\python.exe -m pip install pyinstaller pywebview cryptography"
 }
 
-Write-Host '==> building the launcher (PyInstaller, one folder)' -ForegroundColor Cyan
+$version = (Get-Content (Join-Path $PSScriptRoot 'VERSION') -Raw).Trim()
+Write-Host "==> building TurboRivals $version (PyInstaller, one folder)" -ForegroundColor Cyan
 # WARN keeps the ~200 lines of hook chatter out of the way, so a real problem
 # is the only thing on screen.
 & $python TurboRivals.spec --noconfirm --log-level WARN
@@ -73,6 +74,6 @@ for ($i = 1; $i -le $attempts; $i++) {
     Start-Sleep -Seconds 2
 }
 
-$setup = Join-Path $PSScriptRoot 'dist\TurboRivalsSetup.exe'
+$setup = Join-Path $PSScriptRoot "dist\TurboRivalsSetup-$version.exe"
 $setupMb = [math]::Round(((Get-Item $setup).Length / 1MB), 1)
-Write-Host "    dist\TurboRivalsSetup.exe  ($setupMb MB)" -ForegroundColor Green
+Write-Host "    dist\TurboRivalsSetup-$version.exe  ($setupMb MB)" -ForegroundColor Green

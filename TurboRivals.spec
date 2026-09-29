@@ -34,11 +34,38 @@ commands.py): the bundle itself is unpacked to a temp directory and wiped on
 exit.
 """
 
+from PyInstaller.utils.win32.versioninfo import (
+    FixedFileInfo, StringFileInfo, StringStruct, StringTable, VarFileInfo,
+    VarStruct, VSVersionInfo)
+
+# One source of truth for the version: the VERSION file. It is bundled so the
+# running launcher can show it, stamped into the exe's Windows version resource,
+# and read again by installer/TurboRivals.iss for the setup file name.
+APP_VERSION = open('VERSION', encoding='utf-8').read().strip()
+_v = tuple(int(part) for part in (APP_VERSION.split('.') + ['0', '0', '0'])[:3]) + (0,)
+
+version_resource = VSVersionInfo(
+    ffi=FixedFileInfo(filevers=_v, prodvers=_v, mask=0x3F, flags=0x0,
+                      OS=0x40004, fileType=0x1, subtype=0x0, date=(0, 0)),
+    kids=[
+        StringFileInfo([StringTable('040904B0', [
+            StringStruct('CompanyName', 'TurboRivals'),
+            StringStruct('FileDescription', 'TurboRivals launcher for NFS Rivals'),
+            StringStruct('FileVersion', APP_VERSION),
+            StringStruct('InternalName', 'TurboRivals'),
+            StringStruct('OriginalFilename', 'TurboRivals.exe'),
+            StringStruct('ProductName', 'TurboRivals'),
+            StringStruct('ProductVersion', APP_VERSION),
+        ])]),
+        VarFileInfo([VarStruct('Translation', [1033, 1200])]),
+    ],
+)
+
 a = Analysis(
     ['launcher/app.py'],
     pathex=['proto-lab', 'tools'],
     binaries=[],
-    datas=[('launcher/web', 'web')],
+    datas=[('launcher/web', 'web'), ('VERSION', '.')],
     hiddenimports=[
         # the server and everything it imports by bare name
         'tls_terminator', 'blaze', 'lobby', 'player_store', 'tcp_proxy',
@@ -78,6 +105,7 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
     icon='launcher/web/icon.ico',
+    version=version_resource,
 )
 
 coll = COLLECT(

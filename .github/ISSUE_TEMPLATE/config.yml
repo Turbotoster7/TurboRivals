@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question about setting it up
+    url: https://github.com/Turbotoster7/TurboRivals/discussions
+    about: Ask here rather than opening a bug — most setup problems are covered in the readme.

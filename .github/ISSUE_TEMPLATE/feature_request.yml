@@ -1,0 +1,19 @@
+name: Idea
+description: Suggest something the server or the launcher should do
+labels: [idea]
+body:
+  - type: textarea
+    id: idea
+    attributes:
+      label: What should it do
+      description: >
+        Worth knowing what is already on the roadmap: host migration, sessions for three
+        or more players, and internet play without a VPN are known gaps, not oversights.
+    validations:
+      required: true
+
+  - type: textarea
+    id: why
+    attributes:
+      label: Why
+      description: What you are trying to do that the current version makes hard.

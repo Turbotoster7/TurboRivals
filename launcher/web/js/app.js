@@ -370,6 +370,7 @@ async function refreshState() {
     state.maxGuests = fresh.max_guests;
     state.addresses = fresh.addresses;
     state.eaApp = fresh.ea_app;
+    $('#appVersion').textContent = fresh.version ? '· v' + fresh.version : '';
     state.players = await callApi('get_players');
 
     const config = fresh.config;

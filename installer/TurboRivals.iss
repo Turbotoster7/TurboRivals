@@ -9,7 +9,14 @@
 ; and it asks for them itself with its own ELEVATE button.
 
 #define AppName      "TurboRivals"
-#define AppVersion   "1.0.0"
+; Read from ..\VERSION so the setup, the exe resource and the launcher window
+; can never disagree about which build this is.
+#define VerFile FileOpen("..\VERSION")
+#define AppVersion Trim(FileRead(VerFile))
+#expr FileClose(VerFile)
+#if AppVersion == ""
+  #error Could not read the version from ..\VERSION
+#endif
 #define AppPublisher "TurboRivals"
 #define AppExe       "TurboRivals.exe"
 
@@ -28,7 +35,7 @@ PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 OutputDir=..\dist
-OutputBaseFilename=TurboRivalsSetup
+OutputBaseFilename=TurboRivalsSetup-{#AppVersion}
 SetupIconFile=..\launcher\web\icon.ico
 UninstallDisplayIcon={app}\{#AppExe}
 Compression=lzma2/max

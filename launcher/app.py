@@ -107,6 +107,7 @@ class Api:
         config = commands.load_config()
         self._game = commands.Game([tuple(p) for p in config.get("players", [])])
         return {
+            "version": commands.APP_VERSION,
             "admin": commands.is_admin(),
             "ea_app": commands.ea_app_running(),
             "hosts": commands.hosts_status(),

@@ -175,6 +175,19 @@ Two warnings come up on a fresh machine and neither means anything is wrong:
   `TurboRivalsSetup.exe` instead, or unblock the folder first
   (`Get-ChildItem -Recurse <folder> | Unblock-File`).
 
+## Reporting a problem
+
+[Open an issue](https://github.com/Turbotoster7/TurboRivals/issues/new/choose). The form asks
+for the launcher version, which side hit the problem, how the players are connected, and the
+`PRE-FLIGHT CHECK` panel — a screenshot of the window covers most of that at once.
+
+What helps most is the **server log**, in particular the lines naming a component and a
+command (`Fire2 comp=… cmd=…`): they say exactly how far the client got. A session that
+stops after `Util.preAuth` without an `Authentication.login` almost always means the EA App
+was not running on that machine.
+
+Read the section above first — the three most common reports are not bugs.
+
 ## What is missing
 
 - **host migration** — when the host leaves, the game ends and everyone else gets
