@@ -1,49 +1,50 @@
 #!/usr/bin/env python3
-"""Generator certyfikatu zastepczego dla serwera zastepujacego redirector EA.
+"""Stand-in certificate generator for the server that replaces the EA redirector.
 
-Kontekst: usluga online NFS Rivals zostala wylaczona 2025-10-07. Stawiamy
-wlasny serwer zastepczy, do ktorego laczy sie nasz wlasny, legalnie kupiony
-klient. Serwer musi przedstawic certyfikat SSL - to jego wlasna tozsamosc,
-nie podszywanie sie pod dzialajaca usluge (uslugi EA juz nie ma).
+Context: the NFS Rivals online service was shut down on 2025-10-07. We run our
+own stand-in server, which our own, legally purchased client connects to. The
+server has to present an SSL certificate - that is its own identity, not an
+impersonation of a live service (the EA service no longer exists).
 
-Dlaczego samodzielnie podpisany cert wystarcza - i dlaczego nie sam z siebie:
-stary ProtoSSL (DirtySDK) tej epoki JEDNAK weryfikuje podpis certu (memcmp po
-haszu), wiec zwykly self-signed zostalby odrzucony. Wykorzystujemy znany blad
-parsera (Aim4kill/Bug_OldProtoSSL): jesli OID algorytmu podpisu ustawic na
-`rsaEncryption` (ASN_OBJ_RSA_PKCS_KEY, 1.2.840.113549.1.1.1), parser wpada w
-galaz `default`, ustawia iHashSize = 0, a wtedy memcmp(...,0)==0 - weryfikacja
-"przechodzi" bez sprawdzania podpisu. Testowane na BF3/BF4 (Frostbite 2013, ta
-sama generacja DirtySDK co Rivals). Dlatego po wygenerowaniu certu PATCHUJEMY
-jego DER: podmieniamy OID podpisu na rsaEncryption. Klucz prywatny EA nie jest
-potrzebny ani uzywany - generujemy wlasny; cert o CN `gosredirector.ea.com` to
-tozsamosc naszego serwera zastepczego (jeden CN na cala tablice srodowisk).
+Why a self-made certificate is enough - and why not on its own:
+the old ProtoSSL (DirtySDK) of this era DOES verify the cert signature (memcmp
+over the hash), so a plain self-signed cert would be rejected. We use a known
+parser bug (Aim4kill/Bug_OldProtoSSL): if the signature algorithm OID is set to
+`rsaEncryption` (ASN_OBJ_RSA_PKCS_KEY, 1.2.840.113549.1.1.1), the parser falls
+into the `default` branch, sets iHashSize = 0, and then memcmp(...,0)==0 - the
+verification "passes" without checking the signature. Tested on BF3/BF4
+(Frostbite 2013, the same DirtySDK generation as Rivals). That is why after
+generating the cert we PATCH its DER: we swap the signature OID for
+rsaEncryption. EA's private key is neither needed nor used - we generate our
+own; the cert with CN `gosredirector.ea.com` is the identity of our stand-in
+server (one CN for the whole environment table).
 
-WAZNE - issuer MUSI byc DN OTG3, nie self-signed. To bylo zrodlo RST w rundzie 1:
-przed weryfikacja podpisu ProtoSSL wybiera wbudowany certyfikat CA po issuer DN
-leafa. Nasz poprzedni self-signed mial issuer=CN gosredirector.ea.com, ktorego w
-magazynie CA klienta NIE MA - parser wywalal sie na dopasowaniu CA, ZANIM doszedl
-do zpatchowanego OID, i klient zrywal polaczenie (RST bez Alertu) tuz po naszym
-Certificate. Dlatego zamiast certu self-signed wystawiamy leaf pod wlasnym
-throwaway CA, ktorego subject = DOKLADNY DN OTG3
-(`docs/recon/capture/120822-003-server-cert0.der`). Klucz CA jest nieistotny -
-podpis leafa i tak nie jest weryfikowany.
+IMPORTANT - the issuer MUST be the OTG3 DN, not self-signed. This was the source
+of the RST in round 1: before verifying the signature, ProtoSSL picks a built-in
+CA certificate by the leaf's issuer DN. Our previous self-signed cert had
+issuer=CN gosredirector.ea.com, which is NOT in the client's CA store - the parser
+failed on the CA lookup BEFORE it reached the patched OID, and the client dropped
+the connection (RST without an Alert) right after our Certificate. So instead of
+a self-signed cert we issue the leaf under our own throwaway CA whose subject =
+the EXACT OTG3 DN (`docs/recon/capture/120822-003-server-cert0.der`). The CA key
+does not matter - the leaf signature is not verified anyway.
 
-Pola DN musza byc kodowane jako PrintableString (email jako IA5String) -
-DOKLADNIE jak oryginal EA. UTF8String (inny tag: 0x0c zamiast 0x13) zmienilby
-bajty DN, a DirtySDK porownuje issuera bajtowo - znowu RST.
+DN fields must be encoded as PrintableString (email as IA5String) - EXACTLY like
+the EA original. UTF8String (a different tag: 0x0c instead of 0x13) would change
+the DN bytes, and DirtySDK compares the issuer byte by byte - RST again.
 
-Rozszerzenia leafa odwzorowuja to, co realnie DZIALA (sesja multiplayer z
-2026-09-16): basicConstraints CA:FALSE, subjectKeyIdentifier i
-authorityKeyIdentifier - wszystkie niekrytyczne. Wczesniejsza wersja tego pliku
-twierdzila w komentarzu, ze AKI jest celowo pomijane, ale openssl 3.x dodawal je
-sam i tak wygenerowany cert przeszedl; wzorcem jest cert, nie komentarz.
+The leaf extensions mirror what actually WORKS (the multiplayer session of
+2026-09-16): basicConstraints CA:FALSE, subjectKeyIdentifier and
+authorityKeyIdentifier - all non-critical. An earlier version of this file
+claimed in a comment that AKI was deliberately omitted, but openssl 3.x added it
+by itself and the resulting cert passed; the cert is the reference, not the comment.
 
-Nie wymaga `openssl` w PATH - korzysta z biblioteki `cryptography`, zeby ten sam
-kod dzialal w spakowanym launcherze u kogos, kto Pythona ani openssl nie ma.
-Wynik trafia do proto-lab/pki/, ktory jest w .gitignore - klucz prywatny nie
-idzie do repozytorium ani do rozdawanego pliku .exe.
+Does not require `openssl` in PATH - uses the `cryptography` library, so the same
+code works in the packaged launcher for someone who has neither Python nor
+openssl. The output goes to proto-lab/pki/, which is in .gitignore - the private
+key goes neither into the repository nor into the distributed .exe.
 
-Uzycie:
+Usage:
     python proto-lab/make_stub_cert.py
     python proto-lab/make_stub_cert.py --cn gosredirector.ea.com --bits 1024
 """
@@ -61,10 +62,10 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.name import _ASN1Type
 from cryptography.x509.oid import NameOID
 
-# Pola podmiotu odwzorowane z oryginalnego certu EA (docs/protocol.md, sekcja
-# 5). Oryginal mial klucz RSA 1024-bit i CN bez "online" - jeden cert na cala
-# tablice srodowisk. Klient tych pol nie waliduje; trzymamy je dla zgodnosci
-# z tym, co gra "widziala" na zywej usludze.
+# Subject fields mirrored from the original EA cert (docs/protocol.md, section
+# 5). The original had a 1024-bit RSA key and a CN without "online" - one cert for
+# the whole environment table. The client does not validate these fields; we keep
+# them for consistency with what the game "saw" on the live service.
 SUBJECT = [
     (NameOID.COUNTRY_NAME, "US"),
     (NameOID.STATE_OR_PROVINCE_NAME, "California"),
@@ -73,10 +74,10 @@ SUBJECT = [
     (NameOID.COMMON_NAME, "gosredirector.ea.com"),
 ]
 
-# DN wystawcy (issuer) DOKLADNIE jak w oryginalnym certcie EA - to po nim klient
-# dopasowuje wbudowane CA (patrz docstring, powod RST w rundzie 1). Kolejnosc pol
-# odwzorowuje oryginal (docs/recon/capture/120822-003-server-cert0.der). Ten DN
-# staje sie subjectem naszego throwaway CA, wiec leaf.issuer = ten DN.
+# Issuer DN EXACTLY as in the original EA cert - the client matches its built-in
+# CAs by it (see the docstring, cause of the RST in round 1). The field order
+# mirrors the original (docs/recon/capture/120822-003-server-cert0.der). This DN
+# becomes the subject of our throwaway CA, so leaf.issuer = this DN.
 ISSUER_OTG3 = [
     (NameOID.COMMON_NAME, "OTG3 Certificate Authority"),
     (NameOID.COUNTRY_NAME, "US"),
@@ -87,13 +88,13 @@ ISSUER_OTG3 = [
     (NameOID.EMAIL_ADDRESS, "dirtysock-contact@ea.com"),
 ]
 
-SERIAL = 962          # 0x3C2, jak oryginal (kosmetyka)
+SERIAL = 962          # 0x3C2, like the original (cosmetic)
 
-# OID-y AlgorithmIdentifier (same bajty tresci OID, bez naglowka TLV). Wszystkie
-# sygnaturowe warianty maja te sama dlugosc 9 bajtow co rsaEncryption, wiec
-# podmiana nie zmienia dlugosci DER. rsaEncryption (1.2.840.113549.1.1.1) to
-# nasz cel - trafia w galaz `default` parsera ProtoSSL i zeruje iHashSize.
-OID_RSA_ENCRYPTION = bytes.fromhex("2a864886f70d010101")   # rsaEncryption (cel)
+# AlgorithmIdentifier OIDs (just the OID content bytes, no TLV header). All the
+# signature variants have the same 9-byte length as rsaEncryption, so swapping
+# them does not change the DER length. rsaEncryption (1.2.840.113549.1.1.1) is
+# our target - it hits the `default` branch of the ProtoSSL parser and zeroes iHashSize.
+OID_RSA_ENCRYPTION = bytes.fromhex("2a864886f70d010101")   # rsaEncryption (target)
 SIG_OIDS = {
     "sha256WithRSA": bytes.fromhex("2a864886f70d01010b"),
     "sha1WithRSA":   bytes.fromhex("2a864886f70d010105"),
@@ -102,10 +103,10 @@ SIG_OIDS = {
 
 
 def build_name(pairs: list[tuple[x509.ObjectIdentifier, str]]) -> x509.Name:
-    """DN z wymuszonym PrintableString (email: IA5String) - jak oryginal EA.
+    """DN with forced PrintableString (email: IA5String) - like the EA original.
 
-    Domyslnie `cryptography` koduje wiekszosc pol jako UTF8String. Inny tag to
-    inne bajty DN, a DirtySDK porownuje issuera bajtowo.
+    By default `cryptography` encodes most fields as UTF8String. A different tag
+    means different DN bytes, and DirtySDK compares the issuer byte by byte.
     """
     attrs = []
     for oid, value in pairs:
@@ -116,12 +117,12 @@ def build_name(pairs: list[tuple[x509.ObjectIdentifier, str]]) -> x509.Name:
 
 
 def patch_sig_oid(der: bytes) -> bytes:
-    """Podmienia OID algorytmu podpisu na rsaEncryption (bug ProtoSSL).
+    """Swaps the signature algorithm OID for rsaEncryption (ProtoSSL bug).
 
-    W certyfikacie X.509 OID podpisu wystepuje dwukrotnie: w tbsCertificate
-    (pole `signature`) i w zewnetrznym `signatureAlgorithm`. ProtoSSL czyta ten
-    zewnetrzny, ale podpis i tak nie jest weryfikowany, wiec podmieniamy KAZDE
-    wystapienie - obie pozycje zostaja spojne, a dlugosci DER bez zmian.
+    In an X.509 certificate the signature OID appears twice: in tbsCertificate
+    (the `signature` field) and in the outer `signatureAlgorithm`. ProtoSSL reads
+    the outer one, but the signature is not verified anyway, so we swap EVERY
+    occurrence - both positions stay consistent, and the DER lengths are unchanged.
     """
     hits = 0
     for name, oid in SIG_OIDS.items():
@@ -131,12 +132,12 @@ def patch_sig_oid(der: bytes) -> bytes:
             hits += count
             print(f"  patch OID: {name} -> rsaEncryption ({count}x)")
     if hits == 0:
-        raise SystemExit("nie znalazlem znanego OID podpisu w DER - cert "
-                         "wygenerowany innym algorytmem niz sha256/sha1/md5?")
-    # Asercje: cel obecny, zaden zrodlowy OID juz nie zostal.
-    assert OID_RSA_ENCRYPTION in der, "po patchu brak rsaEncryption w DER"
+        raise SystemExit("no known signature OID found in the DER - cert "
+                         "generated with an algorithm other than sha256/sha1/md5?")
+    # Assertions: the target is present, none of the source OIDs is left.
+    assert OID_RSA_ENCRYPTION in der, "no rsaEncryption in the DER after the patch"
     for name, oid in SIG_OIDS.items():
-        assert oid not in der, f"po patchu zostal OID {name} w DER"
+        assert oid not in der, f"OID {name} still in the DER after the patch"
     return der
 
 
@@ -150,7 +151,7 @@ def der_to_pem(der: bytes) -> bytes:
 
 def generate(out: Path, cn: str = "gosredirector.ea.com", bits: int = 1024,
              days: int = 7300) -> dict:
-    """Tworzy pki/ z kluczem leafa i zpatchowanym certem. Zwraca sciezki."""
+    """Creates pki/ with the leaf key and the patched cert. Returns the paths."""
     out.mkdir(parents=True, exist_ok=True)
 
     subject = build_name([(oid, cn if oid == NameOID.COMMON_NAME else val)
@@ -160,8 +161,8 @@ def generate(out: Path, cn: str = "gosredirector.ea.com", bits: int = 1024,
     now = dt.datetime.now(dt.timezone.utc)
     not_after = now + dt.timedelta(days=days)
 
-    # 1. Throwaway CA. Liczy sie tylko jego SUBJECT (= DN OTG3), bo to on staje
-    #    sie issuerem leafa. Klucz nieistotny - podpis nie jest weryfikowany.
+    # 1. Throwaway CA. Only its SUBJECT (= the OTG3 DN) matters, because it becomes
+    #    the leaf's issuer. The key does not matter - the signature is not verified.
     ca_key = rsa.generate_private_key(public_exponent=65537, key_size=1024)
     ca_cert = (x509.CertificateBuilder()
                .subject_name(issuer)
@@ -174,7 +175,7 @@ def generate(out: Path, cn: str = "gosredirector.ea.com", bits: int = 1024,
                               critical=True)
                .sign(ca_key, hashes.SHA256()))
 
-    # 2. Leaf: wlasny klucz, subject jak oryginal EA, issuer = DN OTG3.
+    # 2. Leaf: our own key, subject like the EA original, issuer = the OTG3 DN.
     key = rsa.generate_private_key(public_exponent=65537, key_size=bits)
     cert = (x509.CertificateBuilder()
             .subject_name(subject)
@@ -192,8 +193,8 @@ def generate(out: Path, cn: str = "gosredirector.ea.com", bits: int = 1024,
                 critical=False)
             .sign(ca_key, hashes.SHA256()))
 
-    # 3. Patch OID podpisu -> rsaEncryption (bug ProtoSSL). Bez tego stary klient
-    #    odrzucilby cert, bo weryfikuje podpis.
+    # 3. Patch the signature OID -> rsaEncryption (ProtoSSL bug). Without it the old
+    #    client would reject the cert, because it verifies the signature.
     patched = patch_sig_oid(cert.public_bytes(serialization.Encoding.DER))
 
     paths = {
@@ -219,35 +220,35 @@ def main() -> int:
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--cn", default="gosredirector.ea.com",
-                    help="Common Name certu (domyslnie jak oryginal EA)")
+                    help="Common Name of the cert (default: like the EA original)")
     ap.add_argument("--bits", type=int, default=1024,
-                    help="rozmiar klucza RSA; 1024 = jak oryginal, stary klient "
-                         "na pewno przyjmie.")
+                    help="RSA key size; 1024 = like the original, the old client "
+                         "will definitely accept it.")
     ap.add_argument("--days", type=int, default=7300,
-                    help="waznosc w dniach (domyslnie ~20 lat)")
+                    help="validity in days (default ~20 years)")
     ap.add_argument("-o", "--out", type=Path,
                     default=Path(__file__).parent / "pki",
-                    help="katalog na klucz i cert (gitignore)")
+                    help="directory for the key and cert (gitignored)")
     args = ap.parse_args()
 
-    print(f"generuje cert zastepczy: CN={args.cn}, RSA-{args.bits}, {args.days} dni")
+    print(f"generating stand-in cert: CN={args.cn}, RSA-{args.bits}, {args.days} days")
     paths = generate(args.out, args.cn, args.bits, args.days)
 
     cert = x509.load_der_x509_certificate(paths["der"].read_bytes())
-    print(f"\n  klucz leafa: {paths['key']}")
+    print(f"\n  leaf key:   {paths['key']}")
     print(f"  cert (PEM): {paths['crt']}")
     print(f"  cert (DER): {paths['der']}")
-    print(f"  razem: {paths['pem']}")
-    print("\n--- weryfikacja ---")
+    print(f"  combined:   {paths['pem']}")
+    print("\n--- verification ---")
     print(f"  subject: {cert.subject.rfc4514_string()}")
     print(f"  issuer:  {cert.issuer.rfc4514_string()}")
     print(f"  serial:  {cert.serial_number}")
-    print(f"  waznosc: {cert.not_valid_before_utc.date()} -> {cert.not_valid_after_utc.date()}")
+    print(f"  valid:   {cert.not_valid_before_utc.date()} -> {cert.not_valid_after_utc.date()}")
     print(f"  sig OID: {cert.signature_algorithm_oid.dotted_string} "
-          f"({'OK - rsaEncryption' if cert.signature_algorithm_oid.dotted_string == '1.2.840.113549.1.1.1' else 'BLAD'})")
-    print("  ^ issuer MUSI byc DN OTG3 (CN=OTG3 Certificate Authority ...), "
-          "inaczej klient zerwie po Certificate.")
-    print("\nGotowe. Cert poda serwer zastepczy terminujacy TLS.")
+          f"({'OK - rsaEncryption' if cert.signature_algorithm_oid.dotted_string == '1.2.840.113549.1.1.1' else 'ERROR'})")
+    print("  ^ issuer MUST be the OTG3 DN (CN=OTG3 Certificate Authority ...), "
+          "otherwise the client will drop the connection after Certificate.")
+    print("\nDone. The stand-in TLS-terminating server will present this cert.")
     return 0
 
 

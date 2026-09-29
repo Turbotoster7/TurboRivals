@@ -1,35 +1,35 @@
-# Pelny zrzut stringow z binarki - duzy i odtwarzalny jednym poleceniem
+# Full string dump from the binary - large and reproducible with one command
 docs/recon/strings_*_all.txt
 
-# Surowe przechwycone bajty - generowane lokalnie
+# Raw captured bytes - generated locally
 docs/recon/capture/
 
-# Kopie zapasowe pliku hosts
+# Backups of the hosts file
 *.turborivals-*.bak
 
-# Klucz prywatny i cert zastepczy serwera - generowane lokalnie, nie do repo
+# The server's private key and stand-in cert - generated locally, not for the repo
 proto-lab/pki/
 
-# Zmienne startowe EA z zywej sesji - zawieraja JWT konta i sesyjne tokeny.
-# Do repo idzie tylko szablon *.example.txt z placeholderami.
+# EA launch variables from a live session - they contain the account JWT and session tokens.
+# Only the *.example.txt template with placeholders goes into the repo.
 proto-lab/ea_launch_env.txt
 
 __pycache__/
 *.pyc
 
-# Rust (fazy 3-4)
+# Rust (phases 3-4)
 target/
 
-# Logi serwera i Fridy z przebiegow testowych - duze, generowane lokalnie przy kazdym tescie
+# Server and Frida logs from test runs - large, generated locally on every test
 log-*.txt
 frida-*.txt
 
-# launcher: lokalne nicki i adresy graczy
+# launcher: local player nicknames and addresses
 launcher/config.json
 
 # PyInstaller
 build/
 dist/
 
-# pozostalosc po wersji na customtkinter - UI jest teraz w launcher/web/
+# leftover from the customtkinter version - the UI now lives in launcher/web/
 launcher/background.png

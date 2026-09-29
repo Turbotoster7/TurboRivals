@@ -1,17 +1,18 @@
 #!/usr/bin/env python3
-"""Koder/dekoder protokolu Blaze: ramka Fire2 + TDF (heat2).
+"""Blaze protocol encoder/decoder: the Fire2 frame + TDF (heat2).
 
-Po przebiciu TLS (tls_terminator.py) czytamy ruch Blaze otwartym tekstem.
-Pierwszy pakiet klienta to Redirector.getServerInstance (component 5, cmd 1).
-Zeby gra poszla dalej, musimy ODPOWIEDZIEC - a do tego potrzebny jest enkoder
-TDF. Ten modul jest lustrem dekodera zweryfikowanego na przechwyconym pakiecie
-(docs/recon/capture, blaze-first-*.bin): tag 24-bit (6 bitow/znak), typ 1 bajt,
-potem wartosc. Format ustalony empirycznie i round-tripem na realnym pakiecie.
+Once TLS is broken (tls_terminator.py) we read the Blaze traffic in the clear.
+The client's first packet is Redirector.getServerInstance (component 5, cmd 1).
+For the game to go any further we have to ANSWER - and that needs a TDF
+encoder. This module mirrors the decoder verified on a captured packet
+(docs/recon/capture, blaze-first-*.bin): 24-bit tag (6 bits/char), 1-byte type,
+then the value. The format was established empirically and by round-tripping a
+real packet.
 
-UWAGA co do schematu odpowiedzi: sekcja .text binarki Steam jest zaszyfrowana
-(entropia 1.000), wiec map_tdf_classes.py nie zrzuci ukladu klas. Dokladny
-zestaw pol odpowiedzi (ServerInstanceInfo) ustalamy empirycznie - wysylamy
-i czytamy reakcje klienta (jak przy certcie i wersji rekordu).
+NOTE on the response schema: the .text section of the Steam binary is encrypted
+(entropy 1.000), so map_tdf_classes.py cannot dump the class layout. The exact
+set of response fields (ServerInstanceInfo) is established empirically - we send
+and read the client's reaction (as with the cert and the record version).
 """
 
 from __future__ import annotations
@@ -19,7 +20,7 @@ from __future__ import annotations
 import struct
 from dataclasses import dataclass
 
-# --- typy TDF na drucie (heat2) ---
+# --- TDF wire types (heat2) ---
 T_INT = 0x00
 T_STRING = 0x01
 T_BLOB = 0x02
@@ -32,12 +33,12 @@ T_OBJTYPE = 0x08
 T_OBJID = 0x09
 T_FLOAT = 0x0A
 
-UNION_UNSET = 0x7F         # brak aktywnego skladnika unii
+UNION_UNSET = 0x7F         # no active union member
 
 
-# ---------------------------------------------------------------- tagi
+# ---------------------------------------------------------------- tags
 def enc_tag(label: str) -> bytes:
-    """4-znakowy tag -> 3 bajty (6 bitow/znak; spacja = 0). Lustro decode_tag."""
+    """4-character tag -> 3 bytes (6 bits/char; space = 0). Mirror of decode_tag."""
     label = (label + "    ")[:4]
     raw = 0
     for c in label:
@@ -52,13 +53,13 @@ def dec_tag(b3: bytes) -> str:
                    for s in (18, 12, 6, 0))
 
 
-# ---------------------------------------------------------------- liczby (varint heat2)
+# ---------------------------------------------------------------- numbers (heat2 varint)
 def enc_int(v: int) -> bytes:
-    """Varint heat2 (zweryfikowany na polu LOC z zywego zadania):
-    1. bajt: bity 0-5 = wartosc, bit6 = ZNAK (ujemna), bit7 = KONTYNUACJA;
-    kolejne bajty: bity 0-6 = wartosc, bit7 = kontynuacja.
-    UWAGA: kontynuacja to ZAWSZE bit7 - wczesniejsza wersja mylila go z bit6
-    (znakiem), przez co IP/PORT >= 0x40 wychodzily zle i klient odrzucal cert."""
+    """heat2 varint (verified on the LOC field of a live request):
+    1st byte: bits 0-5 = value, bit6 = SIGN (negative), bit7 = CONTINUATION;
+    following bytes: bits 0-6 = value, bit7 = continuation.
+    NOTE: continuation is ALWAYS bit7 - an earlier version confused it with bit6
+    (the sign), so IP/PORT >= 0x40 came out wrong and the client rejected the cert."""
     neg = v < 0
     if neg:
         v = -v
@@ -91,7 +92,7 @@ def dec_int(buf: bytes, p: int) -> tuple[int, int]:
     return (-val if neg else val), p
 
 
-# ---------------------------------------------------------------- wartosci
+# ---------------------------------------------------------------- values
 def enc_str(s: str | bytes) -> bytes:
     data = (s.encode("latin1") if isinstance(s, str) else s) + b"\x00"
     return enc_int(len(data)) + data
@@ -103,10 +104,10 @@ def dec_str(buf: bytes, p: int) -> tuple[str, int]:
     return s.rstrip(b"\x00").decode("latin1"), p
 
 
-# ---------------------------------------------------------------- pola i struktury
+# ---------------------------------------------------------------- fields and structures
 @dataclass
 class Field:
-    """Jedno pole TDF: (tag, typ na drucie, wartosc juz zakodowana w bajtach)."""
+    """One TDF field: (tag, wire type, value already encoded to bytes)."""
     tag: str
     wtype: int
     value: bytes
@@ -124,12 +125,12 @@ def f_str(tag: str, s: str | bytes) -> Field:
 
 
 def f_struct(tag: str, fields: list[Field]) -> Field:
-    """Struktura zagniezdzona: pola + terminator 0x00 (konwencja heat2)."""
+    """Nested structure: fields + 0x00 terminator (heat2 convention)."""
     return Field(tag, T_STRUCT, b"".join(f.encode() for f in fields) + b"\x00")
 
 
 def f_union(tag: str, active: int, member: Field | None) -> Field:
-    """Unia: indeks aktywnego skladnika + skladnik (tagowany), albo UNSET."""
+    """Union: index of the active member + the (tagged) member, or UNSET."""
     if member is None:
         return Field(tag, T_UNION, bytes((UNION_UNSET,)))
     return Field(tag, T_UNION, bytes((active,)) + member.encode())
@@ -140,17 +141,17 @@ def f_blob(tag: str, data: bytes) -> Field:
 
 
 def encode_tdf(fields: list[Field]) -> bytes:
-    """Koduje liste pol jako cialo TDF najwyzszego poziomu (bez terminatora -
-    dlugosc wyznacza ramka Fire2)."""
+    """Encodes a list of fields as a top-level TDF body (no terminator -
+    the length is set by the Fire2 frame)."""
     return b"".join(f.encode() for f in fields)
 
 
-# ---------------------------------------------------------------- ramka Fire2
+# ---------------------------------------------------------------- Fire2 frame
 FIRE2_HDR = 12
 
-# messageType (pole uint16 na offsecie 8 naglowka). Wartosci wg Blaze Fire2.
-MSG_MESSAGE = 0        # zadanie (tak wysyla klient)
-MSG_REPLY = 1          # odpowiedz na zadanie (tak MUSIMY odpowiedziec)
+# messageType (uint16 field at header offset 8). Values per Blaze Fire2.
+MSG_MESSAGE = 0        # request (what the client sends)
+MSG_REPLY = 1          # reply to a request (what we MUST answer with)
 MSG_NOTIFICATION = 2
 MSG_ERROR_REPLY = 3
 MSG_PING = 4
@@ -159,10 +160,10 @@ MSG_PING_REPLY = 5
 
 @dataclass
 class Fire2:
-    """Ramka Fire2. Naglowek 12 B = 6x uint16 BE:
+    """Fire2 frame. 12 B header = 6x uint16 BE:
     size, component, command, errorCode, messageType, messageId.
-    W zadaniu klienta messageType=MESSAGE(0), messageId rosnie 0,1,2...
-    Odpowiedz MUSI miec messageType=REPLY(1) i ten sam messageId (echo)."""
+    In a client request messageType=MESSAGE(0), messageId grows 0,1,2...
+    The reply MUST have messageType=REPLY(1) and the same messageId (echo)."""
     component: int
     command: int
     payload: bytes
@@ -171,10 +172,10 @@ class Fire2:
     msg_type: int = MSG_MESSAGE
 
     def encode(self) -> bytes:
-        # Naglowek 12 B: size(2) comp(2) cmd(2) err(2) msgType(1) reserved(1) msgId(2)
-        # UWAGA: messageType to POJEDYNCZY BAJT na offsecie 8 (nie uint16 na [8-9]).
-        # Wczesniej kodowany jako uint16 -> REPLY(1) ladowal 0x00 w bajcie 8 =>
-        # gra czytala nasza odpowiedz jako MESSAGE (kolejne zadanie), nie REPLY.
+        # 12 B header: size(2) comp(2) cmd(2) err(2) msgType(1) reserved(1) msgId(2)
+        # NOTE: messageType is a SINGLE BYTE at offset 8 (not a uint16 at [8-9]).
+        # It used to be encoded as uint16 -> REPLY(1) put 0x00 into byte 8 =>
+        # the game read our reply as a MESSAGE (another request), not a REPLY.
         return struct.pack(">HHHHBBH", len(self.payload), self.component,
                            self.command, self.error, self.msg_type & 0xFF, 0,
                            self.seq & 0xFFFF) + self.payload
@@ -189,9 +190,9 @@ class Fire2:
                      error=err, seq=mid, msg_type=mtype)
 
 
-# ---------------------------------------------------------------- dekoder TDF (pomocniczy)
+# ---------------------------------------------------------------- TDF decoder (helper)
 def f_list_empty(tag: str, elem_wtype: int) -> Field:
-    """Pusta lista heat2: typ elementu + licznik 0."""
+    """Empty heat2 list: element type + count 0."""
     return Field(tag, T_LIST, bytes((elem_wtype,)) + enc_int(0))
 
 
@@ -201,38 +202,39 @@ def build_getserverinstance_response(ip: str, port: int, *, secure: bool = True,
                                      minimal: bool = False,
                                      msg_type: int = MSG_REPLY,
                                      host: str | None = None) -> bytes:
-    """Odpowiedz Redirector.getServerInstance (comp 5, cmd 1, error 0).
+    """Reply to Redirector.getServerInstance (comp 5, cmd 1, error 0).
 
-    Schemat WYCIAGNIETY z odszyfrowanej binarki (zrzut pamieci + map_tdf_classes):
-    klasa ServerInstanceInfo (@0x1416f6890) ma pola w kolejnosci tagow:
+    Schema EXTRACTED from the decrypted binary (memory dump + map_tdf_classes):
+    the ServerInstanceInfo class (@0x1416f6890) has fields in tag order:
         ADDR (union, mAddress) | AMAP (list) | CERT (list, mCertificateList) |
         MSGS (list) | NMAP (list) | SECU (bool, mSecure) | XDNS (int, mDefaultDnsAddress)
-    Struktura adresu (@0x1416f8580): HOST (mHostname) | IP (mIp) | PORT (mPort).
+    Address structure (@0x1416f8580): HOST (mHostname) | IP (mIp) | PORT (mPort).
 
-    WAZNE: heat2 wymaga pol w ROSNACEJ kolejnosci tagow (tak wygladal request:
-    BSDK<BTIM<...<NAME). Emitujemy dokladnie w tej kolejnosci, inaczej dekoder
-    pomija pola (to pogrzebalo pierwszy draft - ADDR szedl po SECU, malejaco).
+    IMPORTANT: heat2 requires fields in ASCENDING tag order (that is how the request
+    looked: BSDK<BTIM<...<NAME). We emit exactly in that order, otherwise the decoder
+    skips fields (that sank the first draft - ADDR came after SECU, descending).
 
-    Kieruje gre pod podany adres - domyslnie na NAS, by klient wrocil z kolejnym
-    pakietem (preAuth/auth). Podajemy i HOST, i IP, zeby klient mogl uzyc dowolnego.
+    Points the game at the given address - by default at US, so the client comes
+    back with its next packet (preAuth/auth). We give both HOST and IP, so the client
+    can use either.
 
-    Nadal empiryczne (log reakcji potwierdzi): indeks/tag skladnika unii ADDR.
+    Still empirical (the reaction log will confirm): index/tag of the ADDR union member.
     """
-    ADDR_MEMBER_INDEX = addr_index         # 0=ServerAddressInfo.mIpAddress; do prob
+    ADDR_MEMBER_INDEX = addr_index         # 0=ServerAddressInfo.mIpAddress; for experiments
     ADDR_MEMBER_TAG = "VALU"
     ip_int = int.from_bytes(bytes(int(o) for o in ip.split(".")), "big")
 
-    # union ADDR -> skladnik = struct adresu {HOST, IP, PORT} (rosnaco po tagu).
-    # HOST = nazwa hosta, ktora (a) jest w pliku hosts -> wskazuje na nas oraz
-    # (b) pasuje do CN certu (gosredirector.ea.com) - inaczej gra odrzuca cert na
-    # polaczeniu Blaze. Gra WOLI HOST (rozwiazuje go) nad polem IP.
+    # union ADDR -> member = address struct {HOST, IP, PORT} (ascending by tag).
+    # HOST = a host name that (a) is in the hosts file -> points at us and
+    # (b) matches the cert CN (gosredirector.ea.com) - otherwise the game rejects the
+    # cert on the Blaze connection. The game PREFERS HOST (it resolves it) over the IP field.
     addr_struct = f_struct(ADDR_MEMBER_TAG, [
         f_str("HOST", host if host is not None else ip),
         f_int("IP", ip_int),
         f_int("PORT", port),
     ])
     if minimal:
-        # tylko ADDR - izolacja unii (bez list/bool, ktore moga psuc dekodowanie)
+        # only ADDR - isolates the union (no lists/bools, which could break decoding)
         fields = [f_union("ADDR", ADDR_MEMBER_INDEX, addr_struct)]
     else:
         fields = [
@@ -250,7 +252,7 @@ def build_getserverinstance_response(ip: str, port: int, *, secure: bool = True,
 
 
 def f_list_int(tag: str, values: list[int]) -> Field:
-    """Lista heat2 int: typ elementu(int=0) + licznik + wartosci."""
+    """heat2 int list: element type (int=0) + count + values."""
     body = bytes((T_INT,)) + enc_int(len(values))
     for v in values:
         body += enc_int(v)
@@ -258,8 +260,8 @@ def f_list_int(tag: str, values: list[int]) -> Field:
 
 
 def f_map_struct(tag: str, items: dict[str, list[Field]]) -> Field:
-    """Mapa heat2 string -> struktura: typ klucza, typ wartosci, licznik, potem
-    pary (klucz, pola struktury + terminator) BEZ tagow (tak jak f_map_str)."""
+    """heat2 map string -> struct: key type, value type, count, then
+    (key, struct fields + terminator) pairs WITHOUT tags (just like f_map_str)."""
     body = bytes((T_STRING, T_STRUCT)) + enc_int(len(items))
     for k, fields in items.items():
         body += enc_str(k) + b"".join(f.encode() for f in fields) + b"\x00"
@@ -267,16 +269,16 @@ def f_map_struct(tag: str, items: dict[str, list[Field]]) -> Field:
 
 
 def f_map_empty(tag: str, key_wtype: int, val_wtype: int) -> Field:
-    """Pusta mapa heat2: typ klucza + typ wartosci + licznik 0. Klient dostaje
-    poprawnie otagowane, ale puste pole zamiast braku pola."""
+    """Empty heat2 map: key type + value type + count 0. The client gets a
+    properly tagged but empty field instead of a missing field."""
     return Field(tag, T_MAP, bytes((key_wtype, val_wtype)) + enc_int(0))
 
 
-# --- adresy sieciowe -------------------------------------------------------
-# NetworkAddress to UNIA; warianty (potwierdzone wczesniej z binarki):
+# --- network addresses -------------------------------------------------------
+# NetworkAddress is a UNION; variants (confirmed earlier from the binary):
 #   0=XboxClientAddress 1=XboxServerAddress 2=IpPairAddress 3=IpAddress 4=HostNameAddress
-# Klient PC opisuje siebie jako IpPairAddress (@0x141706320): EXIP INIP MACI,
-# gdzie EXIP/INIP to struktury adresu (@0x1416f8580): HOST IP PORT.
+# The PC client describes itself as IpPairAddress (@0x141706320): EXIP INIP MACI,
+# where EXIP/INIP are address structures (@0x1416f8580): HOST IP PORT.
 NETADDR_IPPAIR = 2
 NETADDR_IPADDR = 3
 
@@ -287,9 +289,9 @@ def _ip_to_int(ip: str) -> int:
 
 def f_ip_pair(tag: str, ip: str = "127.0.0.1", port: int = 3659, *,
               machine_id: int = 0) -> Field:
-    """Unia NetworkAddress z aktywnym IpPairAddress (adres wewn. == zewn.)."""
+    """NetworkAddress union with IpPairAddress active (internal address == external)."""
     inner = [f_int("IP", _ip_to_int(ip)), f_int("PORT", port)]
-    pair = f_struct("VALU", [                    # tagi rosnaco: EXIP < INIP < MACI
+    pair = f_struct("VALU", [                    # tags ascending: EXIP < INIP < MACI
         f_struct("EXIP", inner),
         f_struct("INIP", inner),
         f_int("MACI", machine_id),
@@ -301,29 +303,30 @@ def f_extended_data(tag: str = "DATA", *, ip: str = "127.0.0.1", port: int = 365
                     ping_site: str = "ams", country: str = "PL",
                     latencies: list[int] | None = None,
                     addr: tuple[int, int, int, int, int] | None = None) -> Field:
-    """UserSessionExtendedData (@0x1416d7ac0) - stan sesji uzytkownika.
+    """UserSessionExtendedData (@0x1416d7ac0) - the user session state.
 
-    Pola w kolejnosci tagow (heat2 czyta sekwencyjnie, wiec ROSNACO):
-        ADDR(union NetworkAddress) BPS(str, alias najlepszego ping-site)
-        CTY(str) DMAP(map) HWFG(int) PSLM(list latencji) QDAT(struct QosData)
+    Fields in tag order (heat2 reads sequentially, so ASCENDING):
+        ADDR(union NetworkAddress) BPS(str, alias of the best ping site)
+        CTY(str) DMAP(map) HWFG(int) PSLM(list of latencies) QDAT(struct QosData)
         UATT(int) ULST(list ObjectId)
 
-    Wczesniej wysylalismy tu PUSTA strukture. Klient po loginie trzyma w tym
-    swoj wlasny stan sesji; bez adresu i wyniku QoS nie uznaje sie za gotowego
-    online i nie wysyla updateNetworkInfo - stad ekran "Laczenie".
+    We used to send an EMPTY structure here. After login the client keeps its
+    own session state in it; without an address and a QoS result it does not
+    consider itself ready for online and does not send updateNetworkInfo - hence
+    the "Connecting" screen.
     """
     if latencies is None:
-        latencies = [10]                          # jeden ping-site, 10 ms
+        latencies = [10]                          # one ping site, 10 ms
     return f_struct(tag, [
-        # addr = pelna para adresow gracza (exip, export, inip, inport, maci) - multiplayer: inni
-        # gracze dostaja w UserAdded prawdziwy adres, nie 127.0.0.1
+        # addr = the player's full address pair (exip, export, inip, inport, maci) - multiplayer:
+        # other players get the real address in UserAdded, not 127.0.0.1
         f_union_ip_pair("ADDR", *addr) if addr else f_ip_pair("ADDR", ip, port),
         f_str("BPS", ping_site),
         f_str("CTY", country),
-        f_map_empty("DMAP", T_INT, T_INT),        # mDataMap - brak danych wlasnych
+        f_map_empty("DMAP", T_INT, T_INT),        # mDataMap - no own data
         f_int("HWFG", 0),                         # mHardwareFlags
         f_list_int("PSLM", latencies),            # mLatencyList
-        f_struct("QDAT", [                        # mQosData - wynik testu QoS
+        f_struct("QDAT", [                        # mQosData - QoS test result
             f_int("DBPS", 100000),                # downstream bit/s
             f_int("NATT", 0),                     # NAT type: OPEN
             f_int("UBPS", 100000),                # upstream bit/s
@@ -334,38 +337,38 @@ def f_extended_data(tag: str = "DATA", *, ip: str = "127.0.0.1", port: int = 365
 
 
 def f_map_str(tag: str, items: dict[str, str]) -> Field:
-    """Mapa heat2 string->string: typ klucza(1) + typ wartosci(1) + licznik +
-    pary (klucz, wartosc) BEZ naglowkow tagow. Format wg TdfEncoder BlazeSDK
-    (potwierdzony na emulatorze BF3 - ten sam silnik): keyType, valType, count,
-    potem dla kazdej pary enc_str(key)+enc_str(val)."""
-    # Klucze POSORTOWANE: klient trzyma mape jako posortowany wektor i szuka w nim
-    # binarnie (lookup configu 0xf39cb0). W run-20 klucze bytevault* dopisane na koncu
-    # (za voipHeadsetUpdateRate) byly przez to "nieznalezione" i ByteVault poszedl na
-    # domyslny host EA. Serwery Blaze wysylaja mapy posortowane.
+    """heat2 map string->string: key type(1) + value type(1) + count +
+    (key, value) pairs WITHOUT tag headers. Format per the BlazeSDK TdfEncoder
+    (confirmed on the BF3 emulator - the same engine): keyType, valType, count,
+    then enc_str(key)+enc_str(val) for every pair."""
+    # Keys SORTED: the client keeps the map as a sorted vector and binary-searches
+    # it (config lookup 0xf39cb0). In run-20 the bytevault* keys appended at the end
+    # (after voipHeadsetUpdateRate) were therefore "not found" and ByteVault went to
+    # the default EA host. Blaze servers send maps sorted.
     body = bytes((T_STRING, T_STRING)) + enc_int(len(items))
     for k, v in sorted(items.items()):
         body += enc_str(k) + enc_str(v)
     return Field(tag, T_MAP, body)
 
 
-# Komponenty Blaze, ktore zwykle sa hostowane (CIDS). Klient dowiaduje sie z tego,
-# jakie komponenty ma serwer. Zestaw orientacyjny - do korekty wg reakcji gry.
+# Blaze components that are usually hosted (CIDS). The client learns from this
+# which components the server has. A rough set - to be corrected based on the game's reaction.
 DEFAULT_COMPONENT_IDS = [1, 4, 5, 7, 9, 11, 15, 21, 25, 30, 63, 2000]
 
 
-# Klucze client configu obecne w binarce (@0x016d2d80 i okolice: pingPeriod,
+# Client config keys present in the binary (@0x016d2d80 and around: pingPeriod,
 # defaultRequestTimeout, connIdleTimeout; @0x016ea7c8 associationListSkipInitialSet;
-# @0x016eaac8 voipHeadsetUpdateRate). Wartosci sa nasze - klient parsuje je jako
-# tekst, wiec liczby ida stringami.
+# @0x016eaac8 voipHeadsetUpdateRate). The values are ours - the client parses them as
+# text, so numbers go as strings.
 #
-# CZASY MUSZA MIEC JEDNOSTKE. Trzy klucze czasu czyta tylko 0xf419b0, przez getter
-# polaczenia 0xf39dc0 -> parser TimeValue 0xf79d60: segmenty <liczba><d|h|m|s|ms>
-# (mozna laczyc, opcjonalnie przez ':'), wynik w mikrosekundach. Gola liczba ("90")
-# konczy sie NUL-em zamiast jednostki -> parser zwraca false i nic nie zapisuje, a
-# getter IGNORUJE ten wynik i melduje "znaleziony" -> czytnik bierze zmienna = 0.
-# Tak bylo do 2026-09-13: connIdleTimeout="90" dawalo [conn+0x2fc]=0 ms i klient
-# zrywal Blaze (0x800e0000) zaraz po preAuth. Domyslne klienta, gdy klucza brak
-# (konstruktor 0xf2e7d0): idle 40 s, ping 15 s. Szczegoly: docs/protocol.md sekcja 11.
+# TIMES MUST HAVE A UNIT. The three time keys are read only by 0xf419b0, through the
+# connection getter 0xf39dc0 -> TimeValue parser 0xf79d60: segments <number><d|h|m|s|ms>
+# (can be combined, optionally with ':'), result in microseconds. A bare number ("90")
+# ends with a NUL instead of a unit -> the parser returns false and stores nothing, but
+# the getter IGNORES that result and reports "found" -> the reader takes variable = 0.
+# That was the case until 2026-09-13: connIdleTimeout="90" gave [conn+0x2fc]=0 ms and the
+# client dropped Blaze (0x800e0000) right after preAuth. Client defaults when the key is
+# missing (constructor 0xf2e7d0): idle 40 s, ping 15 s. Details: docs/protocol.md section 11.
 DEFAULT_CLIENT_CONFIG = {
     "associationListSkipInitialSet": "1",
     "connIdleTimeout": "90s",
@@ -376,26 +379,26 @@ DEFAULT_CLIENT_CONFIG = {
 
 
 def f_qos_ping_site(alias: str, host: str, port: int) -> list[Field]:
-    """Pola QosPingSiteInfo (@0x1417065c0, odczytane z binarki):
-    PSA(mAddress) PSP(mPort) SNA(mSiteName) - tagi rosnaco."""
+    """QosPingSiteInfo fields (@0x1417065c0, read from the binary):
+    PSA(mAddress) PSP(mPort) SNA(mSiteName) - tags ascending."""
     return [f_str("PSA", host), f_int("PSP", port), f_str("SNA", alias)]
 
 
 def f_qos_settings(tag: str = "QOSS", *, alias: str = "ams",
                    host: str = "127.0.0.1", port: int = 17502,
                    service_id: int = 0, timeout_us: int = 5000000) -> Field:
-    """QosConfigInfo (@0x141a32d80) - ustawienia testu QoS.
+    """QosConfigInfo (@0x141a32d80) - QoS test settings.
 
-    Uklad ODCZYTANY Z BINARKI (nie zgadniety z BF3):
+    Layout READ FROM THE BINARY (not guessed from BF3):
         BWPS(struct) mBandwidthPingSiteInfo
         LNP (uint16) mNumLatencyProbes
         LTPS(map)    mPingSiteInfoByAliasMap
         SVID(int32)  mServiceId
-        TIME(czas)   mTimeout            <- tego pola NIE MA w ukladzie BF3
+        TIME(time)   mTimeout            <- this field is NOT in the BF3 layout
 
-    Tablica pol tej klasy lezy w sekcji .data, nie .rdata - dlatego wczesniejszy
-    skan jej nie widzial i uklad braliśmy przez analogie do BF3, bez TIME.
-    Ping-site wskazuje na nas; inaczej klient sonduje martwe serwery EA.
+    The field table of this class lives in the .data section, not .rdata - that is
+    why the earlier scan did not see it and we took the layout by analogy to BF3,
+    without TIME. The ping site points at us; otherwise the client probes dead EA servers.
     """
     site = f_qos_ping_site(alias, host, port)
     return f_struct(tag, [
@@ -414,15 +417,15 @@ def build_preauth_response(seq: int, *, msg_type: int = MSG_REPLY,
                            qos: bool = True, qos_host: str = "127.0.0.1",
                            qos_port: int = 17502,
                            qos_alias: str = "ams", pad_to: int = 0) -> bytes:
-    """Odpowiedz Util.preAuth (component 9, command 7).
+    """Reply to Util.preAuth (component 9, command 7).
 
-    Schemat PreAuthResponse (@0x1416c6440, kolejnosc tagow rosnaca):
+    PreAuthResponse schema (@0x1416c6440, ascending tag order):
       ASRC(str) CIDS(list int) CONF(struct) ESRC(str) INST(str) MINR(?) NASP(str)
       PILD(str) PLAT(str) QOSS(struct) RSRC(str) SVER(str).
 
-    CONF to ClientConfig (@0x1416c5870) = JEDNO pole CONF typu MAPA. Wczesniej
-    szla tu pusta struktura, czyli struktura BEZ mapy w srodku - a klient prosi o
-    config wprost: request preAuth zawiera FCCR{CFID='BlazeSDK'}.
+    CONF is ClientConfig (@0x1416c5870) = ONE field CONF of type MAP. An empty
+    structure used to go here, i.e. a structure WITHOUT the map inside - and the
+    client asks for the config explicitly: the preAuth request contains FCCR{CFID='BlazeSDK'}.
     """
     if component_ids is None:
         component_ids = DEFAULT_COMPONENT_IDS
@@ -437,7 +440,7 @@ def build_preauth_response(seq: int, *, msg_type: int = MSG_REPLY,
         return [
             f_str("ASRC", "205604"),                # authentication source (id)
             f_list_int("CIDS", component_ids),
-            conf,                                    # ClientConfig{ CONF: mapa }
+            conf,                                    # ClientConfig{ CONF: map }
             f_str("ESRC", "205604"),                # entitlement source
             f_str("INST", service),
             f_str("NASP", "cem_ea_id"),              # persona namespace EA
@@ -450,9 +453,9 @@ def build_preauth_response(seq: int, *, msg_type: int = MSG_REPLY,
 
     fields = fields_with("")
     if pad_to:
-        # Diagnostyka: dopchnij odpowiedz do ~pad_to bajtow, wydluzajac ZWYKLY
-        # string (PILD). Duza odpowiedz bez ani jednej mapy - izoluje pytanie
-        # "czy klienta wywraca rozmiar, czy zawartosc".
+        # Diagnostics: pad the reply to ~pad_to bytes by lengthening an ORDINARY
+        # string (PILD). A big reply without a single map - isolates the question
+        # "does the size break the client, or the content".
         base_len = len(encode_tdf(fields)) + FIRE2_HDR
         missing = pad_to - base_len
         if missing > 0:
@@ -465,9 +468,9 @@ def build_preauth_response(seq: int, *, msg_type: int = MSG_REPLY,
 def build_login_response(seq: int, user_id: int, persona: str, *,
                          msg_type: int = MSG_REPLY,
                          email: str = "player@nfsrivals.local") -> bytes:
-    """Odpowiedz Authentication.login (component 1, command 152) = FullLoginResponse.
+    """Reply to Authentication.login (component 1, command 152) = FullLoginResponse.
 
-    Struktura z binarki:
+    Structure from the binary:
       FullLoginResponse{ AGUP ANON NTOS PCTK SESS SPAM UNDR }
         SESS=SessionInfo{ BUID FRST KEY LLOG MAIL PDTL UID }
           PDTL=PersonaDetails{ DSNM LAST PID PLAT STAS XREF }
@@ -506,45 +509,45 @@ def build_login_response(seq: int, user_id: int, persona: str, *,
 
 
 def build_ping_response(seq: int, *, msg_type: int = MSG_REPLY) -> bytes:
-    """Odpowiedz Util.ping (component 9, command 2) = { STIM mServerTime }."""
+    """Reply to Util.ping (component 9, command 2) = { STIM mServerTime }."""
     import time
     payload = encode_tdf([f_int("STIM", int(time.time()))])
     return Fire2(component=9, command=2, payload=payload, error=0, seq=seq,
                  msg_type=msg_type).encode()
 
 
-# Bajt msgType na drucie = typ_logiczny << 4 (REPLY 1->0x10, NOTIFICATION 2->0x20,
-# potwierdzone na zywo). Zatem serwerowy PING = MSG_PING(4) << 4 = 0x40, a klient
-# odsyla PING_REPLY (0x50).
+# The msgType byte on the wire = logical_type << 4 (REPLY 1->0x10, NOTIFICATION 2->0x20,
+# confirmed live). So the server PING = MSG_PING(4) << 4 = 0x40, and the client
+# answers with PING_REPLY (0x50).
 MSG_PING_BYTE = MSG_PING << 4          # 0x40
 
 
 def build_server_ping(seq: int = 0) -> bytes:
-    """Transportowy heartbeat Fire2 (msgType=PING) wysylany PRZEZ SERWER.
+    """Fire2 transport heartbeat (msgType=PING) sent BY THE SERVER.
 
-    Po co: po loginie klient robi QoS na osobnych gniazdach, a polaczenie Blaze
-    TCP nie ma ruchu. Aktualizacja polaczenia co klatke (0xf3a580) sprawdza
-    `stan==2 && (teraz - ostatnia_aktywnosc) > [conn+0x2fc]` i przy przekroczeniu
-    zrywa polaczenie bledem 0x800e0000 (0xeffca0) -> teardown -> crash. Ramka od
-    serwera resetuje licznik aktywnosci po stronie odbioru klienta. PING jest
-    najczystszy - to heartbeat transportu, klient odpowiada PING_REPLY i nie
-    przetwarza go jak notyfikacji komponentu."""
+    Why: after login the client runs QoS on separate sockets, and the Blaze TCP
+    connection has no traffic. The per-frame connection update (0xf3a580) checks
+    `state==2 && (now - last_activity) > [conn+0x2fc]` and when exceeded it drops
+    the connection with error 0x800e0000 (0xeffca0) -> teardown -> crash. A frame
+    from the server resets the activity counter on the client's receive side. PING
+    is the cleanest - it is a transport heartbeat, the client answers PING_REPLY
+    and does not process it like a component notification."""
     return Fire2(component=0, command=0, payload=b"", error=0, seq=seq,
                  msg_type=MSG_PING_BYTE).encode()
 
 
 def _telemetry_fields(ip: str = "127.0.0.1", *, locale: int = 1701729619,
                       port: int = 9988) -> list[Field]:
-    """Pola TelemetryServer (tag rosnaco) - wspolne dla TELE (postAuth) i
-    getTelemetryServer (9/5). Wzor z emulatora BF3 (ten sam silnik), typy
-    zweryfikowane ze zrzutem NFS (klasa @0x1416c7510): ADRS/DISA/FILT/NOOK/SESS/
-    SKEY/STIM = string; ANON/LOC/PORT/SDLY/SPCT = int. Telemetria wskazana na nas
-    (127.0.0.1) i praktycznie wylaczona (SPCT nieistotne - i tak nie mamy serwera
-    telemetrii; klient tylko zapisuje te dane)."""
+    """TelemetryServer fields (tags ascending) - shared by TELE (postAuth) and
+    getTelemetryServer (9/5). Template from the BF3 emulator (the same engine), types
+    verified against the NFS dump (class @0x1416c7510): ADRS/DISA/FILT/NOOK/SESS/
+    SKEY/STIM = string; ANON/LOC/PORT/SDLY/SPCT = int. Telemetry pointed at us
+    (127.0.0.1) and practically disabled (SPCT does not matter - we have no telemetry
+    server anyway; the client only stores this data)."""
     return [
         f_str("ADRS", ip),
         f_int("ANON", 0),
-        f_str("DISA", ""),                 # kraje z wylaczona telemetria - puste
+        f_str("DISA", ""),                 # countries with telemetry disabled - empty
         f_str("FILT", ""),
         f_int("LOC", locale),
         f_str("NOOK", "US,CA,MX"),
@@ -552,7 +555,7 @@ def _telemetry_fields(ip: str = "127.0.0.1", *, locale: int = 1701729619,
         f_int("SDLY", 15000),
         f_str("SESS", "telemetry_session"),
         f_str("SKEY", "telemetry_key"),
-        f_int("SPCT", 0),                  # 0% probek - nic nie wysylamy
+        f_int("SPCT", 0),                  # 0% of samples - we send nothing
         f_str("STIM", "Default"),
     ]
 
@@ -560,26 +563,26 @@ def _telemetry_fields(ip: str = "127.0.0.1", *, locale: int = 1701729619,
 def build_postauth_response(seq: int, user_id: int, *, msg_type: int = MSG_REPLY,
                             ip: str = "127.0.0.1",
                             subsystems: bool = True) -> bytes:
-    """Odpowiedz Util.postAuth (component 9, command 8) = PostAuthResponse.
-    Struktura (@0x1416c3b50): { PSS TELE TICK UROP } - 4 zagniezdzone struktury.
+    """Reply to Util.postAuth (component 9, command 8) = PostAuthResponse.
+    Structure (@0x1416c3b50): { PSS TELE TICK UROP } - 4 nested structures.
 
-    WCZESNIEJ pusto: puste STRUKTURY crashowaly (gra uzywa pol), a caly pusty
-    payload nie crashowal, ale gra utykala na "Laczenie". Teraz WYPELNIAMY wg
-    emulatora Blaze dla BF3 (ten sam silnik Fire2/heat2) - pola i typy pokrywaja
-    sie ze zrzutem NFS:
+    It USED TO be empty: empty STRUCTURES crashed (the game uses the fields), and a
+    fully empty payload did not crash, but the game got stuck on "Connecting". Now we
+    FILL it in per the Blaze emulator for BF3 (the same Fire2/heat2 engine) - fields
+    and types match the NFS dump:
       PSS (PssConfig)   = { ADRS CSIG PJID PORT RPRT TIID }
       TELE (Telemetry)  = _telemetry_fields()
       TICK (Ticker)     = { ADRS PORT SKEY }
       UROP (UserOptions)= { TMOP UID }
-    Wszystko wskazane na nas / neutralne, by klient dokonczyl polaczenie.
+    Everything pointed at us / neutral, so the client completes the connection.
 
-    A/B 2026-09-11 (subsystems=False): ADRS puste i PORT=0 we wszystkich trzech
-    podsystemach. Po naszej odpowiedzi na postAuth klient SAM zamykal polaczenie
-    Blaze, a zaraz potem wywracal sie na callbacku spod NULL w sciezce zdejmowania
-    komponentu (base+0xf4de00). Hipoteza: klient probuje podniesc PSS/TELE/TICK
-    pod adresami, pod ktorymi nikt nie slucha, i to konczy sesje. Struktur NIE
-    usuwamy - puste STRUKTURY crashowaly juz wczesniej - tylko neutralizujemy
-    adresy, wiec ksztalt i typy pol zostaja identyczne."""
+    A/B 2026-09-11 (subsystems=False): empty ADRS and PORT=0 in all three
+    subsystems. After our postAuth reply the client closed the Blaze connection BY
+    ITSELF, and right after that crashed on a callback through NULL in the component
+    teardown path (base+0xf4de00). Hypothesis: the client tries to bring up
+    PSS/TELE/TICK at addresses nobody listens on, and that ends the session. We do
+    NOT remove the structures - empty STRUCTURES crashed already before - we only
+    neutralize the addresses, so the shape and the field types stay identical."""
     addr = ip if subsystems else ""
     pss = f_struct("PSS", [
         f_str("ADRS", addr),
@@ -607,8 +610,8 @@ def build_postauth_response(seq: int, user_id: int, *, msg_type: int = MSG_REPLY
 
 def build_telemetry_response(seq: int, *, msg_type: int = MSG_REPLY,
                              ip: str = "127.0.0.1") -> bytes:
-    """Odpowiedz Util.getTelemetryServer (component 9, command 5) =
-    GetTelemetryServerResponse (te same pola co TELE w postAuth)."""
+    """Reply to Util.getTelemetryServer (component 9, command 5) =
+    GetTelemetryServerResponse (the same fields as TELE in postAuth)."""
     payload = encode_tdf(_telemetry_fields(ip))
     return Fire2(component=9, command=5, payload=payload, error=0, seq=seq,
                  msg_type=msg_type).encode()
@@ -616,10 +619,10 @@ def build_telemetry_response(seq: int, *, msg_type: int = MSG_REPLY,
 
 def build_fetch_client_config_response(seq: int, *, msg_type: int = MSG_REPLY,
                                        config: dict[str, str] | None = None) -> bytes:
-    """Odpowiedz Util.fetchClientConfig (component 9, command 1) = { CONF map<str,str> }.
-    Klient prosi o sekcje konfiguracji (CFID w zadaniu) i cache'uje odpowiedz.
-    Pusta mapa = "brak wpisow dla tej sekcji" -> klient idzie dalej. Konkretne
-    sekcje (np. listy achievementow) dopelnimy, jesli gra bez nich utknie."""
+    """Reply to Util.fetchClientConfig (component 9, command 1) = { CONF map<str,str> }.
+    The client asks for a config section (CFID in the request) and caches the reply.
+    Empty map = "no entries for this section" -> the client moves on. Specific
+    sections (e.g. achievement lists) we will fill in if the game gets stuck without them."""
     payload = encode_tdf([f_map_str("CONF", config or {})])
     return Fire2(component=9, command=1, payload=payload, error=0, seq=seq,
                  msg_type=msg_type).encode()
@@ -627,8 +630,8 @@ def build_fetch_client_config_response(seq: int, *, msg_type: int = MSG_REPLY,
 
 def build_user_settings_load_all_response(seq: int, *, msg_type: int = MSG_REPLY,
                                           settings: dict[str, str] | None = None) -> bytes:
-    """Odpowiedz Util.userSettingsLoadAll (component 9, command 0xC) =
-    { SMAP map<str,str> } - zapisane ustawienia usera. Pusto na start."""
+    """Reply to Util.userSettingsLoadAll (component 9, command 0xC) =
+    { SMAP map<str,str> } - the user's saved settings. Empty at the start."""
     payload = encode_tdf([f_map_str("SMAP", settings or {})])
     return Fire2(component=9, command=0xC, payload=payload, error=0, seq=seq,
                  msg_type=msg_type).encode()
@@ -636,25 +639,25 @@ def build_user_settings_load_all_response(seq: int, *, msg_type: int = MSG_REPLY
 
 def build_empty_reply(component: int, command: int, seq: int, *,
                       msg_type: int = MSG_REPLY) -> bytes:
-    """Pusta odpowiedz-potwierdzenie (np. userSettingsSave 9/0xB). Sam naglowek
-    Fire2 z error=0 - klient wie, ze RPC sie powiodlo i idzie dalej."""
+    """Empty acknowledgement reply (e.g. userSettingsSave 9/0xB). Just the Fire2
+    header with error=0 - the client knows the RPC succeeded and moves on."""
     return Fire2(component=component, command=command, payload=b"", error=0,
                  seq=seq, msg_type=msg_type).encode()
 
 
-MSG_NOTIFY_BYTE = 0x20        # bajt msgType dla notyfikacji (typ 2 w gornym nibble)
+MSG_NOTIFY_BYTE = 0x20        # msgType byte for notifications (type 2 in the upper nibble)
 
 
 def build_notification(component: int, command: int, payload: bytes, *,
                        seq: int = 0, msg_type: int = MSG_NOTIFY_BYTE) -> bytes:
-    """Serwerowa notyfikacja Fire2 (async, nie odpowiedz)."""
+    """Server-side Fire2 notification (async, not a reply)."""
     return Fire2(component=component, command=command, payload=payload,
                  error=0, seq=seq, msg_type=msg_type).encode()
 
 
 def reseq(frame: bytes, seq: int) -> bytes:
-    """Podmienia messageId (uint16 na offsecie 10) w gotowej ramce Fire2.
-    Uzywane do nadania notyfikacjom wlasnej rosnacej sekwencji serwera."""
+    """Replaces the messageId (uint16 at offset 10) in a ready Fire2 frame.
+    Used to give notifications the server's own increasing sequence."""
     return frame[:10] + struct.pack(">H", seq & 0xFFFF) + frame[12:]
 
 
@@ -665,26 +668,26 @@ def build_useradded_notify(user_id: int, persona: str,
                            email: str = "player@nfsrivals.local",
                            rich_data: bool = True, legacy_user: bool = False,
                            addr: tuple[int, int, int, int, int] | None = None) -> bytes:
-    """UserSessions notyfikacja UserAdded (cmd 2) = Blaze::NotifyUserAdded.
-    Struktura (@0x1416d87d0): { DATA mExtendedData, USER mUserInfo }.
+    """UserSessions notification UserAdded (cmd 2) = Blaze::NotifyUserAdded.
+    Structure (@0x1416d87d0): { DATA mExtendedData, USER mUserInfo }.
 
-    USER = UserIdentification (tablica pol @0x1416d78c0, tagi z binarki):
+    USER = UserIdentification (field table @0x1416d78c0, tags from the binary):
         AID mAccountId  ALOC mAccountLocale  EXBB mExternalBlob  EXID mExternalId
         ID mBlazeId  NAME mName  ORIG mOriginPersonaId  PIDI mPidId
-    Do 2026-09-13 wysylalismy tu tagi UserSessionLoginInfo (BUID DSNM KEY ...), z ktorych
-    UserIdentification zna tylko ALOC - dekoder heat2 pomija nieznane tagi, wiec gra
-    tworzyla lokalnego usera z ID=0 i pustym NAME (nie pasowal do BUID z loginu).
-    Pewnosc: nazwy klas/pol z binarki + standardowy uklad BlazeSDK (mUserInfo to
-    UserIdentification); sama tablica pol nie trzyma wskaznika na klase pola, wiec
-    powiazania USER -> @0x1416d78c0 nie da sie odczytac z danych wprost.
-    EXBB (kod typu 8, kodowanie nieustalone) pomijamy - brak pola = wartosc domyslna.
-    legacy_user=True przywraca stary uklad (A/B)."""
+    Until 2026-09-13 we sent UserSessionLoginInfo tags here (BUID DSNM KEY ...), of which
+    UserIdentification only knows ALOC - the heat2 decoder skips unknown tags, so the game
+    created a local user with ID=0 and an empty NAME (it did not match the BUID from login).
+    Confidence: class/field names from the binary + the standard BlazeSDK layout (mUserInfo is
+    UserIdentification); the field table itself holds no pointer to the field's class, so the
+    USER -> @0x1416d78c0 link cannot be read straight from the data.
+    EXBB (type code 8, encoding unknown) is skipped - missing field = default value.
+    legacy_user=True restores the old layout (A/B)."""
     import time
     now = int(time.time())
     if session_key is None:
         session_key = f"1_{user_id}_sess"
     if legacy_user:
-        user = f_struct("USER", [            # stary uklad: UserSessionLoginInfo
+        user = f_struct("USER", [            # old layout: UserSessionLoginInfo
             f_int("ALOC", 1701729619),
             f_int("BUID", user_id),
             f_str("DSNM", persona),
@@ -700,11 +703,11 @@ def build_useradded_notify(user_id: int, persona: str,
             f_int("XREF", 0),
         ])
     else:
-        user = f_struct("USER", [            # UserIdentification (tagi rosnaco)
+        user = f_struct("USER", [            # UserIdentification (tags ascending)
             f_int("AID", user_id),           # mAccountId
             f_int("ALOC", 1701729619),       # mAccountLocale (~enUS)
             f_int("EXID", 0),                # mExternalId
-            f_int("ID", user_id),            # mBlazeId - MUSI == BUID z loginu
+            f_int("ID", user_id),            # mBlazeId - MUST == BUID from login
             f_str("NAME", persona),          # mName
             f_int("ORIG", user_id),          # mOriginPersonaId
             f_int("PIDI", 0),                # mPidId
@@ -718,9 +721,9 @@ def build_usersession_update(user_id: int, *, component: int = 0x7802,
                              command: int = 1, seq: int = 0,
                              msg_type: int = MSG_NOTIFY_BYTE,
                              rich_data: bool = True) -> bytes:
-    """UserSessions notyfikacja UserSessionExtendedDataUpdate.
-    Struktura (@0x1416d81c0): { DATA(UserSessionExtendedData) SUBS(bool) USID(int64) }.
-    POTWIERDZONE (jump table createNotification): UserSessions=0x7802,
+    """UserSessions notification UserSessionExtendedDataUpdate.
+    Structure (@0x1416d81c0): { DATA(UserSessionExtendedData) SUBS(bool) USID(int64) }.
+    CONFIRMED (createNotification jump table): UserSessions=0x7802,
     ExtendedDataUpdate = command 1, UserAdded = command 2, UserAuthenticated = command 8."""
     payload = encode_tdf([
         f_extended_data("DATA") if rich_data else f_struct("DATA", []),
@@ -731,8 +734,8 @@ def build_usersession_update(user_id: int, *, component: int = 0x7802,
 
 
 def f_objid(tag: str, component: int, obj_type: int, obj_id: int) -> Field:
-    """EA::TDF::ObjectId na drucie heat2: trzy varinty (komponent, typ, id) - ten sam
-    uklad, ktory czyta _dec_value dla T_OBJID."""
+    """EA::TDF::ObjectId on the heat2 wire: three varints (component, type, id) - the same
+    layout that _dec_value reads for T_OBJID."""
     return Field(tag, T_OBJID, enc_int(component) + enc_int(obj_type) + enc_int(obj_id))
 
 
@@ -741,28 +744,28 @@ def build_user_authenticated_notify(user_id: int, persona: str,
                                     component: int = 0x7802, command: int = 8, seq: int = 0,
                                     msg_type: int = MSG_NOTIFY_BYTE,
                                     email: str = "player@nfsrivals.local") -> bytes:
-    """UserSessions notyfikacja UserAuthenticated (cmd 8).
+    """UserSessions notification UserAuthenticated (cmd 8).
 
-    Klasa ODCZYTANA Z BINARKI: tablica pol @0x141a2f160, konstruktor 0xf5ccf0 w bloku
-    cmd 8 dyspozytora notyfikacji UserSessions 0xf29f90. To splaszczone SessionInfo +
-    PersonaDetails z odpowiedzi na login, plus ALOC, CGID i USTP:
+    Class READ FROM THE BINARY: field table @0x141a2f160, constructor 0xf5ccf0 in the
+    cmd 8 block of the UserSessions notification dispatcher 0xf29f90. It is a flattened
+    SessionInfo + PersonaDetails from the login reply, plus ALOC, CGID and USTP:
         ALOC mAccountLocale  BUID mBlazeUserId  CGID mConnectionGroupObjectId (objid)
         DSNM mDisplayName  FRST mIsFirstLogin  KEY mSessionKey  LAST mLastAuthenticated
         LLOG mLastLoginDateTime  MAIL mEmail  PID mPersonaId  PLAT mClientPlatform
         UID mUserId  USTP mUserSessionType  XREF mExtId
-    Kody typow pol sa identyczne jak w SessionInfo/PersonaDetails loginu (gra je
-    dekoduje), wiec kodujemy je tak samo i z tymi samymi wartosciami.
+    The field type codes are identical to those in the login's SessionInfo/PersonaDetails
+    (the game decodes them), so we encode them the same way and with the same values.
 
-    Do 2026-09-13 cmd 8 szlo z PUSTYM payloadem: gra dostawala "zalogowano usera" z
-    BUID=0 i bez klucza sesji, a maszyna stanow online gry (0xa1bb00) stala na 5/6 i
-    nie dochodzila do 9 (zalogowany) - ekran "Logowanie".
-    CGID = (UserSessions 0x7802, typ 2, user_id): typ obiektu NIEPOTWIERDZONY w kodzie."""
+    Until 2026-09-13 cmd 8 went out with an EMPTY payload: the game got "user logged in"
+    with BUID=0 and no session key, and the game's online state machine (0xa1bb00) sat at
+    5/6 and never reached 9 (logged in) - the "Logging in" screen.
+    CGID = (UserSessions 0x7802, type 2, user_id): object type NOT CONFIRMED in the code."""
     import time
     now = int(time.time())
     if session_key is None:
-        session_key = f"1_{user_id}_sess"             # ten sam KEY co w loginie
-    payload = encode_tdf([                             # tagi rosnaco
-        f_int("ALOC", 1701729619),                     # jak USER w UserAdded
+        session_key = f"1_{user_id}_sess"             # the same KEY as in the login
+    payload = encode_tdf([                             # tags ascending
+        f_int("ALOC", 1701729619),                     # like USER in UserAdded
         f_int("BUID", user_id),
         f_objid("CGID", 0x7802, 2, user_id),
         f_str("DSNM", persona),
@@ -780,14 +783,14 @@ def build_user_authenticated_notify(user_id: int, persona: str,
     return build_notification(component, command, payload, seq=seq, msg_type=msg_type)
 
 
-# ---------------------------------------------------------------- RPC po zalogowaniu
-# Numery komend z emulacji getCommandName w binarce (scratchpad rpcnames.py):
+# ---------------------------------------------------------------- post-login RPCs
+# Command numbers from emulating getCommandName in the binary (scratchpad rpcnames.py):
 #   Authentication 0xf20180, Util 0xf28720, Stats 0xf28460, AssociationLists 0xf200b0,
-#   NFS (komponent 2050) 0xf68100. Uklady klas z docs/recon/tdf_members.json.
+#   NFS (component 2050) 0xf68100. Class layouts from docs/recon/tdf_members.json.
 
 def f_list_struct(tag: str, items: list[list[Field]]) -> Field:
-    """Lista heat2 struktur: typ elementu(struct) + licznik + kazda struktura
-    (pola + terminator 0x00) bez tagow elementow."""
+    """heat2 list of structs: element type (struct) + count + every struct
+    (fields + 0x00 terminator) without element tags."""
     body = bytes((T_STRUCT,)) + enc_int(len(items))
     for fields in items:
         body += b"".join(f.encode() for f in fields) + b"\x00"
@@ -804,7 +807,7 @@ def f_list_str(tag: str, values: list[str]) -> Field:
 def build_user_settings_load_response(seq: int, key: str, data: str = "", *,
                                       msg_type: int = MSG_REPLY) -> bytes:
     """Util.userSettingsLoad (9/10) -> UserSettingsResponse @0x1416c3f80 {DATA mData, KEY mKey}.
-    Brak zapisanego ustawienia = pusty DATA."""
+    No saved setting = empty DATA."""
     payload = encode_tdf([f_str("DATA", data), f_str("KEY", key)])
     return Fire2(component=9, command=10, payload=payload, error=0, seq=seq,
                  msg_type=msg_type).encode()
@@ -812,7 +815,7 @@ def build_user_settings_load_response(seq: int, key: str, data: str = "", *,
 
 def build_key_scopes_response(seq: int, *, msg_type: int = MSG_REPLY) -> bytes:
     """Stats.getKeyScopesMap (7/15) -> KeyScopes @0x1416c5a68 {KSIT mKeyScopesMap}
-    (mapa nazwa -> KeyScopeItem). Brak zakresow = pusta mapa."""
+    (map name -> KeyScopeItem). No scopes = empty map."""
     payload = encode_tdf([f_map_empty("KSIT", T_STRING, T_STRUCT)])
     return Fire2(component=7, command=15, payload=payload, error=0, seq=seq,
                  msg_type=msg_type).encode()
@@ -820,8 +823,8 @@ def build_key_scopes_response(seq: int, *, msg_type: int = MSG_REPLY) -> bytes:
 
 def build_stat_group_response(seq: int, name: str, *, msg_type: int = MSG_REPLY) -> bytes:
     """Stats.getStatGroup (7/4) -> StatGroupResponse @0x1416c4a10
-    {CNAM DESC ETYP KSUM META NAME STAT}. ETYP (objtype) i KSUM pomijamy - brak pola
-    = wartosc domyslna; STAT (lista StatDescSummary) pusta."""
+    {CNAM DESC ETYP KSUM META NAME STAT}. ETYP (objtype) and KSUM are skipped - missing
+    field = default value; STAT (list of StatDescSummary) empty."""
     payload = encode_tdf([
         f_str("CNAM", ""),
         f_str("DESC", ""),
@@ -835,7 +838,7 @@ def build_stat_group_response(seq: int, name: str, *, msg_type: int = MSG_REPLY)
 
 def build_get_lists_response(seq: int, *, msg_type: int = MSG_REPLY) -> bytes:
     """AssociationLists.getLists (25/6) -> Lists @0x1416aeb50 {LMAP mListMembersVector}.
-    Bez znajomych = pusta lista ListMembers."""
+    No friends = empty ListMembers list."""
     payload = encode_tdf([f_list_struct("LMAP", [])])
     return Fire2(component=25, command=6, payload=payload, error=0, seq=seq,
                  msg_type=msg_type).encode()
@@ -843,7 +846,7 @@ def build_get_lists_response(seq: int, *, msg_type: int = MSG_REPLY) -> bytes:
 
 def build_geolocation_info_response(seq: int, blaze_id: int, *, country: str = "PL",
                                     msg_type: int = MSG_REPLY) -> bytes:
-    """NFS (komponent 2050) getGeolocationInfo (38) -> GetGeolocationInfoResponse
+    """NFS (component 2050) getGeolocationInfo (38) -> GetGeolocationInfoResponse
     @0x1416d9890 {CNTY CTY ID LAT LON OPT OVER ST}."""
     payload = encode_tdf([
         f_str("CNTY", country),
@@ -859,16 +862,16 @@ def build_geolocation_info_response(seq: int, blaze_id: int, *, country: str = "
                  msg_type=msg_type).encode()
 
 
-STATS_NOTIFY_GET_STATS_ASYNC = 0x32   # nazwa notyfikacji Stats 0xf29610: 0x32 -> GetStatsAsyncNotification
+STATS_NOTIFY_GET_STATS_ASYNC = 0x32   # Stats notification name 0xf29610: 0x32 -> GetStatsAsyncNotification
 
 
 def build_stats_async_notification(view_id: int, group_name: str, entity_ids: list[int], *,
                                    seq: int = 0, msg_type: int = MSG_NOTIFY_BYTE) -> bytes:
-    """Wynik Stats.getStatsByGroupAsync (7/16) - przychodzi NOTYFIKACJA 7/0x32, nie odpowiedz.
+    """Result of Stats.getStatsByGroupAsync (7/16) - it arrives as NOTIFICATION 7/0x32, not a reply.
     GetStatsAsyncNotification @0x1416c55d0 {GRNM mGroupName, KEY mKeyString, LAST mLast,
     STS mStatValues, VID mViewId}; STS = StatValues @0x1416c4310 {AGGR, STAT list<EntityStats>},
-    EntityStats @0x1416c5d60 {EID ETYP POFF STAT list<string>}. LAST=1 zamyka widok VID -
-    bez tej notyfikacji zapytanie asynchroniczne nigdy sie nie konczy."""
+    EntityStats @0x1416c5d60 {EID ETYP POFF STAT list<string>}. LAST=1 closes view VID -
+    without this notification the asynchronous query never finishes."""
     entities = [[f_int("EID", eid), f_int("POFF", 0), f_list_str("STAT", [])]
                 for eid in entity_ids]
     payload = encode_tdf([
@@ -883,17 +886,17 @@ def build_stats_async_notification(view_id: int, group_name: str, entity_ids: li
 
 
 def build_get_auth_token_response(seq: int, token: str, *, msg_type: int = MSG_REPLY) -> bytes:
-    """Authentication.getAuthToken (1/36) -> @0x1416ad9f8 {AUTH mAuthToken}. Gra wstawia ten
-    token do naglowka Authorization zapytan ByteVault (bez niego szedl pusty)."""
+    """Authentication.getAuthToken (1/36) -> @0x1416ad9f8 {AUTH mAuthToken}. The game puts this
+    token into the Authorization header of ByteVault requests (without it, it went out empty)."""
     payload = encode_tdf([f_str("AUTH", token)])
     return Fire2(component=1, command=36, payload=payload, error=0, seq=seq,
                  msg_type=msg_type).encode()
 
 
-# ---------------------------------------------------------------- GameManager (komponent 4)
-# Numery z tablic nazw w binarce: RPC 0xf68420 (1 createGame, 2 destroyGame, 3 advanceGameState,
-# 15 finalizeGameCreation, 29 updateMeshConnection), notyfikacje 0xf69450 (20 NotifyGameSetup,
-# 30 NotifyPlayerJoinCompleted, 100 NotifyGameStateChange). Enumy z tablic {nazwa, wartosc}.
+# ---------------------------------------------------------------- GameManager (component 4)
+# Numbers from the name tables in the binary: RPC 0xf68420 (1 createGame, 2 destroyGame, 3 advanceGameState,
+# 15 finalizeGameCreation, 29 updateMeshConnection), notifications 0xf69450 (20 NotifyGameSetup,
+# 30 NotifyPlayerJoinCompleted, 100 NotifyGameStateChange). Enums from {name, value} tables.
 GM_NOTIFY_GAME_SETUP = 20
 GM_NOTIFY_PLAYER_JOIN_COMPLETED = 30
 GM_NOTIFY_GAME_STATE_CHANGE = 100
@@ -906,21 +909,21 @@ SETUP_CONTEXT_CREATE_GAME = 0
 
 
 def _ip_pair_fields(exip: int, export: int, inip: int, inport: int, maci: int) -> list[Field]:
-    """Pola IpPairAddress w kolejnosci tagow: EXIP{IP MACI PORT} INIP{IP MACI PORT} MACI."""
+    """IpPairAddress fields in tag order: EXIP{IP MACI PORT} INIP{IP MACI PORT} MACI."""
     return [f_struct("EXIP", [f_int("IP", exip), f_int("MACI", 0), f_int("PORT", export)]),
             f_struct("INIP", [f_int("IP", inip), f_int("MACI", 0), f_int("PORT", inport)]),
             f_int("MACI", maci)]
 
 
 def f_union_ip_pair(tag: str, exip: int, export: int, inip: int, inport: int, maci: int) -> Field:
-    """Pole-unia NetworkAddress z aktywnym IpPairAddress (wariant 2), jak ADDR w ExtendedData."""
+    """NetworkAddress union field with IpPairAddress active (variant 2), like ADDR in ExtendedData."""
     return f_union(tag, 2, f_struct("VALU", _ip_pair_fields(exip, export, inip, inport, maci)))
 
 
 def f_list_ip_pair(tag: str, exip: int, export: int, inip: int, inport: int, maci: int) -> Field:
-    """Lista NetworkAddress (HNET). Typ elementu na drucie = 3 (struct), ale element to UNIA:
-    bajt wariantu (2 = IpPairAddress) + pola czlonu + terminator 0x00. Uklad podpatrzony w
-    zadaniu createGame wyslanym przez klienta (HNET: 03 01 02 EXIP... MACI... 00)."""
+    """NetworkAddress list (HNET). The element wire type = 3 (struct), but the element is a UNION:
+    variant byte (2 = IpPairAddress) + the member's fields + 0x00 terminator. Layout observed in
+    the createGame request sent by the client (HNET: 03 01 02 EXIP... MACI... 00)."""
     body = bytes((T_STRUCT,)) + enc_int(1) + bytes((2,))
     body += b"".join(f.encode() for f in _ip_pair_fields(exip, export, inip, inport, maci)) + b"\x00"
     return Field(tag, T_LIST, body)
@@ -937,27 +940,27 @@ def build_create_game_response(seq: int, game_id: int, *, command: int = 1,
 
 def build_reset_dedicated_server_response(seq: int, game_id: int, *,
                                           msg_type: int = MSG_REPLY) -> bytes:
-    """GameManager.resetDedicatedServer (4/25) -> ta sama klasa co createGame: w binarce NIE MA
-    stringu "ResetDedicatedServerResponse" (jest tylko ...SetupContext), a CreateGameResponse
-    @0x141a300b0 to jedyna odpowiedz GameManagera z samym GID."""
+    """GameManager.resetDedicatedServer (4/25) -> the same class as createGame: the binary has NO
+    "ResetDedicatedServerResponse" string (only ...SetupContext), and CreateGameResponse
+    @0x141a300b0 is the only GameManager reply with just a GID."""
     return build_create_game_response(seq, game_id, command=25, msg_type=msg_type)
 
 
-# SlotType z tablicy {nazwa, wartosc} @0x1416d9790 (MAX_PARTICIPANT_SLOT_TYPE = 2, INVALID = -1).
+# SlotType from the {name, value} table @0x1416d9790 (MAX_PARTICIPANT_SLOT_TYPE = 2, INVALID = -1).
 SLOT_TYPE = {"SLOT_PUBLIC_PARTICIPANT": 0, "SLOT_PRIVATE_PARTICIPANT": 1,
              "SLOT_PUBLIC_SPECTATOR": 2, "SLOT_PRIVATE_SPECTATOR": 3}
 
 
 def build_replicated_player(game_id: int, player: dict) -> list[Field]:
-    """ReplicatedGamePlayer @0x141a2f3a0 (18 z 20 pol) - gracz w rosterze NotifyGameSetup i w
-    NotifyPlayerJoining. player = {uid, persona, slot, state, addr=(exip, export, inip, inport, maci)}.
-    Numer miejsca gracza idzie do SID (mSlotId) i CSID (mConnectionSlotId); SLOT to mSlotType, czyli
-    rodzaj miejsca, nie numer. Do 15.09 numer trafial do SLOT, a SID/CSID byly 0 u kazdego gracza -
-    dolaczajacy dostawal to samo miejsce polaczenia co host (log-29: obie gry meldowaly STAT=0)."""
+    """ReplicatedGamePlayer @0x141a2f3a0 (18 of 20 fields) - a player in the NotifyGameSetup roster
+    and in NotifyPlayerJoining. player = {uid, persona, slot, state, addr=(exip, export, inip, inport, maci)}.
+    The player's slot number goes to SID (mSlotId) and CSID (mConnectionSlotId); SLOT is mSlotType, i.e.
+    the kind of slot, not its number. Until 15.09 the number went to SLOT, and SID/CSID were 0 for every
+    player - a joiner got the same connection slot as the host (log-29: both games reported STAT=0)."""
     import time
     uid = player["uid"]
     slot = player.get("slot", 0)
-    return [                                           # tagi rosnaco
+    return [                                           # tags ascending
         f_int("CONG", uid),
         f_int("CSID", slot),
         f_int("EXID", 0),
@@ -990,13 +993,13 @@ def build_notify_game_setup(game_id: int, host_id: int, players: list[dict], *, 
                             admins: list[int] | None = None,
                             seq: int = 0, msg_type: int = MSG_NOTIFY_BYTE) -> bytes:
     """NotifyGameSetup (4/20) @0x1416d7cf0 {GAME mGameData, LFPJ, PROS mGameRoster, QUEU,
-    REAS mGameSetupReason}. GAME = ReplicatedGameData @0x141a2f590 (tu 32 z 42 pol, reszta
-    domyslna), PROS = roster (build_replicated_player dla kazdego gracza z `players`), host
-    (ADMN, HSES, OGHI, PHST/THST) = host_id, HNET = adres hosta. REAS = unia: wariant 0
+    REAS mGameSetupReason}. GAME = ReplicatedGameData @0x141a2f590 (32 of 42 fields here, the rest
+    default), PROS = roster (build_replicated_player for every player in `players`), host
+    (ADMN, HSES, OGHI, PHST/THST) = host_id, HNET = host address. REAS = union: variant 0
     DatalessSetupContext {DCTX = CREATE_GAME_SETUP_CONTEXT}, 1 ResetDedicatedServerSetupContext
-    (setup_context="reset_dedicated", bez pol) albo 3 MatchmakingSetupContext.
-    Wartosci gry (nazwa, ustawienia, topologia, VSTR, pojemnosc) bierzemy z zadania klienta
-    tworzacego gre, zeby dostal to, o co prosil; dolaczajacy dostaje te same."""
+    (setup_context="reset_dedicated", no fields) or 3 MatchmakingSetupContext.
+    Game values (name, settings, topology, VSTR, capacity) come from the request of the client
+    creating the game, so it gets what it asked for; joiners get the same."""
     # The host's slot has to be the real one. It used to be hardwired to 0, which held while the
     # host was always the creator of the game (slot 0). After a host migration the new host keeps
     # its own slot (1 in test 50) and a returning player gets the freed slot 0 - so a joiner was
@@ -1005,7 +1008,7 @@ def build_notify_game_setup(game_id: int, host_id: int, players: list[dict], *, 
                  f_int("HSLT", host_slot)]
     exip, export, inip, inport, maci = host_addr
     user_id = host_id
-    game = [                                           # tagi rosnaco
+    game = [                                           # tags ascending
         f_list_int("ADMN", list(admins) if admins else [user_id]),
         f_map_str("ATTR", attributes),
         f_list_int("CAP", slot_capacities),
@@ -1041,7 +1044,7 @@ def build_notify_game_setup(game_id: int, host_id: int, players: list[dict], *, 
         f_int("VOIP", voip),
         f_str("VSTR", version_string),
     ]
-    if setup_context == "reset_dedicated":             # resetDedicatedServer: kontekst bez pol
+    if setup_context == "reset_dedicated":             # resetDedicatedServer: context without fields
         reas = f_union("REAS", GAME_SETUP_REASON_RESET_DEDICATED, f_struct("VALU", []))
     elif setup_context is None:                        # createGame: DatalessSetupContext
         reas = f_union("REAS", 0, f_struct("VALU", [f_int("DCTX", SETUP_CONTEXT_CREATE_GAME)]))
@@ -1069,38 +1072,38 @@ def build_notify_game_state_change(game_id: int, state: int, *, seq: int = 0,
 
 def build_notify_player_join_completed(game_id: int, player_id: int, *, seq: int = 0,
                                        msg_type: int = MSG_NOTIFY_BYTE) -> bytes:
-    """NotifyPlayerJoinCompleted (4/30) - kandydat klasy {GID mGameId, PID mPlayerId}."""
+    """NotifyPlayerJoinCompleted (4/30) - candidate class {GID mGameId, PID mPlayerId}."""
     payload = encode_tdf([f_int("GID", game_id), f_int("PID", player_id)])
     return build_notification(4, GM_NOTIFY_PLAYER_JOIN_COMPLETED, payload, seq=seq,
                               msg_type=msg_type)
 
 
 # ---------------------------------------------------------------- GameManager: matchmaking (4/13)
-# StartMatchmakingRequest @0x141a30840 (stringi "StartMatchmakingRequest::m..."): MODE mSessionMode
-# (run-26: 3 = szukaj i utworz), DUR mSessionDurationMS (6000), CRIT mCriteriaData, GNAM, GSET, GVER,
-# NTOP, PMAX, PNET, PRES, TID, VOIP. Enum MatchmakingResult z tablicy {nazwa, wartosc} @0x1416d8f00.
+# StartMatchmakingRequest @0x141a30840 ("StartMatchmakingRequest::m..." strings): MODE mSessionMode
+# (run-26: 3 = find or create), DUR mSessionDurationMS (6000), CRIT mCriteriaData, GNAM, GSET, GVER,
+# NTOP, PMAX, PNET, PRES, TID, VOIP. MatchmakingResult enum from the {name, value} table @0x1416d8f00.
 MATCHMAKING_RESULT = {"SUCCESS_CREATED_GAME": 0, "SUCCESS_JOINED_NEW_GAME": 1,
                       "SUCCESS_JOINED_EXISTING_GAME": 2, "SESSION_TIMED_OUT": 3,
                       "SESSION_CANCELED": 4, "SESSION_TERMINATED": 5,
                       "SESSION_ERROR_GAME_SETUP_FAILED": 6}
 GM_NOTIFY_MATCHMAKING_FAILED = 10
-# Unia GameSetupReason: tablice czlonow @0x141a30280.. kolejno Dataless(0), ResetDedicatedServer(1),
-# IndirectJoinGame(2), Matchmaking(3), IndirectMatchmaking(4). Wariant 0 dziala od run-23 (createGame).
+# GameSetupReason union: member tables @0x141a30280.. in order Dataless(0), ResetDedicatedServer(1),
+# IndirectJoinGame(2), Matchmaking(3), IndirectMatchmaking(4). Variant 0 has worked since run-23 (createGame).
 # MatchmakingSetupContext @0x141a30120 {FIT mFitScore, MAXF mMaxPossibleFitScore, MSID mSessionId,
 # RSLT mMatchmakingResult, USID mUserSessionId}.
 GAME_SETUP_REASON_MATCHMAKING = 3
-# Wariant 1 unii = mResetDedicatedServerSetupContext (tablica @0x141a30298). Sama klasa
-# NIE MA pol: miedzy DatalessSetupContext {DCTX} @0x141a30100 a MatchmakingSetupContext
-# {FIT...} @0x141a30120 nie ma zadnej tablicy czlonkow, wiec VALU zostaje puste.
+# Union variant 1 = mResetDedicatedServerSetupContext (table @0x141a30298). The class itself
+# HAS NO fields: between DatalessSetupContext {DCTX} @0x141a30100 and MatchmakingSetupContext
+# {FIT...} @0x141a30120 there is no member table at all, so VALU stays empty.
 GAME_SETUP_REASON_RESET_DEDICATED = 1
-MM_FIT_SCORE = 100      # FIT = MAXF: dopasowanie to ulamek FIT/MAXF - nie wysylamy zer
+MM_FIT_SCORE = 100      # FIT = MAXF: the fit is the fraction FIT/MAXF - we do not send zeros
 
 
 def build_start_matchmaking_response(seq: int, session_id: int, *,
                                      msg_type: int = MSG_REPLY) -> bytes:
-    """StartMatchmakingResponse {MSID}. Tag MSID maja w binarce dwie klasy-kandydaci: @0x1416da370
-    {MSID mMatchmakingSessionId} i @0x1416d9ef0 {COID ESNM MSID mSessionId SCID STMN} (pola sesji
-    zewnetrznej Xbox) - samo MSID pasuje do obu, reszta zostaje domyslna."""
+    """StartMatchmakingResponse {MSID}. Two candidate classes in the binary have the MSID tag: @0x1416da370
+    {MSID mMatchmakingSessionId} and @0x1416d9ef0 {COID ESNM MSID mSessionId SCID STMN} (external Xbox
+    session fields) - MSID alone fits both, the rest stays default."""
     payload = encode_tdf([f_int("MSID", session_id)])
     return Fire2(component=4, command=13, payload=payload, error=0, seq=seq,
                  msg_type=msg_type).encode()
@@ -1115,8 +1118,8 @@ def build_notify_matchmaking_failed(session_id: int, user_session_id: int, resul
     return build_notification(4, GM_NOTIFY_MATCHMAKING_FAILED, payload, seq=seq, msg_type=msg_type)
 
 
-# ---------------------------------------------------------------- GameManager: kilku graczy
-# Numery notyfikacji z tablicy nazw 0xf69450. Enumy z tablic {nazwa, wartosc} w zrzucie:
+# ---------------------------------------------------------------- GameManager: several players
+# Notification numbers from the name table 0xf69450. Enums from {name, value} tables in the dump:
 #   PlayerRemovedReason @0x1416d9d70, PlayerNetConnectionStatus @0x1416d9ae8,
 #   GameDestructionReason @0x1416d9ba0.
 GM_NOTIFY_GAME_REMOVED = 16
@@ -1131,8 +1134,8 @@ MESH_STATUS = {"DISCONNECTED": 0, "ESTABLISHING_CONNECTION": 1, "CONNECTED": 2}
 
 def build_notify_player_joining(game_id: int, player: dict, *, seq: int = 0,
                                 msg_type: int = MSG_NOTIFY_BYTE) -> bytes:
-    """NotifyPlayerJoining (4/21) @0x1416d8220 {GID mGameId, PDAT mJoiningPlayer} - do graczy juz
-    bedacych w grze, gdy ktos dolacza. PDAT = ReplicatedGamePlayer dolaczajacego."""
+    """NotifyPlayerJoining (4/21) @0x1416d8220 {GID mGameId, PDAT mJoiningPlayer} - to players already
+    in the game when someone joins. PDAT = the joiner's ReplicatedGamePlayer."""
     payload = encode_tdf([f_int("GID", game_id),
                           f_struct("PDAT", build_replicated_player(game_id, player))])
     return build_notification(4, GM_NOTIFY_PLAYER_JOINING, payload, seq=seq, msg_type=msg_type)
@@ -1140,9 +1143,9 @@ def build_notify_player_joining(game_id: int, player: dict, *, seq: int = 0,
 
 def build_notify_player_removed(game_id: int, player_id: int, reason: int, *, seq: int = 0,
                                 msg_type: int = MSG_NOTIFY_BYTE) -> bytes:
-    """NotifyPlayerRemoved (4/40), kandydat klasy @0x141a30560 {CNTX mPlayerRemovedTitleContext,
+    """NotifyPlayerRemoved (4/40), candidate class @0x141a30560 {CNTX mPlayerRemovedTitleContext,
     GID mGameId, LFPJ mLockedForPreferredJoins, PID mPlayerId, REAS mPlayerRemovedReason} -
-    uklad z nazw pol (zadania removePlayer maja te same tagi bez LFPJ)."""
+    layout from the field names (removePlayer requests have the same tags without LFPJ)."""
     payload = encode_tdf([f_int("CNTX", 0), f_int("GID", game_id), f_int("LFPJ", 0),
                           f_int("PID", player_id), f_int("REAS", reason)])
     return build_notification(4, GM_NOTIFY_PLAYER_REMOVED, payload, seq=seq, msg_type=msg_type)
@@ -1150,13 +1153,13 @@ def build_notify_player_removed(game_id: int, player_id: int, reason: int, *, se
 
 def build_notify_game_removed(game_id: int, reason: int, *, seq: int = 0,
                               msg_type: int = MSG_NOTIFY_BYTE) -> bytes:
-    """NotifyGameRemoved (4/16), kandydat klasy @0x141a303a8 {GID mGameId, REAS mDestructionReason}."""
+    """NotifyGameRemoved (4/16), candidate class @0x141a303a8 {GID mGameId, REAS mDestructionReason}."""
     payload = encode_tdf([f_int("GID", game_id), f_int("REAS", reason)])
     return build_notification(4, GM_NOTIFY_GAME_REMOVED, payload, seq=seq, msg_type=msg_type)
 
 
-# Numery notyfikacji GameManager odczytane z tablicy skokow getNotificationName 0xf69450 (indeks =
-# id-10: bajt @0xf6963c, offset RVA @0xf695a8): 10 MatchmakingFailed, 12 MatchmakingAsyncStatus,
+# GameManager notification numbers read from the getNotificationName jump table 0xf69450 (index =
+# id-10: byte @0xf6963c, RVA offset @0xf695a8): 10 MatchmakingFailed, 12 MatchmakingAsyncStatus,
 # 16 GameRemoved, 20 GameSetup, 21 PlayerJoining, 22 JoiningPlayerInitiateConnections, 23 PlayerJoiningQueue,
 # 24 PlayerPromotedFromQueue, 25 PlayerClaimingReservation, 30 PlayerJoinCompleted, 40 PlayerRemoved,
 # 60 HostMigrationFinished, 70 HostMigrationStart, 71 PlatformHostInitialized, 80 GameAttribChange,
@@ -1168,20 +1171,20 @@ def build_notify_game_removed(game_id: int, reason: int, *, seq: int = 0,
 # 220 CreateDynamicDedicatedServerGame, 230 GameNameChange.
 GM_NOTIFY_ADMIN_LIST_CHANGE = 202
 GM_NOTIFY_GAME_PLAYER_STATE_CHANGE = 116
-# UpdateAdminListOperation z tablicy {nazwa, wartosc} @0x1416da628.
+# UpdateAdminListOperation from the {name, value} table @0x1416da628.
 GM_ADMIN_OPERATION = {"GM_ADMIN_ADDED": 0, "GM_ADMIN_REMOVED": 1, "GM_ADMIN_MIGRATED": 2}
 
 
 def build_notify_game_player_state_change(game_id: int, player_id: int, state: int, *,
                                           seq: int = 0, msg_type: int = MSG_NOTIFY_BYTE) -> bytes:
     """NotifyGamePlayerStateChange (4/116) @0x141a30660 {GID mGameId, PID mPlayerId,
-    STAT mPlayerState}; `state` z PLAYER_STATE.
+    STAT mPlayerState}; `state` from PLAYER_STATE.
 
-    Klasa wyodrebniona z tdf_members.json miedzy {GID, PID} a {GID, PID, ROLE, SLOT} - klasy leza
-    w tej samej kolejnosci co numery notyfikacji (116 GamePlayerStateChange, 117
-    GamePlayerTeamRoleSlotChange). Rozna od NotifyPlayerJoinCompleted (30): 30 mowi "dolaczanie
-    zakonczone", 116 niesie STAN gracza. Do run-39 wysylalismy tylko 30, a stan zmienialismy
-    wylacznie u siebie - obiekt gracza u dolaczajacego zostawal w ACTIVE_CONNECTING."""
+    Class isolated from tdf_members.json between {GID, PID} and {GID, PID, ROLE, SLOT} - the classes
+    lie in the same order as the notification numbers (116 GamePlayerStateChange, 117
+    GamePlayerTeamRoleSlotChange). Different from NotifyPlayerJoinCompleted (30): 30 says "join
+    complete", 116 carries the player's STATE. Up to run-39 we only sent 30, and changed the state
+    only on our side - the player object on the joiner stayed in ACTIVE_CONNECTING."""
     payload = encode_tdf([f_int("GID", game_id), f_int("PID", player_id), f_int("STAT", state)])
     return build_notification(4, GM_NOTIFY_GAME_PLAYER_STATE_CHANGE, payload, seq=seq,
                               msg_type=msg_type)
@@ -1249,15 +1252,15 @@ def build_notify_platform_host_initialized(game_id: int, host_id: int, slot: int
 def build_notify_admin_list_change(game_id: int, admin_id: int, operation: int, updater_id: int, *,
                                    seq: int = 0, msg_type: int = MSG_NOTIFY_BYTE) -> bytes:
     """NotifyAdminListChange (4/202) @0x141a30480 {ALST mAdminPlayerId, GID mGameId, OPER mOperation,
-    UID mUpdaterPlayerId} - do wszystkich graczy gry po addAdminPlayer (4/106) i removeAdminPlayer
-    (4/107). Zadanie tych RPC to @0x1416d8978 {GID mGameId, PID mAdminPlayerId}."""
+    UID mUpdaterPlayerId} - to all players of the game after addAdminPlayer (4/106) and
+    removeAdminPlayer (4/107). The request of those RPCs is @0x1416d8978 {GID mGameId, PID mAdminPlayerId}."""
     payload = encode_tdf([f_int("ALST", admin_id), f_int("GID", game_id), f_int("OPER", operation),
                           f_int("UID", updater_id)])
     return build_notification(4, GM_NOTIFY_ADMIN_LIST_CHANGE, payload, seq=seq, msg_type=msg_type)
 
 
 # ---------------------------------------------------------------- Authentication.listUserEntitlements2
-# Enumy z tablic {nazwa, wartosc} w .rdata: EntitlementType @0x1416aeac0, EntitlementStatus @0x1416ac490.
+# Enums from {name, value} tables in .rdata: EntitlementType @0x1416aeac0, EntitlementStatus @0x1416ac490.
 ENTITLEMENT_TYPE = {"UNKNOWN": 0, "ONLINE_ACCESS": 1, "TRIAL_ONLINE_ACCESS": 2, "SUBSCRIPTIONS": 3,
                     "PARENTAL_APPROVAL": 4, "DEFAULT": 5}
 ENTITLEMENT_STATUS = {"UNKNOWN": 0, "ACTIVE": 1, "DISABLED": 2, "PENDING": 3, "DELETED": 4, "BANNED": 5}
@@ -1268,7 +1271,7 @@ def build_list_entitlements_response(seq: int, entitlements: list[dict], *,
     """Authentication.listUserEntitlements2 (1/29) -> Entitlements @0x1416adfe8 {NLST mEntitlements},
     element Entitlement @0x141a2b2b0 {DEVI GDAY GNAM ID ISCO PID PJID PRCA PRID STAT STRC TAG TDAY TYPE
     UCNT VER}. entitlements = [{id, group, type, tag, persona_id, product_id, project_id, status,
-    grant_date}] - brakujace pola zostaja domyslne."""
+    grant_date}] - missing fields stay default."""
     rows = [[
         f_str("DEVI", ""),
         f_str("GDAY", e.get("grant_date", "")),
@@ -1293,26 +1296,26 @@ def build_list_entitlements_response(seq: int, entitlements: list[dict], *,
 
 
 # ---------------------------------------------------------------- Util.filterForProfanity
-# Nazwy enuma FilterResult w .rdata @0x16c70d0.. w tej kolejnosci; klient wysyla w zadaniu
-# DIRT=2 dla tekstu jeszcze nie sprawdzonego, co zgadza sie z numeracja od zera (UNPROCESSED).
+# FilterResult enum names in .rdata @0x16c70d0.. in this order; the client sends DIRT=2 in the
+# request for text not checked yet, which matches zero-based numbering (UNPROCESSED).
 FILTER_RESULT = {"PASSED": 0, "OFFENSIVE": 1, "UNPROCESSED": 2, "STRING_TOO_LONG": 3, "OTHER": 4}
 
 
 def build_filter_profanity_response(seq: int, texts: list[str], *,
                                     msg_type: int = MSG_REPLY) -> bytes:
-    """Util.filterForProfanity (9/20). Zadanie i odpowiedz to ta sama klasa @0x1416c41d8
+    """Util.filterForProfanity (9/20). Request and reply are the same class @0x1416c41d8
     {TLST mFilteredTextList}, element @0x141a2e150 {DIRT mResult, UTXT mFilteredText}.
-    Nie filtrujemy: kazdy tekst wraca bez zmian z wynikiem PASSED, w kolejnosci zadania."""
+    We do not filter: every text comes back unchanged with the PASSED result, in request order."""
     items = [[f_int("DIRT", FILTER_RESULT["PASSED"]), f_str("UTXT", t)] for t in texts]
     payload = encode_tdf([f_list_struct("TLST", items)])
     return Fire2(component=9, command=20, payload=payload, error=0, seq=seq,
                  msg_type=msg_type).encode()
 
 
-# ---------------------------------------------------------------- nazwy komend RPC
-# Z emulacji 13 funkcji getCommandName w binarce (switch po numerze -> `lea rax, nazwa; ret`),
-# zrzut NFS14-0912.DMP.dmp. Numery komponentow z ruchu. Komponent 28 nie ma w binarce tablicy
-# nazw - "GameReporting" wynika z klasy zadania {FNSH PRVT RPRT} (@0x141a32ad0).
+# ---------------------------------------------------------------- RPC command names
+# From emulating the 13 getCommandName functions in the binary (switch on the number ->
+# `lea rax, name; ret`), dump NFS14-0912.DMP.dmp. Component numbers from traffic. Component 28 has no
+# name table in the binary - "GameReporting" follows from the request class {FNSH PRVT RPRT} (@0x141a32ad0).
 _RPC_TABLES = {
     (1, "Authentication"): """20 updateAccount 21 upgradeAccount 29 listUserEntitlements2
         30 getAccount 31 grantEntitlement 32 listEntitlements 34 getUseCount 35 decrementUseCount
@@ -1380,28 +1383,28 @@ for (_comp, _cname), _spec in _RPC_TABLES.items():
 
 
 def rpc_name(component: int, command: int) -> str:
-    """"Komponent.komenda" z tablic binarki; sam komponent, gdy komendy nie znamy; "" gdy nic."""
+    """"Component.command" from the binary's tables; just the component when the command is unknown; "" when nothing."""
     if (component, command) in RPC_NAMES:
         return RPC_NAMES[(component, command)]
     return f"{COMPONENT_NAMES[component]}#{command}" if component in COMPONENT_NAMES else ""
 
 
 # ---------------------------------------------------------------- NFS.getInGameSpeedWalls (2050/20)
-# Klasy przypiete do tablic pol po stringach "Klasa::mPole" z binarki (np.
+# Classes pinned to field tables by the "Class::mField" strings from the binary (e.g.
 # "InGameSpeedWallResponseRow::mStatsFlt"):
 #   InGameSpeedWallsRequest          @0x1416b76c0 {BLID mBlazeId, SWIS mSpeedWallIds, USGE, USPG}
 #   InGameSpeedWallResponseSpeedWall @0x1416b7120 {ROWS mSpeedWall, SWID mSpeedWallId}
 #   InGameSpeedWallResponseRow       @0x1416b87a0 {BLUS mBlazeUser, STAF mStatsFlt, STAI mStatsInt,
 #                                                  STAS mStatsStr}
-#   BlazeUser (kandydat, nazwy pol)  @0x141a2c040 {BLIS mBlazeId, PENA mPersonaName, URTY mRelationType}
-# Wiersz ma te same mapy STAF/STAI/STAS, co wpis gracza w raporcie GameReporting ({ENTI STAF STAI
-# STAS}), a id speed walla to ENTI z raportu - serwer odsyla zapisane statystyki obiektu.
-# InGameSpeedWallResponse::mSpeedwalls ma w binarce dwie mozliwe tablice pol: lista pod tagiem ROWS
-# (@0x1416b50f0, @0x1416b61e8) albo SPWA (@0x1416b5870). Wysylamy OBA tagi z ta sama lista - dekoder
-# heat2 klienta pomija tagi nieznane swojej klasie.
+#   BlazeUser (candidate, field names) @0x141a2c040 {BLIS mBlazeId, PENA mPersonaName, URTY mRelationType}
+# A row has the same STAF/STAI/STAS maps as a player entry in a GameReporting report ({ENTI STAF STAI
+# STAS}), and the speed wall id is the ENTI from the report - the server sends back the object's stored stats.
+# InGameSpeedWallResponse::mSpeedwalls has two possible field tables in the binary: a list under the ROWS
+# tag (@0x1416b50f0, @0x1416b61e8) or SPWA (@0x1416b5870). We send BOTH tags with the same list - the
+# client's heat2 decoder skips tags unknown to its class.
 
 def f_map_int(tag: str, items: dict[str, int]) -> Field:
-    """Mapa heat2 string -> int, klucze posortowane (jak f_map_str)."""
+    """heat2 map string -> int, keys sorted (like f_map_str)."""
     body = bytes((T_STRING, T_INT)) + enc_int(len(items))
     for k, v in sorted(items.items()):
         body += enc_str(k) + enc_int(int(v))
@@ -1409,8 +1412,8 @@ def f_map_int(tag: str, items: dict[str, int]) -> Field:
 
 
 def f_map_float(tag: str, items: dict[str, float]) -> Field:
-    """Mapa heat2 string -> float: 4 B big-endian, tak jak czyta _dec_value (wartosci z raportow
-    wychodza sensowne, np. speed=69.1). Klucze posortowane."""
+    """heat2 map string -> float: 4 B big-endian, just as _dec_value reads it (the values from
+    reports come out sensible, e.g. speed=69.1). Keys sorted."""
     body = bytes((T_STRING, T_FLOAT)) + enc_int(len(items))
     for k, v in sorted(items.items()):
         body += enc_str(k) + struct.pack(">f", float(v))
@@ -1419,9 +1422,9 @@ def f_map_float(tag: str, items: dict[str, float]) -> Field:
 
 def build_in_game_speed_walls_response(seq: int, walls: list[tuple[int, list[dict]]], *,
                                        msg_type: int = MSG_REPLY) -> bytes:
-    """walls = [(id speed walla, [wiersz, ...])], wiersz = {blaze_id, persona, int, float, str}.
-    Speed wall bez zapisanych danych idzie z pusta lista wierszy - gra dostaje odpowiedz na kazde
-    zapytane id."""
+    """walls = [(speed wall id, [row, ...])], row = {blaze_id, persona, int, float, str}.
+    A speed wall without stored data goes out with an empty row list - the game gets an answer for
+    every id it asked about."""
     items = []
     for swid, rows in walls:
         row_structs = [[
@@ -1438,8 +1441,8 @@ def build_in_game_speed_walls_response(seq: int, walls: list[tuple[int, list[dic
 
 
 def _dec_value(buf: bytes, p: int, wtype: int, end: int) -> tuple[object, int]:
-    """Dekoduje JEDNA wartosc danego typu; zwraca (wartosc, nowa pozycja).
-    Wartosci bez taga - uzywane tez dla elementow list i par mapy."""
+    """Decodes ONE value of the given type; returns (value, new position).
+    Values without a tag - also used for list elements and map pairs."""
     if wtype == T_INT:
         return dec_int(buf, p)
     if wtype == T_STRING:
@@ -1461,11 +1464,11 @@ def _dec_value(buf: bytes, p: int, wtype: int, end: int) -> tuple[object, int]:
         items = []
         for _ in range(n):
             if elem == T_STRUCT and 0 < buf[p] < 0x80:
-                # Element listy struktur bywa UNIA: bajt wariantu przed polami czlonu. Tak
-                # klient koduje HNET (createGame, resetDedicatedServer) i tak samo koduje to
-                # nasz f_list_ip_pair. Poznajemy po tym, ze pierwszy bajt TAGA ma zawsze
-                # ustawiony bit 7 (pierwszy znak taga >= '@'), a numer wariantu jest mniejszy;
-                # zero zostawiamy terminatorowi pustej struktury.
+                # An element of a struct list can be a UNION: a variant byte before the member's
+                # fields. That is how the client encodes HNET (createGame, resetDedicatedServer), and
+                # our f_list_ip_pair encodes it the same way. We tell it apart by the fact that the
+                # first byte of a TAG always has bit 7 set (the first tag character >= '@'), while
+                # the variant number is smaller; zero is left to the empty-struct terminator.
                 variant = buf[p]; p += 1
                 v, p = _dec_value(buf, p, elem, end)
                 items.append(("union", variant, v))
@@ -1494,16 +1497,16 @@ def _dec_value(buf: bytes, p: int, wtype: int, end: int) -> tuple[object, int]:
     if wtype == T_FLOAT:
         return struct.unpack_from(">f", buf, p)[0], p + 4
     if wtype == T_VARIABLE:
-        # Pole "variable" (obiekt TDF dowolnej klasy): bajt obecnosci; gdy 1 - tdfId klasy
-        # (varint) i pola obiektu zakonczone 0x00. Tak wyglada raport GameReporting 28/2:
-        # PRVT = 00 (brak), RPRT.GAME = 01 + id + struktura.
+        # A "variable" field (a TDF object of any class): presence byte; when 1 - the class tdfId
+        # (varint) and the object's fields terminated by 0x00. That is what the GameReporting 28/2
+        # report looks like: PRVT = 00 (absent), RPRT.GAME = 01 + id + struct.
         present = buf[p]; p += 1
         if not present:
             return ("variable", None), p
         tdf_id, p = dec_int(buf, p)
         fields, p = _dec_fields(buf, p, end)
         return ("variable", tdf_id, fields), p
-    raise ValueError(f"nieznany typ TDF 0x{wtype:02x} na offsecie {p - 1}")
+    raise ValueError(f"unknown TDF type 0x{wtype:02x} at offset {p - 1}")
 
 
 def _dec_one_field(buf: bytes, p: int, end: int) -> tuple[tuple, int]:
@@ -1514,10 +1517,10 @@ def _dec_one_field(buf: bytes, p: int, end: int) -> tuple[tuple, int]:
 
 
 def _dec_fields(buf: bytes, p: int, end: int) -> tuple[list, int]:
-    """Pola az do terminatora struktury (0x00) albo konca bufora."""
+    """Fields up to the struct terminator (0x00) or the end of the buffer."""
     out = []
     while p < end:
-        if buf[p] == 0x00:                 # terminator zagniezdzonej struktury
+        if buf[p] == 0x00:                 # nested struct terminator
             return out, p + 1
         f, p = _dec_one_field(buf, p, end)
         out.append(f)
@@ -1525,10 +1528,9 @@ def _dec_fields(buf: bytes, p: int, end: int) -> tuple[list, int]:
 
 
 def decode_tdf(buf: bytes, p: int = 0, end: int | None = None) -> list[tuple]:
-    """Dekoduje payload TDF (heat2) REKURENCYJNIE. Zwraca liste (tag, typ, wartosc);
-    struktury/unie/listy/mapy schodza w glab. Sluzy do weryfikacji round-trip
-    wlasnych odpowiedzi: jesli nasz dekoder gubi sie na naszym pakiecie, gra
-    tym bardziej."""
+    """Decodes a TDF (heat2) payload RECURSIVELY. Returns a list of (tag, type, value);
+    structs/unions/lists/maps are descended into. Used to verify round-trips of our
+    own replies: if our decoder gets lost on our packet, the game will all the more."""
     if end is None:
         end = len(buf)
     fields, _ = _dec_fields(buf, p, end)
@@ -1536,7 +1538,7 @@ def decode_tdf(buf: bytes, p: int = 0, end: int | None = None) -> list[tuple]:
 
 
 def dump_tdf(fields: list[tuple], indent: int = 0) -> str:
-    """Czytelny wydruk drzewa pol (do logu i testow)."""
+    """Readable dump of the field tree (for the log and tests)."""
     pad = "  " * indent
     lines = []
     for tag, wtype, val in fields:
@@ -1547,11 +1549,11 @@ def dump_tdf(fields: list[tuple], indent: int = 0) -> str:
             if val[1] == "unset":
                 lines.append(f"{pad}{tag} (union) = UNSET")
             else:
-                lines.append(f"{pad}{tag} (union, wariant {val[1]})")
+                lines.append(f"{pad}{tag} (union, variant {val[1]})")
                 lines.append(dump_tdf([val[2]], indent + 1))
         elif wtype == T_VARIABLE and isinstance(val, tuple) and val[0] == "variable":
             if val[1] is None:
-                lines.append(f"{pad}{tag} (variable) = BRAK")
+                lines.append(f"{pad}{tag} (variable) = ABSENT")
             else:
                 lines.append(f"{pad}{tag} (variable, tdfId 0x{val[1]:x})")
                 lines.append(dump_tdf(val[2], indent + 1))

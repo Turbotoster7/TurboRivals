@@ -1,21 +1,22 @@
 #!/usr/bin/env python3
-"""Od stringu w binarce do kodu, ktory go uzywa - na zrzucie pamieci.
+"""From a string in the binary to the code that uses it - on a memory dump.
 
-Po co: stringi i .rdata mozna czytac z .exe (nie sa zaszyfrowane), ale KOD
-(.text) jest na dysku zaszyfrowany. Kod czytamy wiec ze zrzutu pamieci, gdzie
-jest odszyfrowany. To narzedzie robi cala petle:
+Why: strings and .rdata can be read from the .exe (they are not encrypted), but
+the CODE (.text) is encrypted on disk. So we read code from a memory dump, where
+it is decrypted. This tool runs the whole loop:
 
-  1. znajduje string (albo bierze podany adres)
-  2. szuka ODWOLAN Z KODU: na x64 odwolanie do stringu to `lea reg,[rip+disp32]`
-     (7 bajtow: 48 8d /r disp32), gdzie target = adres_instrukcji + 7 + disp
-  3. ustala poczatek funkcji - MSVC wypelnia przerwy miedzy funkcjami bajtem
-     0xCC (int3), wiec ostatni ciag CC przed xrefem to poczatek funkcji
-  4. dezasembluje funkcje i rozwija odwolania rip-relative do stringow
+  1. finds the string (or takes the given address)
+  2. looks for REFERENCES FROM CODE: on x64 a string reference is
+     `lea reg,[rip+disp32]` (7 bytes: 48 8d /r disp32), where
+     target = instruction_address + 7 + disp
+  3. finds the function start - MSVC pads the gaps between functions with
+     0xCC (int3), so the last run of CC before the xref is the function start
+  4. disassembles the function and resolves rip-relative string references
 
-Uzycie:
-    python xref.py <zrzut.dmp> --str ".qosport"
-    python xref.py <zrzut.dmp> --va 0x14170ef98 --len 400
-    python xref.py <zrzut.dmp> --func 0xfdb070 --len 200   (dezasembluj od RVA)
+Usage:
+    python xref.py <dump.dmp> --str ".qosport"
+    python xref.py <dump.dmp> --va 0x14170ef98 --len 400
+    python xref.py <dump.dmp> --func 0xfdb070 --len 200   (disassemble from an RVA)
 """
 from __future__ import annotations
 
@@ -32,16 +33,16 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("dump", type=Path,
-                    help="NFS14.exe (wystarczy do stringow) LUB pelny zrzut .dmp "
-                         "(konieczny do KODU - .text na dysku jest zaszyfrowana)")
-    ap.add_argument("--str", dest="text", help="string, ktorego uzycia szukamy")
-    ap.add_argument("--va", type=lambda x: int(x, 0), help="albo gotowy adres (VA)")
+                    help="NFS14.exe (enough for strings) OR a full .dmp dump "
+                         "(required for CODE - .text on disk is encrypted)")
+    ap.add_argument("--str", dest="text", help="string whose uses we are looking for")
+    ap.add_argument("--va", type=lambda x: int(x, 0), help="or a ready address (VA)")
     ap.add_argument("--func", type=lambda x: int(x, 0),
-                    help="dezasembluj funkcje zawierajaca ten RVA (bez szukania)")
-    ap.add_argument("--len", type=int, default=260, help="ile bajtow dezasemblowac")
+                    help="disassemble the function containing this RVA (no search)")
+    ap.add_argument("--len", type=int, default=260, help="how many bytes to disassemble")
     ap.add_argument("--module", default="NFS14")
     ap.add_argument("--strings", type=lambda x: int(x, 0), metavar="VA",
-                    help="wypisz stringi lezace od tego adresu (nie szuka kodu)")
+                    help="print the strings starting at this address (no code search)")
     args = ap.parse_args()
 
     import capstone
@@ -49,8 +50,8 @@ def main() -> int:
     if args.dump.suffix.lower() == ".exe":
         from pe_probe import PE
         mi = PE(args.dump.read_bytes())
-        print(f"czytam {args.dump.name} z dysku (stringi i .rdata - OK; "
-              f"KOD bedzie zaszyfrowany)")
+        print(f"reading {args.dump.name} from disk (strings and .rdata - OK; "
+              f"CODE will be encrypted)")
     else:
         from dump_image import load_dump
         mi = load_dump(args.dump, args.module)
@@ -60,7 +61,7 @@ def main() -> int:
     text = next(s for s in mi.sections if s.name == ".text")
 
     def func_start(rva: int) -> int:
-        """Poczatek funkcji = koniec ostatniego ciagu int3 (0xCC) przed rva."""
+        """Function start = end of the last run of int3 (0xCC) before rva."""
         i = rva
         while i > text.va:
             if d[i - 1] == 0xCC and d[i - 2] == 0xCC:
@@ -83,9 +84,9 @@ def main() -> int:
     if args.strings is not None:
         off = mi.va_to_off(args.strings)
         if off is None:
-            raise SystemExit(f"adres 0x{args.strings:x} jest poza obrazem")
+            raise SystemExit(f"address 0x{args.strings:x} is outside the image")
         blob = mi.data[off: off + args.len]
-        print(f"stringi od 0x{args.strings:x} (nastepne {args.len} B):")
+        print(f"strings from 0x{args.strings:x} (next {args.len} B):")
         print("")
         i = 0
         while i < len(blob):
@@ -102,17 +103,17 @@ def main() -> int:
 
     if args.func is not None:
         st = func_start(args.func)
-        print(f"=== funkcja zawierajaca 0x{args.func:x} zaczyna sie @ 0x{st:x} ===")
+        print(f"=== function containing 0x{args.func:x} starts @ 0x{st:x} ===")
         disasm(st, args.len)
         return 0
 
-    # 1) adres stringu
+    # 1) string address
     targets: dict[int, str] = {}
     if args.va is not None:
         targets[args.va] = mi.cstring_at(args.va, 64) or f"0x{args.va:x}"
     else:
         if not args.text:
-            ap.error("podaj --str, --va albo --func")
+            ap.error("pass --str, --va or --func")
         needle = args.text.encode()
         off = 0
         while True:
@@ -124,14 +125,14 @@ def main() -> int:
             if len(targets) >= 12:
                 break
         if not targets:
-            print(f"nie znalazlem {args.text!r} w zrzucie")
+            print(f"{args.text!r} not found in the dump")
             return 1
     for va, s in targets.items():
         sec = mi.section_of_va(va)
         print(f"  string @ 0x{va:x} [{sec.name if sec else '?'}]  {s!r}")
 
-    # 2) odwolania z kodu: lea reg,[rip+disp32]
-    print("\n  szukam `lea reg,[rip+...]` w .text ...")
+    # 2) references from code: lea reg,[rip+disp32]
+    print("\n  searching for `lea reg,[rip+...]` in .text ...")
     blob = d[text.va:text.va + text.vsize]
     hits: list[tuple[int, int]] = []
     for p in range(len(blob) - 7):
@@ -144,20 +145,20 @@ def main() -> int:
         if t in targets:
             hits.append((text.va + p, t))
     if not hits:
-        print("  brak odwolan z kodu (string moze byc uzywany przez wskaznik w danych"
-              " - wtedy sprobuj tools/pe_probe.py refs --va ...)")
+        print("  no references from code (the string may be used through a pointer in data"
+              " - then try tools/pe_probe.py refs --va ...)")
         return 0
 
-    # 3) + 4) granica funkcji i dezasemblacja
+    # 3) + 4) function boundary and disassembly
     seen: set[int] = set()
     for rva, t in hits:
         print(f"\n  xref @ 0x{rva:x}  ->  {targets[t]!r}")
         st = func_start(rva)
         if st in seen:
-            print(f"    (ta sama funkcja co wyzej, start 0x{st:x})")
+            print(f"    (same function as above, start 0x{st:x})")
             continue
         seen.add(st)
-        print(f"    funkcja zaczyna sie @ 0x{st:x}, dezasembluje {args.len} B:")
+        print(f"    function starts @ 0x{st:x}, disassembling {args.len} B:")
         disasm(st, args.len)
     return 0
 

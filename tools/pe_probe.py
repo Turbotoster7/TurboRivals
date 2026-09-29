@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
-"""Sonda PE - szukanie tablic metadanych TDF w binarce gry.
+"""PE probe - searching the game binary for TDF metadata tables.
 
-Hipoteza: BlazeSDK generuje dla kazdej klasy TDF statyczna tablice
-TdfMemberInfo, ktora wiaze tag (4 znaki spakowane w 3 bajty) z nazwa pola
-i offsetem w strukturze. Nazwy pol ("mBlazeId") sa w binarce - jesli obok
-nich leza tagi, mozemy odtworzyc caly schemat protokolu bez zgadywania.
+Hypothesis: BlazeSDK generates a static TdfMemberInfo table for every TDF
+class, which ties a tag (4 characters packed into 3 bytes) to a field name
+and an offset in the structure. The field names ("mBlazeId") are in the
+binary - if the tags sit next to them, we can rebuild the whole protocol
+schema without guessing.
 
-Podkomendy:
-    info                          naglowki PE i sekcje
-    find <tekst>                  znajdz stringi i pokaz ich VA
-    xref <tekst>                  znajdz wskazniki na string i zrzut otoczenia
+Subcommands:
+    info                          PE headers and sections
+    find <text>                   find strings and show their VA
+    xref <text>                   find pointers to a string and dump the surroundings
 """
 
 from __future__ import annotations
@@ -36,7 +37,7 @@ class PE:
         self.data = data
         e_lfanew = struct.unpack_from("<I", data, 0x3C)[0]
         if data[e_lfanew:e_lfanew + 4] != b"PE\0\0":
-            raise ValueError("to nie jest plik PE")
+            raise ValueError("not a PE file")
         coff = e_lfanew + 4
         self.machine, nsections = struct.unpack_from("<HH", data, coff)
         opt_size = struct.unpack_from("<H", data, coff + 16)[0]
@@ -103,7 +104,7 @@ def cmd_info(pe: PE, _args) -> int:
 
 
 def find_strings(pe: PE, text: str, exact: bool) -> list[tuple[int, int, str]]:
-    """Zwraca (offset, va, tekst) dla stringow zawierajacych/rownych `text`."""
+    """Returns (offset, va, text) for strings containing/equal to `text`."""
     needle = text.encode("ascii")
     out: list[tuple[int, int, str]] = []
     start = 0
@@ -112,7 +113,7 @@ def find_strings(pe: PE, text: str, exact: bool) -> list[tuple[int, int, str]]:
         if i < 0:
             break
         start = i + 1
-        # cofnij sie do poczatku C-stringa
+        # walk back to the start of the C string
         begin = i
         while begin > 0 and 0x20 <= pe.data[begin - 1] <= 0x7E:
             begin -= 1
@@ -131,7 +132,7 @@ def find_strings(pe: PE, text: str, exact: bool) -> list[tuple[int, int, str]]:
 
 def cmd_find(pe: PE, args) -> int:
     hits = find_strings(pe, args.text, args.exact)
-    print(f"{len(hits)} trafien dla {args.text!r} (exact={args.exact})")
+    print(f"{len(hits)} hits for {args.text!r} (exact={args.exact})")
     for off, va, s in hits[:args.limit]:
         sec = pe.section_of_va(va)
         print(f"  off={off:#010x}  va={va:#014x}  [{sec.name if sec else '?':8}]  {s}")
@@ -154,21 +155,21 @@ def hexdump(pe: PE, va: int, before: int, after: int) -> None:
 
 
 def cmd_xref(pe: PE, args) -> int:
-    """Znajduje 8-bajtowe wskazniki na string i pokazuje sasiedztwo.
+    """Finds 8-byte pointers to a string and shows their neighbourhood.
 
-    Jesli tablica TdfMemberInfo istnieje, wokol wskaznika na nazwe pola
-    powinny lezec: tag, offset pola i typ.
+    If a TdfMemberInfo table exists, the pointer to the field name should
+    be surrounded by: the tag, the field offset and the type.
     """
     hits = find_strings(pe, args.text, exact=True)
     if not hits:
-        print(f"nie znaleziono stringa {args.text!r}")
+        print(f"string {args.text!r} not found")
         return 1
-    print(f"string {args.text!r}: {len(hits)} wystapien")
+    print(f"string {args.text!r}: {len(hits)} occurrences")
 
     for off, va, _ in hits[:args.limit]:
         ptr = struct.pack(pe.ptr_fmt, va)
         refs = [m.start() for m in re.finditer(re.escape(ptr), pe.data)]
-        print(f"\n  va={va:#014x} (off={off:#010x}) -> {len(refs)} wskaznikow")
+        print(f"\n  va={va:#014x} (off={off:#010x}) -> {len(refs)} pointers")
         for r in refs[:args.refs]:
             rva = pe.off_to_va(r)
             sec = pe.section_of_va(rva) if rva else None
@@ -178,11 +179,11 @@ def cmd_xref(pe: PE, args) -> int:
 
 
 def decode_tdf_tag(raw: int) -> str:
-    """Rozpakowuje 24-bitowy tag TDF na 4 znaki (6 bitow na znak).
+    """Unpacks a 24-bit TDF tag into 4 characters (6 bits per character).
 
-    BlazeSDK pakuje 4-znakowy tag do 3 bajtow: kazdy znak to 6 bitow,
-    a wartosc 0 oznacza spacje. Uzywane do weryfikacji, czy dany
-    fragment metadanych to faktycznie tag.
+    BlazeSDK packs a 4-character tag into 3 bytes: every character is 6 bits,
+    and the value 0 means a space. Used to verify whether a given piece of
+    metadata really is a tag.
     """
     chars = []
     for shift in (18, 12, 6, 0):
@@ -192,18 +193,18 @@ def decode_tdf_tag(raw: int) -> str:
 
 
 def cmd_table(pe: PE, args) -> int:
-    """Zrzuca region jako tablice rekordow, rozwiazujac wskazniki na stringi.
+    """Dumps a region as a table of records, resolving pointers to strings.
 
-    Nie zakladamy z gory ukladu rekordu - wypisujemy kazde pole i to, czy
-    da sie je zinterpretowac jako wskaznik na tekst. Semantyka powinna
-    wyjsc z samego zestawienia.
+    We do not assume the record layout up front - we print every field and
+    whether it can be interpreted as a pointer to text. The semantics should
+    emerge from the listing itself.
     """
     va = args.va
     for i in range(args.count):
         base = va + i * args.stride
         off = pe.va_to_off(base)
         if off is None:
-            print(f"{base:#014x}  <poza obrazem>")
+            print(f"{base:#014x}  <outside the image>")
             break
         raw = pe.data[off:off + args.stride]
         parts = []
@@ -223,10 +224,10 @@ def cmd_table(pe: PE, args) -> int:
 
 
 def cmd_refs(pe: PE, args) -> int:
-    """Szuka referencji do adresu: jako 8-bajtowy VA i jako 4-bajtowy RVA.
+    """Looks for references to an address: as an 8-byte VA and as a 4-byte RVA.
 
-    Deskryptor klasy TDF powinien wskazywac na poczatek tablicy pol,
-    wiec referencja do pierwszego rekordu bloku prowadzi nas do klasy.
+    A TDF class descriptor should point at the start of the field table,
+    so a reference to the first record of a block leads us to the class.
     """
     va = args.va
     rva = va - pe.image_base
@@ -234,7 +235,7 @@ def cmd_refs(pe: PE, args) -> int:
     for label, needle in (("VA  (8B)", struct.pack("<Q", va)),
                           ("RVA (4B)", struct.pack("<I", rva))):
         refs = [m.start() for m in re.finditer(re.escape(needle), pe.data)]
-        print(f"\n=== {label} = {needle.hex()} -> {len(refs)} trafien ===")
+        print(f"\n=== {label} = {needle.hex()} -> {len(refs)} hits ===")
         for r in refs[:args.limit]:
             r_va = pe.off_to_va(r)
             sec = pe.section_of_va(r_va) if r_va else None
@@ -260,8 +261,8 @@ def main() -> int:
 
     p = sub.add_parser("xref")
     p.add_argument("text")
-    p.add_argument("--limit", type=int, default=2, help="ile wystapien stringa")
-    p.add_argument("--refs", type=int, default=3, help="ile wskaznikow na wystapienie")
+    p.add_argument("--limit", type=int, default=2, help="how many occurrences of the string")
+    p.add_argument("--refs", type=int, default=3, help="how many pointers per occurrence")
     p.add_argument("--before", type=int, default=48)
     p.add_argument("--after", type=int, default=80)
     p.set_defaults(func=cmd_xref)
@@ -281,7 +282,7 @@ def main() -> int:
 
     args = ap.parse_args()
     if not args.exe.is_file():
-        print(f"nie ma takiego pliku: {args.exe}", file=sys.stderr)
+        print(f"no such file: {args.exe}", file=sys.stderr)
         return 1
     return args.func(PE(args.exe.read_bytes()), args)
 

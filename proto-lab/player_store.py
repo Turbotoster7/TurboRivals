@@ -1,22 +1,22 @@
-"""Trwaly zapis postepu gracza z raportow GameReporting (komponent 28).
+"""Persistent storage of player progress from GameReporting reports (component 28).
 
-Co wiemy o raportach (run-24: 473 szt., wszystkie zdekodowane):
+What we know about the reports (run-24: 473 of them, all decoded):
     SubmitGameReportRequest {FNSH, PRVT (variable, pusty), RPRT {GAME (variable), GRID, GTYP}}
     RPRT.GAME = obiekt tdfId 0xf3e30e29 { GAME { PLYR map<blazeid, {ENTI STAF STAI STAS}> } }
-GTYP to nazwa kategorii + 8 znakow hex (np. 'PlayerStats5d618385', 'Collectables00596a25'),
-ENTI - id obiektu w kategorii (znajdzka, auto, event; 0 = kategoria jako calosc), a
-STAI/STAF/STAS - mapy nazwa statystyki -> wartosc int/float/string.
+GTYP is the category name + 8 hex characters (e.g. 'PlayerStats5d618385', 'Collectables00596a25'),
+ENTI - id of the object within the category (collectible, car, event; 0 = the category as a whole),
+and STAI/STAF/STAS - maps of stat name -> int/float/string value.
 
-Raport niesie STAN, nie przyrost: PlayerStats ma np. CarsPurchasedRacer=2, RacerCredits=156045,
-a kolejne raporty powtarzaja te same liczby. Stan = ostatnia wartosc kazdej statystyki.
-Wartosc -2147483648 (INT_MIN) wystepuje w czesci raportow (np. WebPlayerStatsc7d870d3
-BestBustScore) - znaczenia nie znamy, zapisujemy ja jak kazda inna.
+A report carries STATE, not a delta: PlayerStats has e.g. CarsPurchasedRacer=2, RacerCredits=156045,
+and subsequent reports repeat the same numbers. State = the last value of every stat.
+The value -2147483648 (INT_MIN) shows up in some reports (e.g. WebPlayerStatsc7d870d3
+BestBustScore) - we do not know what it means, we store it like any other.
 
-Na dysku (domyslnie ~\\TurboRivals\\data - poza repo i poza OneDrive, ktory potrafi zablokowac
-plik podmieniany kilka razy na sekunde):
-    stats/<blazeid>.json     stan: kategoria -> ENTI -> {int, float, str, updated, reports}
-    reports/<blazeid>.jsonl  dziennik kazdego raportu - nic nie ginie, gdyby model stanu
-                             okazal sie zly i trzeba go bylo odtworzyc od nowa
+On disk (by default ~\\TurboRivals\\data - outside the repo and outside OneDrive, which can lock
+a file that is replaced several times per second):
+    stats/<blazeid>.json     state: category -> ENTI -> {int, float, str, updated, reports}
+    reports/<blazeid>.jsonl  journal of every report - nothing is lost, should the state model
+                             turn out wrong and need to be rebuilt from scratch
 """
 from __future__ import annotations
 
@@ -28,12 +28,12 @@ from pathlib import Path
 
 import blaze
 
-# Nie %LOCALAPPDATA%: Python ze Sklepu Microsoft (python.exe z WindowsApps - tak jest u nas) po
-# cichu przekierowuje zapisy z AppData\Local do Packages\PythonSoftwareFoundation.Python.*\
-# LocalCache\Local, wiec w run-25 plikow nie bylo tam, gdzie wskazywala sciezka. Katalog domowy
-# nie jest wirtualizowany i lezy poza OneDrive.
+# Not %LOCALAPPDATA%: Python from the Microsoft Store (python.exe from WindowsApps - which is our
+# setup) silently redirects writes from AppData\Local to Packages\PythonSoftwareFoundation.Python.*\
+# LocalCache\Local, so in run-25 the files were not where the path pointed. The home directory
+# is not virtualized and lies outside OneDrive.
 DATA_DIR = Path.home() / "TurboRivals" / "data"
-REPORT_TDF_ID = 0xF3E30E29        # klasa obiektu RPRT.GAME we wszystkich raportach run-24
+REPORT_TDF_ID = 0xF3E30E29        # class of the RPRT.GAME object in all run-24 reports
 
 
 def _fields(fields) -> dict:
@@ -41,16 +41,16 @@ def _fields(fields) -> dict:
 
 
 def parse_game_report(payload: bytes) -> dict:
-    """Payload zadania 28/2 -> {category, finished, grid, tdf_id, players}, gdzie
-    players = {blazeid: {entity, int, float, str}}. ValueError/KeyError przy innym ukladzie."""
+    """Payload of request 28/2 -> {category, finished, grid, tdf_id, players}, where
+    players = {blazeid: {entity, int, float, str}}. ValueError/KeyError on any other layout."""
     top = _fields(blaze.decode_tdf(payload))
     rprt = _fields(top["RPRT"])
     game = rprt.get("GAME")
     if not (isinstance(game, tuple) and game[0] == "variable" and game[1] is not None):
-        raise ValueError("RPRT.GAME bez obiektu")
+        raise ValueError("RPRT.GAME without an object")
     plyr = _fields(_fields(game[2])["GAME"]).get("PLYR") or {}
     if not isinstance(plyr, dict):
-        raise ValueError("PLYR nie jest mapa blazeid -> gracz")
+        raise ValueError("PLYR is not a blazeid -> player map")
     players = {}
     for pid, pfields in plyr.items():
         pf = _fields(pfields)
@@ -63,8 +63,8 @@ def parse_game_report(payload: bytes) -> dict:
 
 
 class PlayerStore:
-    """Stan statystyk graczy. Jeden obiekt na proces - terminator obsluguje kazde polaczenie
-    w osobnym watku, stad blokada wokol odczytu i zapisu."""
+    """Player stats state. One object per process - the terminator handles every connection
+    in a separate thread, hence the lock around reads and writes."""
 
     def __init__(self, root: Path | str = DATA_DIR):
         self.root = Path(root)
@@ -81,14 +81,14 @@ class PlayerStore:
         return self._cache[pid]
 
     def state(self, pid: int) -> dict:
-        """Kopia stanu gracza: kategoria (GTYP) -> str(ENTI) -> {int, float, str, ...}."""
+        """Copy of a player state: category (GTYP) -> str(ENTI) -> {int, float, str, ...}."""
         with self._lock:
             return json.loads(json.dumps(self._load(pid)))
 
     def rows_for_entity(self, entity: int) -> list[dict]:
-        """Wiersze speed walla: dla kazdego gracza z zapisanym obiektem ENTI == entity - mapy
-        statystyk scalone ze wszystkich kategorii, w ktorych ten obiekt wystepuje (w run-25 zawsze
-        jedna: SpeedCameras*, RacerRoadRule* ...). Zwraca [{blaze_id, int, float, str}]."""
+        """Speed wall rows: for every player with a stored object ENTI == entity - the stat maps
+        merged from all categories in which this object appears (in run-25 always just one:
+        SpeedCameras*, RacerRoadRule* ...). Returns [{blaze_id, int, float, str}]."""
         key = str(int(entity))
         rows = []
         with self._lock:
@@ -109,7 +109,7 @@ class PlayerStore:
         return rows
 
     def record(self, report: dict) -> list[int]:
-        """Dopisuje raport do dziennika i scala go ze stanem. Zwraca blazeid zapisanych graczy."""
+        """Appends the report to the journal and merges it into the state. Returns the saved players' blazeids."""
         now = int(time.time())
         with self._lock:
             for pid, pdata in report["players"].items():
@@ -136,6 +136,6 @@ class PlayerStore:
             try:
                 os.replace(tmp, p)
                 return
-            except PermissionError:        # antywirus/indeksowanie trzyma plik - chwila i ponow
+            except PermissionError:        # antivirus/indexing holds the file - wait a moment and retry
                 time.sleep(0.05 * (attempt + 1))
         os.replace(tmp, p)

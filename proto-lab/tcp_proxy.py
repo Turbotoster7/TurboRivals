@@ -1,22 +1,21 @@
 #!/usr/bin/env python3
-"""Logujacy proxy TCP miedzy gra a prawdziwym backendem EA.
+"""Logging TCP proxy between the game and the real EA backend.
 
-Odkrycie: redirector EA nadal zyje i odpowiada, mimo ze gra online zostala
-wylaczona 2025-10-07 (gra dostaje szybka odmowe, nie timeout). To znaczy,
-ze mozemy podejrzec PRAWDZIWA rozmowe klient<->serwer, a nie tylko to,
-co wysyla klient.
+Finding: the EA redirector is still alive and answering, even though the game's
+online was shut down on 2025-10-07 (the game gets a quick refusal, not a
+timeout). That means we can watch the REAL client<->server conversation, not
+just what the client sends.
 
-Handshake SSL leci otwartym tekstem, wiec bez lamania czegokolwiek
-dostajemy:
-  - wersje SSL i liste szyfrow oferowanych przez gre,
-  - szyfr wybrany przez EA,
-  - oryginalny certyfikat serwera EA (do sklonowania).
+The SSL handshake goes in the clear, so without breaking anything we get:
+  - the SSL version and the list of ciphers offered by the game,
+  - the cipher chosen by EA,
+  - the original EA server certificate (to clone it).
 
-Uzycie (hosts musi kierowac hosta na 127.0.0.1):
+Usage (hosts must point the host at 127.0.0.1):
     python proto-lab/tcp_proxy.py --upstream 159.153.51.18 --port 42127
 
-Uwaga: upstream podajemy ADRESEM IP, nie nazwa - nazwa wrocilaby przez
-hosts na nas samych i zrobilaby petle.
+Note: pass the upstream as an IP ADDRESS, not a name - the name would resolve
+through hosts back to ourselves and create a loop.
 """
 
 from __future__ import annotations
@@ -71,12 +70,12 @@ def hexdump(data: bytes, limit: int = 256) -> str:
         text = "".join(chr(b) if 0x20 <= b <= 0x7E else "." for b in chunk)
         out.append(f"  {i:08x}  {hexs:<47}  {text}")
     if len(data) > limit:
-        out.append(f"  ... (+{len(data) - limit} bajtow)")
+        out.append(f"  ... (+{len(data) - limit} bytes)")
     return "\n".join(out)
 
 
 def parse_records(stream: bytes, out_dir: Path, tag: str, side: str) -> list[str]:
-    """Rozbiera strumien na rekordy SSL. Zapisuje napotkane certyfikaty."""
+    """Splits a stream into SSL records. Saves any certificates it finds."""
     info: list[str] = []
     pos = 0
     cert_no = 0
@@ -86,10 +85,10 @@ def parse_records(stream: bytes, out_dir: Path, tag: str, side: str) -> list[str
         rlen = struct.unpack_from(">H", stream, pos + 3)[0]
         body = stream[pos + 5:pos + 5 + rlen]
         if len(body) < rlen:
-            info.append(f"  [rekord uciety: typ {rtype}, deklarowane {rlen} B]")
+            info.append(f"  [record truncated: type {rtype}, declared {rlen} B]")
             break
-        name = RECORD_TYPES.get(rtype, f"typ {rtype}")
-        info.append(f"  rekord {name}, {VERSIONS.get(ver, hex(ver))}, {rlen} B")
+        name = RECORD_TYPES.get(rtype, f"type {rtype}")
+        info.append(f"  record {name}, {VERSIONS.get(ver, hex(ver))}, {rlen} B")
 
         if rtype == 21 and len(body) >= 2:
             level = "fatal" if body[0] == 2 else "warning"
@@ -102,7 +101,7 @@ def parse_records(stream: bytes, out_dir: Path, tag: str, side: str) -> list[str
 
         pos += 5 + rlen
     if pos < len(stream):
-        info.append(f"  [pozostalo {len(stream) - pos} B poza rekordami]")
+        info.append(f"  [{len(stream) - pos} B left over outside records]")
     return info
 
 
@@ -114,19 +113,19 @@ def parse_handshake(body: bytes, out_dir: Path, tag: str, side: str,
         htype = body[pos]
         hlen = int.from_bytes(body[pos + 1:pos + 4], "big")
         msg = body[pos + 4:pos + 4 + hlen]
-        hname = HANDSHAKE_TYPES.get(htype, f"typ {htype}")
+        hname = HANDSHAKE_TYPES.get(htype, f"type {htype}")
         info.append(f"    handshake: {hname} ({hlen} B)")
 
         if htype == 1 and len(msg) >= 34:          # ClientHello
             cver = struct.unpack_from(">H", msg, 0)[0]
-            info.append(f"      wersja klienta: {VERSIONS.get(cver, hex(cver))}")
+            info.append(f"      client version: {VERSIONS.get(cver, hex(cver))}")
             p = 2 + 32
             sid_len = msg[p]; p += 1 + sid_len
             if p + 2 <= len(msg):
                 cs_len = struct.unpack_from(">H", msg, p)[0]; p += 2
                 suites = [struct.unpack_from(">H", msg, p + i)[0]
                           for i in range(0, min(cs_len, len(msg) - p), 2)]
-                info.append(f"      oferowane szyfry ({len(suites)}):")
+                info.append(f"      offered ciphers ({len(suites)}):")
                 for cs in suites:
                     info.append(f"        - {CIPHERS.get(cs, f'0x{cs:04x}')}")
 
@@ -136,11 +135,11 @@ def parse_handshake(body: bytes, out_dir: Path, tag: str, side: str,
             sid_len = msg[p]; p += 1 + sid_len
             if p + 2 <= len(msg):
                 cs = struct.unpack_from(">H", msg, p)[0]
-                info.append(f"      wersja serwera: {VERSIONS.get(sver, hex(sver))}")
-                info.append(f"      WYBRANY SZYFR: {CIPHERS.get(cs, f'0x{cs:04x}')}")
+                info.append(f"      server version: {VERSIONS.get(sver, hex(sver))}")
+                info.append(f"      CHOSEN CIPHER: {CIPHERS.get(cs, f'0x{cs:04x}')}")
 
         elif htype == 11:                          # Certificate
-            p = 3                                   # dlugosc calego lancucha
+            p = 3                                   # length of the whole chain
             n = 0
             while p + 3 <= len(msg):
                 clen = int.from_bytes(msg[p:p + 3], "big")
@@ -149,7 +148,7 @@ def parse_handshake(body: bytes, out_dir: Path, tag: str, side: str,
                     break
                 path = out_dir / f"{tag}-{side}-cert{n}.der"
                 path.write_bytes(der)
-                info.append(f"      certyfikat #{n}: {clen} B -> {path.name}")
+                info.append(f"      certificate #{n}: {clen} B -> {path.name}")
                 p += 3 + clen
                 n += 1
 
@@ -189,13 +188,13 @@ def handle(conn: socket.socket, addr, args, out_dir: Path,
     try:
         up = socket.create_connection((args.upstream, args.upstream_port), timeout=10)
     except OSError as e:
-        print(f"  nie moge polaczyc sie z upstreamem: {e}")
+        print(f"  cannot connect to the upstream: {e}")
         conn.close()
         return
 
     c2s: list[bytes] = []
     s2c: list[bytes] = []
-    t1 = threading.Thread(target=pump, args=(conn, up, c2s, "gra   ->", args.quiet))
+    t1 = threading.Thread(target=pump, args=(conn, up, c2s, "game  ->", args.quiet))
     t2 = threading.Thread(target=pump, args=(up, conn, s2c, "EA    ->", args.quiet))
     t1.start(); t2.start()
     t1.join(); t2.join()
@@ -206,18 +205,18 @@ def handle(conn: socket.socket, addr, args, out_dir: Path,
     (out_dir / f"{tag}-c2s.bin").write_bytes(cs)
     (out_dir / f"{tag}-s2c.bin").write_bytes(sc)
 
-    lines = [f"# sesja {tag}",
-             f"gra -> EA: {len(cs)} B    EA -> gra: {len(sc)} B", ""]
-    lines.append("## gra -> EA")
+    lines = [f"# session {tag}",
+             f"game -> EA: {len(cs)} B    EA -> game: {len(sc)} B", ""]
+    lines.append("## game -> EA")
     lines += parse_records(cs, out_dir, tag, "client")
-    lines += ["", "## EA -> gra"]
+    lines += ["", "## EA -> game"]
     lines += parse_records(sc, out_dir, tag, "server")
-    lines += ["", "## hexdump gra -> EA", hexdump(cs, 512),
-              "", "## hexdump EA -> gra", hexdump(sc, 512)]
+    lines += ["", "## hexdump game -> EA", hexdump(cs, 512),
+              "", "## hexdump EA -> game", hexdump(sc, 512)]
     report = "\n".join(lines)
     (out_dir / f"{tag}.txt").write_text(report, encoding="utf-8")
 
-    print(f"  gra -> EA: {len(cs)} B, EA -> gra: {len(sc)} B")
+    print(f"  game -> EA: {len(cs)} B, EA -> game: {len(sc)} B")
     for line in lines[2:]:
         if line.startswith("## hexdump"):
             break
@@ -229,11 +228,11 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--upstream", required=True,
-                    help="IP prawdziwego serwera EA (nie nazwa!)")
+                    help="IP of the real EA server (not a name!)")
     ap.add_argument("--upstream-port", type=int, default=None,
-                    help="port docelowy (domyslnie taki jak --port)")
+                    help="target port (default: same as --port)")
     ap.add_argument("-p", "--port", type=int, default=42127,
-                    help="port lokalnego nasluchu")
+                    help="local listening port")
     ap.add_argument("-o", "--out", type=Path, default=Path("docs/recon/capture"))
     ap.add_argument("-q", "--quiet", action="store_true")
     args = ap.parse_args()
@@ -245,7 +244,7 @@ def main() -> int:
     s.bind(("0.0.0.0", args.port))
     s.listen(16)
     print(f"proxy 0.0.0.0:{args.port} -> {args.upstream}:{args.upstream_port}")
-    print("czekam na gre. Ctrl+C konczy.\n")
+    print("waiting for the game. Ctrl+C quits.\n")
 
     counter, lock = [0], threading.Lock()
     try:
@@ -255,7 +254,7 @@ def main() -> int:
                              args=(conn, addr, args, args.out, counter, lock),
                              daemon=True).start()
     except KeyboardInterrupt:
-        print("\nkoniec")
+        print("\ndone")
     return 0
 
 

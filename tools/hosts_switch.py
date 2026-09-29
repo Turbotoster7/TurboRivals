@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
-"""Przelacznik wpisow w pliku hosts - przekierowanie backendu EA na siebie.
+"""Toggles entries in the hosts file - redirects the EA backend to ourselves.
 
-Modyfikuje plik systemowy, wiec:
-  - wymaga uprawnien administratora,
-  - przed pierwsza zmiana robi kopie zapasowa,
-  - wpisy trzyma w oznaczonym bloku, zeby `off` usunelo dokladnie to,
-    co dodalismy, i nic wiecej.
+It modifies a system file, so it:
+  - requires administrator rights,
+  - makes a backup before the first change,
+  - keeps its entries in a marked block, so that `off` removes exactly what
+    we added and nothing else.
 
-WAZNE: po skonczonej sesji zawsze `off`. Zostawiony wpis psuje EA App
-i inne gry EA.
+IMPORTANT: always run `off` once the session is over. A leftover entry breaks
+the EA App and other EA games.
 
-Uzycie (konsola jako administrator):
+Usage (console as administrator):
     python tools/hosts_switch.py status
     python tools/hosts_switch.py on
     python tools/hosts_switch.py on --all --ip 192.168.1.10
@@ -32,14 +32,14 @@ HOSTS = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32/drivers/et
 BEGIN = "# >>> TurboRivals >>>"
 END = "# <<< TurboRivals <<<"
 
-# Redirector, ktorego gra faktycznie uzywa. Ustalone obserwacja:
-# NFS14.exe laczyl sie z 159.153.51.18:42127, a ten adres to
-# gosredirector.ea.com (nie ".online.", ktory ma IP 159.153.49.27).
+# The redirector the game actually uses. Established by observation:
+# NFS14.exe connected to 159.153.51.18:42127, and that address is
+# gosredirector.ea.com (not ".online.", which has IP 159.153.49.27).
 PRIMARY = ["gosredirector.ea.com"]
 
-# Reszta backendu. Przekierowujemy dopiero wtedy, gdy wiemy, ze klient
-# faktycznie sie tam dobija - kazdy zbedny wpis to dodatkowa zmienna
-# przy diagnozie.
+# The rest of the backend. We only redirect these once we know the client
+# actually reaches for them - every unnecessary entry is one more variable
+# when diagnosing.
 EXTRA = [
     "gosredirector.online.ea.com",
     "gosredirector.stest.ea.com",
@@ -89,17 +89,17 @@ def cmd_status(_args) -> int:
         if inside and line.strip():
             found.append(line.strip())
     if found:
-        print(f"blok TurboRivals AKTYWNY ({len(found)} wpisow):")
+        print(f"TurboRivals block ACTIVE ({len(found)} entries):")
         for f in found:
             print(f"  {f}")
     else:
-        print("blok TurboRivals nieobecny - hosts czysty")
+        print("TurboRivals block absent - hosts is clean")
     return 0
 
 
 def cmd_on(args) -> int:
     if not is_admin():
-        print("potrzebne uprawnienia administratora", file=sys.stderr)
+        print("administrator rights required", file=sys.stderr)
         return 1
 
     names = PRIMARY + (EXTRA if args.all else [])
@@ -111,25 +111,25 @@ def cmd_on(args) -> int:
     block = [BEGIN] + [f"{args.ip}\t{n}" for n in names] + [END]
     HOSTS.write_text("\n".join(lines + block) + "\n", encoding="utf-8")
 
-    print(f"kopia zapasowa: {backup}")
-    print(f"przekierowano {len(names)} hostow na {args.ip}:")
+    print(f"backup: {backup}")
+    print(f"redirected {len(names)} hosts to {args.ip}:")
     for n in names:
         print(f"  {n}")
-    print("\npamietaj o `hosts_switch.py off` po skonczonej sesji")
+    print("\nremember to run `hosts_switch.py off` once the session is over")
     return 0
 
 
 def cmd_off(_args) -> int:
     if not is_admin():
-        print("potrzebne uprawnienia administratora", file=sys.stderr)
+        print("administrator rights required", file=sys.stderr)
         return 1
     lines = read_hosts()
     cleaned = strip_block(lines)
     if len(cleaned) == len(lines):
-        print("nie bylo czego usuwac")
+        print("nothing to remove")
         return 0
     HOSTS.write_text("\n".join(cleaned) + "\n", encoding="utf-8")
-    print("blok TurboRivals usuniety - hosts przywrocony")
+    print("TurboRivals block removed - hosts restored")
     return 0
 
 
@@ -141,7 +141,7 @@ def main() -> int:
     p = sub.add_parser("on")
     p.add_argument("--ip", default="127.0.0.1")
     p.add_argument("--all", action="store_true",
-                   help="przekieruj rowniez pozostale hosty EA")
+                   help="also redirect the remaining EA hosts")
     p.set_defaults(func=cmd_on)
     sub.add_parser("off").set_defaults(func=cmd_off)
     args = ap.parse_args()

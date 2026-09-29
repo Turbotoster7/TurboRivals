@@ -123,13 +123,12 @@ async function withPending(button, fn) {
    SERVER LOG
    ======================================================================= */
 
-/* The server prints in Polish, so the patterns carry both spellings - this
-   colours the log, it never drives behaviour. */
+/* This colours the log, it never drives behaviour. */
 function classifyLine(line) {
     const lower = line.toLowerCase();
-    if (/traceback|error|blad|exception|refused/.test(lower)) return 'bad';
-    if (/brak handlera|no handler|warn|timeout|skipped/.test(lower)) return 'warn';
-    if (/dolaczy|joined|joincompleted|playerstate|login/.test(lower)) return 'good';
+    if (/traceback|error|exception|refused/.test(lower)) return 'bad';
+    if (/no handler|warn|timeout|skipped/.test(lower)) return 'warn';
+    if (/joined|joincompleted|playerstate|login/.test(lower)) return 'good';
     if (/^\s*\[|->/.test(line)) return 'hit';
     return '';
 }

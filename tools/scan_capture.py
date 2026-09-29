@@ -1,12 +1,13 @@
-"""Podsumowanie zrzutow ramek Blaze z docs/recon/capture/.
+"""Summary of the Blaze frame dumps in docs/recon/capture/.
 
-Po kazdej sesji z gra jedno polecenie mowi, czy sekwencja posunela sie dalej:
-wypisuje per sesja liczbe ramek, licznik comp/cmd i kolejnosc BEZ pingow (9/2),
-bo ping to heartbeat co 15 s i zaslania obraz.
+After every session with the game, one command tells whether the sequence got
+any further: per session it prints the frame count, the comp/cmd tally and the
+order WITHOUT pings (9/2), because ping is a heartbeat every 15 s and clutters
+the picture.
 
-    python tools/scan_capture.py                # wszystkie sesje
-    python tools/scan_capture.py -n 5           # tylko 5 ostatnich
-    python tools/scan_capture.py --all-frames   # nie pomijaj pingow
+    python tools/scan_capture.py                # all sessions
+    python tools/scan_capture.py -n 5           # only the last 5
+    python tools/scan_capture.py --all-frames   # do not skip pings
 """
 from __future__ import annotations
 
@@ -18,7 +19,7 @@ from pathlib import Path
 FIRE2_HDR = 12
 PING = (9, 2)
 
-# Nazwy poznanych komend - zeby log czytalo sie bez zagladania do notatek.
+# Names of known commands - so the log reads without looking at the notes.
 NAMES = {
     (5, 1): "Redirector.getServerInstance",
     (9, 1): "Util.fetchClientConfig",
@@ -33,7 +34,7 @@ NAMES = {
 
 
 def read_frame(path: Path) -> tuple[int, int, int, int] | None:
-    """(component, command, messageId, dlugosc pliku) albo None gdy to nie ramka."""
+    """(component, command, messageId, file length) or None when it is not a frame."""
     b = path.read_bytes()
     if len(b) < FIRE2_HDR:
         return None
@@ -43,7 +44,7 @@ def read_frame(path: Path) -> tuple[int, int, int, int] | None:
 
 
 def session_of(path: Path) -> str:
-    # blaze-<HHMMSS>-<nnn>-<kk>.bin  ->  "<HHMMSS>-<nnn>"; starsze: blaze-first-<...>
+    # blaze-<HHMMSS>-<nnn>-<kk>.bin  ->  "<HHMMSS>-<nnn>"; older ones: blaze-first-<...>
     parts = path.stem.split("-")
     return "-".join(parts[1:3]) if len(parts) >= 4 else "-".join(parts[1:])
 
@@ -53,14 +54,14 @@ def main() -> int:
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("-d", "--dir", type=Path, default=Path("docs/recon/capture"))
     ap.add_argument("-n", "--last", type=int, default=0,
-                    help="pokaz tylko N ostatnich sesji (0 = wszystkie)")
+                    help="show only the last N sessions (0 = all)")
     ap.add_argument("--all-frames", action="store_true",
-                    help="nie pomijaj pingow w linii kolejnosci")
+                    help="do not skip pings in the order line")
     args = ap.parse_args()
 
     files = sorted(args.dir.glob("blaze-*.bin"), key=lambda p: p.stat().st_mtime)
     if not files:
-        print(f"brak zrzutow w {args.dir}")
+        print(f"no dumps in {args.dir}")
         return 1
 
     sessions: dict[str, list] = collections.OrderedDict()
@@ -76,16 +77,16 @@ def main() -> int:
     for sess, frames in items:
         counts = collections.Counter((c, d) for c, d, _, _ in frames)
         pings = counts.get(PING, 0)
-        print(f"\n=== sesja {sess}: {len(frames)} ramek "
-              f"({pings} pingow) ===")
+        print(f"\n=== session {sess}: {len(frames)} frames "
+              f"({pings} pings) ===")
         shown = frames if args.all_frames else [f for f in frames if (f[0], f[1]) != PING]
         for comp, cmd, seq, size in shown:
             name = NAMES.get((comp, cmd), "?")
             print(f"    {comp}/{cmd:<3} #{seq:<5} {size:>4} B   {name}")
         if not args.all_frames and pings:
-            print(f"    (+ {pings}x 9/2 ping - pominiete)")
+            print(f"    (+ {pings}x 9/2 ping - skipped)")
 
-    print("\nlegenda: '?' = komenda bez handlera / jeszcze nierozpoznana")
+    print("\nlegend: '?' = command without a handler / not recognised yet")
     return 0
 
 

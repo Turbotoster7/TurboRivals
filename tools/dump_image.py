@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
-"""Loader obrazu modulu z minidumpa (.dmp) - odszyfrowana .text z RAM.
+"""Module image loader from a minidump (.dmp) - decrypted .text from RAM.
 
-Po co: sekcja .text binarki NFS14.exe ze Steama jest zaszyfrowana na dysku
-(entropia 1.000), wiec map_tdf_classes.py nie znajdzie instrukcji `lea`
-wiazacych tablice pol TDF z nazwami klas. W RUNTIME kod jest odszyfrowany w
-pamieci procesu. Ten modul czyta pelny minidump (Task Manager -> "Utworz plik
-zrzutu", albo `procdump -ma NFS14.exe`), rekonstruuje obraz modulu NFS14.exe
-INDEKSOWANY PO RVA (offset == RVA) i wystawia interfejs zgodny z klasa PE
-(pe_probe.PE), zeby istniejace narzedzia dzialaly bez zmian.
+Why: the .text section of the Steam NFS14.exe binary is encrypted on disk
+(entropy 1.000), so map_tdf_classes.py will not find the `lea` instructions
+that tie TDF field tables to class names. At RUNTIME the code is decrypted in
+process memory. This module reads a full minidump (Task Manager -> "Create dump
+file", or `procdump -ma NFS14.exe`), reconstructs the NFS14.exe module image
+INDEXED BY RVA (offset == RVA) and exposes an interface compatible with the PE
+class (pe_probe.PE), so the existing tools work unchanged.
 
-Rebasing: adresy w docs/recon/tdf_members.json policzono wzgledem PREFEROWANEJ
-bazy z naglowka PE. RVA sa niezalezne od bazy zaladowania (ASLR), wiec obraz
-budujemy po RVA, a image_base bierzemy z naglowka PE modulu - dzieki temu
-off_to_va() daje te same VA co json.
+Rebasing: the addresses in docs/recon/tdf_members.json were computed against
+the PREFERRED base from the PE header. RVAs do not depend on the load base
+(ASLR), so we build the image by RVA and take image_base from the module's PE
+header - that way off_to_va() yields the same VAs as the json.
 
-Uzycie (samodzielnie, do sprawdzenia):
+Usage (standalone, as a check):
     python tools/dump_image.py NFS14.dmp
 """
 
@@ -25,9 +25,9 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from pe_probe import Section  # noqa: E402  (reuzycie dataclass sekcji)
+from pe_probe import Section  # noqa: E402  (reuse the section dataclass)
 
-# typy strumieni minidump
+# minidump stream types
 _STREAM_MODULE_LIST = 4
 _STREAM_MEMORY_LIST = 5
 _STREAM_MEMORY64_LIST = 9
@@ -36,11 +36,11 @@ _MDMP = 0x504D444D          # 'MDMP' little-endian
 
 
 class MemImage:
-    """Obraz modulu z pamieci, zgodny (duck-typing) z pe_probe.PE.
+    """Module image from memory, (duck-typing) compatible with pe_probe.PE.
 
-    data jest indeksowane po RVA: data[rva] to bajt spod image_base+rva.
-    Sekcje ustawione tak, ze raw_ptr == va (RVA), wiec kod korzystajacy z
-    text.raw_ptr/raw_size dostaje bajty pamieci danej sekcji.
+    data is indexed by RVA: data[rva] is the byte at image_base+rva.
+    Sections are set up so that raw_ptr == va (RVA), so code that uses
+    text.raw_ptr/raw_size gets the memory bytes of that section.
     """
 
     def __init__(self, data: bytes, image_base: int, sections: list[Section],
@@ -90,9 +90,9 @@ def _read_minidump_string(buf: bytes, rva: int) -> str:
 
 def _find_module(buf: bytes, streams: dict[int, tuple[int, int]],
                  want: str) -> tuple[int, int]:
-    """Zwraca (base_of_image, size_of_image) modulu, ktorego nazwa zawiera `want`."""
+    """Returns (base_of_image, size_of_image) of the module whose name contains `want`."""
     if _STREAM_MODULE_LIST not in streams:
-        raise SystemExit("brak ModuleListStream w zrzucie")
+        raise SystemExit("no ModuleListStream in the dump")
     rva, _ = streams[_STREAM_MODULE_LIST]
     n = struct.unpack_from("<I", buf, rva)[0]
     p = rva + 4
@@ -102,10 +102,10 @@ def _find_module(buf: bytes, streams: dict[int, tuple[int, int]],
         name_rva = struct.unpack_from("<I", buf, p + 20)[0]
         name = _read_minidump_string(buf, name_rva)
         if want_l in name.lower():
-            print(f"  modul: {name}  base=0x{base:x}  size=0x{size:x}")
+            print(f"  module: {name}  base=0x{base:x}  size=0x{size:x}")
             return base, size
         p += 108        # sizeof(MINIDUMP_MODULE)
-    raise SystemExit(f"nie znalazlem modulu zawierajacego {want!r} w zrzucie")
+    raise SystemExit(f"no module containing {want!r} found in the dump")
 
 
 def _build_from_memory64(buf: bytes, stream_rva: int, base: int, size: int,
@@ -146,10 +146,10 @@ def _build_from_memory(buf: bytes, stream_rva: int, base: int, size: int,
 
 def load_dump(path: Path, module: str = "NFS14") -> MemImage:
     import mmap
-    fh = open(path, "rb")                 # mmap - zrzut pelny to czesto kilka GB
+    fh = open(path, "rb")                 # mmap - a full dump is often several GB
     buf = mmap.mmap(fh.fileno(), 0, access=mmap.ACCESS_READ)
     if struct.unpack_from("<I", buf, 0)[0] != _MDMP:
-        raise SystemExit(f"{path} to nie minidump (brak sygnatury MDMP)")
+        raise SystemExit(f"{path} is not a minidump (no MDMP signature)")
     nstreams, dir_rva = struct.unpack_from("<II", buf, 8)
     streams: dict[int, tuple[int, int]] = {}
     for i in range(nstreams):
@@ -166,15 +166,15 @@ def load_dump(path: Path, module: str = "NFS14") -> MemImage:
         copied = _build_from_memory(buf, streams[_STREAM_MEMORY_LIST][0],
                                     base, size, img)
     else:
-        raise SystemExit("zrzut nie zawiera pamieci (brak Memory64List/MemoryList) "
-                         "- zrob PELNY zrzut (Task Manager 'Utworz plik zrzutu' "
-                         "albo 'procdump -ma')")
-    print(f"  skopiowano {copied:,} B pamieci modulu do obrazu ({size:,} B)")
+        raise SystemExit("the dump contains no memory (no Memory64List/MemoryList) "
+                         "- take a FULL dump (Task Manager 'Create dump file' "
+                         "or 'procdump -ma')")
+    print(f"  copied {copied:,} B of module memory into the image ({size:,} B)")
 
-    # naglowek PE modulu z pamieci: preferowana baza, maszyna, sekcje
+    # the module's PE header from memory: preferred base, machine, sections
     e_lfanew = struct.unpack_from("<I", img, 0x3C)[0]
     if img[e_lfanew:e_lfanew + 4] != b"PE\0\0":
-        raise SystemExit("naglowek PE modulu nie jest w zrzucie - zrzut niepelny?")
+        raise SystemExit("the module's PE header is not in the dump - incomplete dump?")
     coff = e_lfanew + 4
     machine, nsec = struct.unpack_from("<HH", img, coff)
     opt_size = struct.unpack_from("<H", img, coff + 16)[0]
@@ -189,17 +189,17 @@ def load_dump(path: Path, module: str = "NFS14") -> MemImage:
         so = sec_off + i * 40
         name = bytes(img[so:so + 8]).rstrip(b"\0").decode("ascii", "replace")
         vsize, va = struct.unpack_from("<II", img, so + 8)[0:2]
-        # W obrazie pamieci offset == RVA: raw_ptr = va, raw_size = vsize.
+        # In a memory image offset == RVA: raw_ptr = va, raw_size = vsize.
         sections.append(Section(name, va, vsize, va, vsize))
 
-    print(f"  image_base=0x{image_base:x}  sekcji={nsec}  "
+    print(f"  image_base=0x{image_base:x}  sections={nsec}  "
           f"{'x64' if pe32plus else 'x86'}")
     return MemImage(bytes(img), image_base, sections, pe32plus, machine)
 
 
 def main() -> int:
     if len(sys.argv) < 2:
-        print("uzycie: python tools/dump_image.py NFS14.dmp [nazwa_modulu]")
+        print("usage: python tools/dump_image.py NFS14.dmp [module_name]")
         return 1
     mod = sys.argv[2] if len(sys.argv) > 2 else "NFS14"
     mi = load_dump(Path(sys.argv[1]), mod)
@@ -208,8 +208,8 @@ def main() -> int:
         blob = mi.data[text.raw_ptr:text.raw_ptr + text.raw_size]
         nz = sum(1 for b in blob[:65536] if b)
         print(f"  .text @ RVA 0x{text.va:x} ({text.vsize:,} B); "
-              f"niezerowych w pierwszych 64 KiB: {nz}/65536 "
-              f"({'wyglada na ODSZYFROWANA' if nz > 30000 else 'podejrzanie pusta/zaszyfrowana'})")
+              f"non-zero in the first 64 KiB: {nz}/65536 "
+              f"({'looks DECRYPTED' if nz > 30000 else 'suspiciously empty/encrypted'})")
     return 0
 
 

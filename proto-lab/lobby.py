@@ -1,24 +1,26 @@
-"""Wspolny stan serwera dla wszystkich polaczen: sesje graczy i gry (multiplayer).
+"""Shared server state for all connections: player sessions and games (multiplayer).
 
-Do run-27 serwer zakladal JEDNEGO gracza: tozsamosc na sztywno, gry jako globalne
-liczniki bez listy graczy, notyfikacje tylko do wlasnego polaczenia. Ten rejestr pozwala drugiemu
-graczowi znalezc publiczna gre pierwszego i wysylac notyfikacje do INNEGO polaczenia.
+Up to run-27 the server assumed ONE player: a hardcoded identity, games as global
+counters without a player list, notifications only to the player's own connection. This registry
+lets a second player find the first one's public game and send notifications to ANOTHER connection.
 
-Watki: terminator obsluguje kazde polaczenie w osobnym watku. Rejestr ma jedna blokade (RLock), a
-kazda sesja wlasna blokade wysylki - Wire.send_record nie jest bezpieczne miedzy watkami (stan RC4
-i numer rekordu w MAC), a notyfikacje do gracza B wysyla watek gracza A.
+Threads: the terminator handles every connection in a separate thread. The registry has one lock
+(RLock), and every session has its own send lock - Wire.send_record is not thread-safe (RC4 state
+and the record number in the MAC), and notifications to player B are sent by player A's thread.
 
-Operacje zmieniajace stan gier zwracaja liste (sesja, ramka) - wysyla je terminator.
+Operations that change game state return a list of (session, frame) - the terminator sends them.
 
-Tozsamosc: klucz = adres IP klienta Blaze. Kazdy gracz - lokalny tak samo jak zdalny - dostaje
-staly uid nadany raz i zapisany w players.json, a nazwe tymczasowa do czasu, az serwer pozna
-prawdziwy nick EA z pola GNAM (createGame/startMatchmaking); od kolejnego logowania nick jest juz
-w loginie. Uid lokalne i zdalne pochodza z rozlacznych pul, wiec nigdy nie koliduja.
+Identity: key = the Blaze client's IP address. Every player - local just like remote - gets a
+permanent uid assigned once and stored in players.json, and a temporary name until the server
+learns the real EA nickname from the GNAM field (createGame/startMatchmaking); from the next login
+on, the nickname is already in the login. Local and remote uids come from disjoint pools, so they
+never collide.
 
-Prawdziwe BlazeId z EA App NIE jest do niczego potrzebne - klient przyjmuje to, co powie mu
-originLogin. Run-40 to potwierdzil: gracz zdalny przeszedl cala sesje i zapisal postep na uidzie
-w pelni syntetycznym. Do run-40 wlacznie uid lokalny byl zahardkodowanym kontem autora, przez co
-kazdy, kto odpalil serwer, stawal sie nim i pisal postep pod cudzym id.
+The real BlazeId from the EA App is NOT needed for anything - the client accepts whatever
+originLogin tells it. Run-40 confirmed this: a remote player went through a whole session and saved
+progress under a fully synthetic uid. Up to and including run-40 the local uid was the author's
+hardcoded account, so everyone who started the server became that account and wrote progress
+under someone else's id.
 """
 from __future__ import annotations
 
@@ -32,25 +34,25 @@ from pathlib import Path
 import blaze
 
 LOCAL_IPS = {"127.0.0.1", "::1"}
-LOCAL_KEY = "local"                  # klucz gracza lokalnego w players.json (zamiast adresu IP)
-LOCAL_UID_BASE = 1_000_000_000_000   # pula uid dla gracza przy serwerze
-REMOTE_UID_BASE = 1_100_000_000_000  # pula uid dla graczy z innych adresow
+LOCAL_KEY = "local"                  # key of the local player in players.json (instead of an IP address)
+LOCAL_UID_BASE = 1_000_000_000_000   # uid pool for the player at the server machine
+REMOTE_UID_BASE = 1_100_000_000_000  # uid pool for players from other addresses
 DEFAULT_ADDR = (0x7F000001, 3659, 0x7F000001, 3659, 0)   # exip, export, inip, inport, maci
 
 
 class Session:
-    """Jedno polaczenie Blaze. Tozsamosc (uid, persona) nadaje Lobby.login przy 1/152."""
+    """One Blaze connection. The identity (uid, persona) is assigned by Lobby.login on 1/152."""
 
     def __init__(self, ip: str, send_raw) -> None:
         self.ip = ip
         self.uid = 0
         self.persona = ""
-        self.persona_id = 0              # id persony EA (BUID z listUserEntitlements2)
-        self.addr = DEFAULT_ADDR         # adres sieciowy zgloszony przez klienta
+        self.persona_id = 0              # EA persona id (BUID from listUserEntitlements2)
+        self.addr = DEFAULT_ADDR         # network address reported by the client
         self.games: set[int] = set()
-        self.pending = None              # decyzja dispatch (createGame/resetDedicated) dla _after_reply
-        self.outbox: list = []           # notyfikacje (sesja, ramka) do wyslania po odpowiedzi
-        self.mm_timer = None             # threading.Timer z odlozona decyzja matchmakingu
+        self.pending = None              # dispatch decision (createGame/resetDedicated) for _after_reply
+        self.outbox: list = []           # notifications (session, frame) to send after the reply
+        self.mm_timer = None             # threading.Timer with a deferred matchmaking decision
         self.alive = True
         self._send_raw = send_raw
         self._lock = threading.Lock()
@@ -65,7 +67,7 @@ class Session:
             self._send_raw(frame)
 
     def notify(self, frame: bytes) -> int:
-        """Notyfikacja z wlasnym, rosnacym msgId tej sesji. Zwraca nadany msgId."""
+        """Notification with this session's own increasing msgId. Returns the assigned msgId."""
         with self._lock:
             seq = self._notify_seq
             self._notify_seq += 1
@@ -80,7 +82,7 @@ class Game:
     def __init__(self, gid: int, host_uid: int, params: dict) -> None:
         self.gid = gid
         self.host_uid = host_uid
-        self.params = params             # argumenty gry dla blaze.build_notify_game_setup
+        self.params = params             # game arguments for blaze.build_notify_game_setup
         self.state = blaze.GAME_STATE["INITIALIZING"]
         self.players: dict[int, dict] = {}   # uid -> {"slot", "state"}
         self.migrating_from = 0              # old host uid while a host migration is running
@@ -125,8 +127,8 @@ class Lobby:
         # follows NotifyHostMigrationStart
         self.migration_player_removed = migration_player_removed
         self.migrations_started: list[int] = []          # gids, collected by the terminator
-        self.local_id = int(local_id or 0)               # --local-id: nadpisuje generowany uid
-        self.local_persona = str(local_persona or "")    # --local-persona: nadpisuje nick z GNAM
+        self.local_id = int(local_id or 0)               # --local-id: overrides the generated uid
+        self.local_persona = str(local_persona or "")    # --local-persona: overrides the nickname from GNAM
         self.lock = threading.RLock()
         self.sessions: dict[int, Session] = {}
         self.games: dict[int, Game] = {}
@@ -141,7 +143,7 @@ class Lobby:
             except (OSError, ValueError):
                 self.players = {}
 
-    # ------------------------------------------------------------ tozsamosc
+    # ------------------------------------------------------------ identity
     def _save_players(self) -> None:
         if not self.players_file:
             return
@@ -154,22 +156,22 @@ class Lobby:
             print(f"  [lobby] could not write {self.players_file}: {e}")
 
     def _identity(self, ip: str) -> tuple[int, str]:
-        """Uid i nick dla adresu. Nadane raz i zapisane w players.json, zeby postep gracza zawsze
-        trafial pod to samo id. Gracz lokalny siedzi pod kluczem LOCAL_KEY, bo jego adres
-        (127.0.0.1) nic nie rozroznia."""
+        """Uid and nickname for an address. Assigned once and stored in players.json, so a
+        player's progress always lands under the same id. The local player lives under the
+        LOCAL_KEY key, because its address (127.0.0.1) tells nothing apart."""
         local = ip in LOCAL_IPS
         key = LOCAL_KEY if local else ip
         entry = self.players.get(key)
         if local and entry and self.local_persona and entry.get("persona") != self.local_persona:
-            # --local-persona nadpisuje zapisany nick, nie tylko zaklada nowy wpis: inaczej raz
-            # zapisany "Gracz" zostawalby na zawsze, a flaga wygladalaby na zepsuta.
+            # --local-persona overrides the stored nickname, not only when creating a new entry:
+            # otherwise a once-stored "Player" would stay forever and the flag would look broken.
             entry["persona"] = self.local_persona
             self._save_players()
         if not entry:
             used = {e.get("uid") for e in self.players.values()}
             if local:
-                # Nazwa komputera, a nie adres: 127.0.0.1 jest takie samo u wszystkich, a chcemy
-                # uid stabilny miedzy uruchomieniami i rozny miedzy instalacjami.
+                # The computer name, not the address: 127.0.0.1 is the same for everyone, and we
+                # want a uid that is stable across runs and different across installations.
                 uid = self.local_id or LOCAL_UID_BASE + zlib.crc32(
                     socket.gethostname().encode()) % 1_000_000_000
                 name = self.local_persona or "Player"
@@ -185,8 +187,8 @@ class Lobby:
         return int(entry["uid"]), self.forced.get(ip) or str(entry["persona"])
 
     def login(self, sess: Session) -> list:
-        """Nadaje sesji tozsamosc. Gdy ten sam gracz mial juz polaczenie (ponowne logowanie), stare
-        wychodzi ze swoich gier - zwraca notyfikacje dla pozostalych graczy."""
+        """Assigns an identity to the session. When the same player already had a connection
+        (re-login), the old one leaves its games - returns notifications for the other players."""
         with self.lock:
             sess.uid, sess.persona = self._identity(sess.ip)
             old = self.sessions.get(sess.uid)
@@ -206,9 +208,10 @@ class Lobby:
             return out
 
     def learn_persona(self, sess: Session, name: str) -> bool:
-        """Nick EA z gry (GNAM) - zapamietany na kolejne logowania. Dziala takze dla gracza
-        lokalnego: to jedyne zrodlo jego prawdziwego nicku, ktory do run-40 byl zahardkodowany
-        (LSX z EA App podaje UserId dopiero w SetPresence, czyli po naszym originLogin)."""
+        """EA nickname from the game (GNAM) - remembered for later logins. Also works for the
+        local player: it is the only source of their real nickname, which was hardcoded up to
+        run-40 (LSX from the EA App only provides the UserId in SetPresence, i.e. after our
+        originLogin)."""
         name = (name or "").strip()
         with self.lock:
             if not name or sess.ip in self.forced or name == sess.persona:
@@ -232,7 +235,7 @@ class Lobby:
                     return forced or str(e.get("persona", uid))
             return str(uid)
 
-    # ------------------------------------------------------------ gry
+    # ------------------------------------------------------------ games
     def new_msid(self) -> int:
         with self.lock:
             msid = self.next_msid
@@ -263,9 +266,9 @@ class Lobby:
                     if g.migrated and g.public and sess.uid not in g.players]
 
     def find_public_game(self, sess: Session, avoid: set[int]) -> Game | None:
-        """Gra publiczna innego gracza, do ktorej mozna dolaczyc: host polaczony, gra juz trwa
-        (PRE_GAME/IN_GAME), nie na liscie unikanych (CRIT.AGAM.GIDL), jest wolne miejsce, i nie
-        przeszla migracji hosta (Game.migrated) - chyba ze --join-migrated-games."""
+        """Another player's public game that can be joined: host connected, game already running
+        (PRE_GAME/IN_GAME), not on the avoid list (CRIT.AGAM.GIDL), a free slot available, and no
+        host migration so far (Game.migrated) - unless --join-migrated-games."""
         with self.lock:
             for g in sorted(self.games.values(), key=lambda x: x.gid):
                 host = self.sessions.get(g.host_uid)
@@ -285,7 +288,7 @@ class Lobby:
             sess.games.add(g.gid)
 
     def roster(self, g: Game) -> list[dict]:
-        """Gracze gry w formacie builderow blaze: {uid, persona, slot, state, addr}."""
+        """The game's players in the blaze builders' format: {uid, persona, slot, state, addr}."""
         with self.lock:
             out = []
             for uid, p in sorted(g.players.items(), key=lambda kv: kv[1]["slot"]):
@@ -307,14 +310,15 @@ class Lobby:
             return g
 
     def remove_player(self, g: Game, uid: int, reason: int) -> list:
-        """Usuwa gracza z gry. Notyfikacje dostaja POZOSTALI gracze - nie wychodzacy: w run-23..27
-        klient wychodzil sam i dzialal bez niej, a notyfikacja o wlasnym wyjsciu grozi podwojnym
-        sprzataniem gry po stronie klienta.
+        """Removes a player from a game. The notifications go to the REMAINING players - not the
+        one leaving: in run-23..27 the client left on its own and worked without one, and a
+        notification about its own departure risks the client cleaning up the game twice.
 
-        Wyszedl host, a ktos zostal -> migracja hosta (_start_migration). Z --no-host-migration:
-        gra usunieta i pozostali dostaja SAMO NotifyGameRemoved. 15.09 (log-29, sesja 4) gracz dostal najpierw NotifyPlayerRemoved
-        hosta, zaraz po nim NotifyGameRemoved, i gra wywalila sie skokiem pod NULL. Hipoteza: klient
-        sprzata gre bez hosta juz po PlayerRemoved, a GameRemoved trafia w usuniety obiekt."""
+        The host left and someone stayed -> host migration (_start_migration). With
+        --no-host-migration: the game is removed and the others get ONLY NotifyGameRemoved. On 15.09
+        (log-29, session 4) a player first got the host's NotifyPlayerRemoved, right after it
+        NotifyGameRemoved, and the game crashed with a jump to NULL. Hypothesis: the client tears
+        down a hostless game already on PlayerRemoved, and GameRemoved hits a deleted object."""
         with self.lock:
             if uid not in g.players:
                 return []
@@ -473,14 +477,15 @@ class Lobby:
         return out
 
     def mesh(self, gid: int, src_uid: int, tgt_uid: int, status: int) -> list:
-        """updateMeshConnection: gdy dolaczajacy i host zglosza polaczenie CONNECTED, dolaczanie jest
-        zakonczone -> NotifyGamePlayerStateChange (nowy stan gracza) i NotifyPlayerJoinCompleted
-        do wszystkich graczy gry.
+        """updateMeshConnection: once the joiner and the host report the connection as CONNECTED,
+        the join is complete -> NotifyGamePlayerStateChange (the player's new state) and
+        NotifyPlayerJoinCompleted to all players of the game.
 
-        Do run-39 szla sama notyfikacja 30 (JoinCompleted), a stan gracza zmienialismy wylacznie
-        w tym rejestrze. Klient dolaczajacego trzymal wiec swoj obiekt gracza w ACTIVE_CONNECTING
-        i ~7 s po wczytaniu swiata kasowal gre (frida-40: [gra-utracona] 6,83 s po dolaczeniu).
-        116 niesie stan do klientow; 30 zostaje, bo dzialalo."""
+        Up to run-39 only notification 30 (JoinCompleted) went out, and the player state was
+        changed only in this registry. So the joiner's client kept its player object in
+        ACTIVE_CONNECTING and ~7 s after loading the world it dropped the game (frida-40:
+        [game-lost] 6.83 s after joining). 116 carries the state to the clients; 30 stays,
+        because it worked."""
         with self.lock:
             g = self.games.get(gid)
             if (g is None or src_uid == tgt_uid or status != blaze.MESH_STATUS["CONNECTED"]

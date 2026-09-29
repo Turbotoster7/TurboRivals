@@ -1,38 +1,41 @@
 #!/usr/bin/env python3
-"""Bezposrednie uruchomienie NFS14.exe z pominieciem bramki aktywacji EA.
+"""Launching NFS14.exe directly, skipping the EA activation gate.
 
-PO CO (Tor B, 2026-09-12): po nacisnieciu "Graj" w Steamie odpala sie
-Core/ActivationUI.exe - bramka aktywacji EA. Gdy EA App nie ma swiezego auth code
-(w srodowisku startowym gry widac EAAuthCode=NeedsAFreshAuthCode), bramka nie
-potrafi zweryfikowac entitlementu i pokazuje okno logowania, a gra nie dochodzi
-do menu.
+WHY (Track B, 2026-09-12): after pressing "Play" in Steam, Core/ActivationUI.exe
+starts - the EA activation gate. When the EA App has no fresh auth code (the
+game's launch environment shows EAAuthCode=NeedsAFreshAuthCode), the gate cannot
+verify the entitlement and shows a login window, and the game never reaches the
+menu.
 
-Kluczowa obserwacja z dezasemblacji: NFS14.exe z calego bloku zmiennych EA* ma w
-sobie JAKO STRING tylko EALaunchOfflineMode - reszte (EALaunchUserAuthToken,
-EALicenseToken, EAAuthCode, EASecureLaunchTokenTemp) konsumuje LAUNCHER, nie sama
-gra. To znaczy, ze gra NIE re-waliduje entitlementu po tych zmiennych - robi to
-ActivationUI. Jesli wiec ustawimy srodowisko tak, jak zrobilby to launcher, i
-odpalimy NFS14.exe bezposrednio (przy dzialajacym EA App dla LSX 127.0.0.1:3216),
-gra powinna pominac aktywacje i pojsc prosto do Origin SDK / LSX - a tam nasz hook
-0xec3c80 (hook_origin.js) i tak podmienia token.
+Key observation from the disassembly: out of the whole block of EA* variables,
+NFS14.exe only contains EALaunchOfflineMode AS A STRING - the rest
+(EALaunchUserAuthToken, EALicenseToken, EAAuthCode, EASecureLaunchTokenTemp) is
+consumed by the LAUNCHER, not the game itself. That means the game does NOT
+re-validate the entitlement from these variables - ActivationUI does. So if we
+set up the environment the way the launcher would and start NFS14.exe directly
+(with the EA App running for LSX 127.0.0.1:3216), the game should skip activation
+and go straight to the Origin SDK / LSX - and there our hook at 0xec3c80
+(hook_origin.js) swaps the token anyway.
 
-To jest EKSPERYMENT weryfikujacy hipoteze "gra nie waliduje sama". Jesli gra
-mimo to zazada aktywacji - znaczy, ze ActivationUI przekazuje jej stan innym
-kanalem (uchwyt/pamiec dzielona/rejestr), nie tylko przez srodowisko.
+This is an EXPERIMENT verifying the "the game does not validate by itself"
+hypothesis. If the game still asks for activation, it means ActivationUI passes
+its state through another channel (handle/shared memory/registry), not only
+through the environment.
 
-SEKRETY: EALaunchUserAuthToken (JWT konta), EASecureLaunchTokenTemp, EALaunchCode
-sa SESYJNE i wygasaja. NIE hardkodujemy ich w repo. Skrypt czyta je z lokalnego,
-gitignorowanego pliku proto-lab/ea_launch_env.txt (szablon: ea_launch_env.example.txt).
-Wartosci bierze sie z ZYWEJ sesji EA App - najprosciej ze zrzutu pamieci
-ActivationUI/EADesktop (blok srodowiska), albo docelowo z LSX.
+SECRETS: EALaunchUserAuthToken (account JWT), EASecureLaunchTokenTemp, EALaunchCode
+are PER-SESSION and expire. We do NOT hardcode them in the repo. The script reads
+them from a local, gitignored file proto-lab/ea_launch_env.txt (template:
+ea_launch_env.example.txt). The values come from a LIVE EA App session - easiest
+from a memory dump of ActivationUI/EADesktop (the environment block), or
+eventually from LSX.
 
-Uzycie:
-    # 1. skopiuj szablon i wpisz swieze wartosci z zywej sesji EA App
+Usage:
+    # 1. copy the template and fill in fresh values from a live EA App session
     copy proto-lab\\ea_launch_env.example.txt proto-lab\\ea_launch_env.txt
-    # 2. (osobny terminal) odpal serwer i Fride --wait, potem:
+    # 2. (separate terminal) start the server and Frida --wait, then:
     python proto-lab/launch_direct.py
     python proto-lab/launch_direct.py --game-dir "D:\\SteamLibrary\\...\\Need for Speed(TM) Rivals"
-    python proto-lab/launch_direct.py --dry-run     # tylko pokaz srodowisko
+    python proto-lab/launch_direct.py --dry-run     # only show the environment
 """
 
 from __future__ import annotations
@@ -43,7 +46,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-# Nazwy uznane za sekret - w logu pokazujemy tylko dlugosc, nigdy wartosci.
+# Names treated as secrets - the log only shows their length, never the value.
 SECRET_KEYS = {
     "EALaunchUserAuthToken",
     "EASecureLaunchTokenTemp",
@@ -56,11 +59,11 @@ ENV_FILE = Path(__file__).parent / "ea_launch_env.txt"
 
 
 def read_env_file(path: Path) -> dict[str, str]:
-    """Czyta KEY=VALUE (jedna para na linie, # = komentarz)."""
+    """Reads KEY=VALUE (one pair per line, # = comment)."""
     if not path.exists():
         sys.exit(
-            f"brak pliku {path}\n"
-            f"Skopiuj szablon i wpisz swieze wartosci z zywej sesji EA App:\n"
+            f"missing file {path}\n"
+            f"Copy the template and fill in fresh values from a live EA App session:\n"
             f"  copy proto-lab\\ea_launch_env.example.txt proto-lab\\ea_launch_env.txt"
         )
     env: dict[str, str] = {}
@@ -69,7 +72,7 @@ def read_env_file(path: Path) -> dict[str, str]:
         if not line or line.startswith("#"):
             continue
         if "=" not in line:
-            print(f"[!] pomijam linie bez '=': {line!r}")
+            print(f"[!] skipping line without '=': {line!r}")
             continue
         k, v = line.split("=", 1)
         env[k.strip()] = v.strip()
@@ -77,7 +80,7 @@ def read_env_file(path: Path) -> dict[str, str]:
 
 
 def looks_like_placeholder(env: dict[str, str]) -> list[str]:
-    """Zwraca sekrety, ktore wygladaja na niewypelniony szablon (<...>)."""
+    """Returns the secrets that look like an unfilled template (<...>)."""
     bad = []
     for k in SECRET_KEYS:
         v = env.get(k, "")
@@ -87,13 +90,13 @@ def looks_like_placeholder(env: dict[str, str]) -> list[str]:
 
 
 def find_game_dir(cli: str | None) -> Path:
-    """Katalog gry: z argumentu, z rejestru (klucz z installScript.vdf), albo blad."""
+    """Game directory: from the argument, from the registry (key from installScript.vdf), or an error."""
     if cli:
         d = Path(cli)
         if not (d / "NFS14.exe").exists():
-            sys.exit(f"w {d} nie ma NFS14.exe")
+            sys.exit(f"no NFS14.exe in {d}")
         return d
-    # Rejestr - ten sam klucz, ktory ustawia instalator Steam (installScript.vdf).
+    # Registry - the same key the Steam installer sets (installScript.vdf).
     try:
         import winreg
 
@@ -114,7 +117,7 @@ def find_game_dir(cli: str | None) -> Path:
     except ImportError:
         pass
     sys.exit(
-        "nie znalazlem katalogu gry w rejestrze - podaj recznie:\n"
+        "game directory not found in the registry - pass it by hand:\n"
         '  python proto-lab/launch_direct.py --game-dir "D:\\SteamLibrary\\'
         'steamapps\\common\\Need for Speed(TM) Rivals"'
     )
@@ -122,32 +125,32 @@ def find_game_dir(cli: str | None) -> Path:
 
 def redacted(k: str, v: str) -> str:
     if k in SECRET_KEYS:
-        return f"<{len(v)} znakow, ukryte>"
+        return f"<{len(v)} characters, hidden>"
     return v
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--game-dir", help="katalog z NFS14.exe (domyslnie z rejestru)")
+    ap.add_argument("--game-dir", help="directory containing NFS14.exe (default: from the registry)")
     ap.add_argument("--env-file", type=Path, default=ENV_FILE,
-                    help=f"plik ze zmiennymi EA* (domyslnie {ENV_FILE.name})")
+                    help=f"file with the EA* variables (default {ENV_FILE.name})")
     ap.add_argument("--dry-run", action="store_true",
-                    help="tylko wypisz srodowisko i komende, nie uruchamiaj gry")
+                    help="only print the environment and the command, do not start the game")
     ap.add_argument("--offline", action="store_true",
-                    help="wymus EALaunchOfflineMode=true (do porownania - online "
-                         "NIE zadziala, ale sprawdza, czy gra w ogole wstaje)")
+                    help="force EALaunchOfflineMode=true (for comparison - online "
+                         "will NOT work, but it checks whether the game starts at all)")
     args = ap.parse_args()
 
     ea_env = read_env_file(args.env_file)
     if not ea_env:
-        sys.exit(f"{args.env_file} nie zawiera zadnych zmiennych")
+        sys.exit(f"{args.env_file} contains no variables")
 
     placeholders = looks_like_placeholder(ea_env)
     if placeholders and not args.dry_run:
-        sys.exit("te sekrety maja wciaz wartosc-placeholder z szablonu: "
+        sys.exit("these secrets still have the placeholder value from the template: "
                  + ", ".join(placeholders)
-                 + "\nWpisz swieze wartosci z zywej sesji EA App.")
+                 + "\nFill in fresh values from a live EA App session.")
 
     if args.offline:
         ea_env["EALaunchOfflineMode"] = "true"
@@ -155,28 +158,28 @@ def main() -> int:
     game_dir = find_game_dir(args.game_dir)
     exe = game_dir / "NFS14.exe"
 
-    print(f"katalog gry: {game_dir}")
-    print("srodowisko EA* przekazane grze:")
+    print(f"game directory: {game_dir}")
+    print("EA* environment passed to the game:")
     for k in sorted(ea_env):
         print(f"    {k}={redacted(k, ea_env[k])}")
 
-    # Startujemy od PELNEGO srodowiska tej powloki + nakladamy EA* - gra potrzebuje
-    # tez zwyklego PATH/SystemRoot itd., wiec nie budujemy env od zera.
+    # We start from the FULL environment of this shell + overlay EA* - the game
+    # also needs the usual PATH/SystemRoot etc., so we do not build env from scratch.
     child_env = dict(os.environ)
     child_env.update(ea_env)
 
     if args.dry_run:
-        print(f"\n[dry-run] uruchomilbym: {exe}  (cwd={game_dir})")
+        print(f"\n[dry-run] would start: {exe}  (cwd={game_dir})")
         return 0
 
-    print(f"\nuruchamiam {exe.name} bezposrednio (z pominieciem ActivationUI)...")
-    print("PAMIETAJ: EA App ma dzialac (LSX 127.0.0.1:3216 do handshake), a Frida "
-          "--wait powinna juz czekac na proces.\n")
+    print(f"\nstarting {exe.name} directly (skipping ActivationUI)...")
+    print("REMEMBER: the EA App has to be running (LSX 127.0.0.1:3216 for the handshake), "
+          "and Frida --wait should already be waiting for the process.\n")
     try:
         proc = subprocess.Popen([str(exe)], cwd=str(game_dir), env=child_env)
     except OSError as e:
-        sys.exit(f"nie udalo sie uruchomic gry: {e}")
-    print(f"gra wystartowala, PID {proc.pid}. Ten skrypt nie czeka na jej koniec.")
+        sys.exit(f"failed to start the game: {e}")
+    print(f"game started, PID {proc.pid}. This script does not wait for it to exit.")
     return 0
 
 

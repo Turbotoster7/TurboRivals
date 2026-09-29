@@ -1,24 +1,24 @@
 #!/usr/bin/env python3
-"""Mapowanie klas TDF na ich tablice pol.
+"""Mapping TDF classes to their field tables.
 
-UWAGA: na binarce ze Steama to narzedzie nie zadziala - sekcja .text jest
-zaszyfrowana (entropia 1.000), wiec skan instrukcji zwraca szum. Zostawione
-na pozniej: bedzie uzyteczne na zrzucie pamieci procesu po odszyfrowaniu
-kodu. Szczegoly w docs/decisions.md.
+NOTE: this tool does not work on the Steam binary - the .text section is
+encrypted (entropy 1.000), so the instruction scan returns noise. Kept for
+later: it will be useful on a memory dump of the process once the code has
+been decrypted. Details in docs/decisions.md.
 
-Tablice pol i nazwy klas nie maja w binarce referencji absolutnych - kod
-x64 adresuje je RIP-relatywnie. Zamiast pelnego disassemblera skanujemy
-tylko instrukcje `lea r64, [rip+disp32]` (48/4C 8D /r), bo wlasnie nimi
-kod laduje adresy statycznych tablic.
+Field tables and class names have no absolute references in the binary - x64
+code addresses them RIP-relatively. Instead of a full disassembler we only
+scan `lea r64, [rip+disp32]` instructions (48/4C 8D /r), because that is
+exactly how the code loads addresses of static tables.
 
-Metoda:
-  1. znajdz wszystkie `lea` i policz ich cele,
-  2. cele lezace w zbiorze rekordow pol = poczatki tablic klas
-     (to rozwiazuje problem sklejonych blokow - granice biora sie z kodu,
-      nie ze zgadywania odstepow),
-  3. nazwe klasy bierz z pobliskiego `lea` na string "Blaze::...".
+Method:
+  1. find all `lea`s and compute their targets,
+  2. targets that land in the set of field records = starts of class tables
+     (this solves the glued-blocks problem - the boundaries come from the code,
+      not from guessing gaps),
+  3. take the class name from a nearby `lea` to a "Blaze::..." string.
 
-Uzycie:
+Usage:
     python tools/map_tdf_classes.py "D:\\...\\NFS14.exe"
 """
 
@@ -36,8 +36,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 from pe_probe import PE  # noqa: E402
 
-# lea r64, [rip+disp32] -- REX.W (48) lub REX.WR (4C), opcode 8D,
-# modrm z mod=00 i rm=101 (RIP-relative): 05,0D,15,1D,25,2D,35,3D
+# lea r64, [rip+disp32] -- REX.W (48) or REX.WR (4C), opcode 8D,
+# modrm with mod=00 and rm=101 (RIP-relative): 05,0D,15,1D,25,2D,35,3D
 LEA_RE = re.compile(rb"[\x48\x4C]\x8D[\x05\x0D\x15\x1D\x25\x2D\x35\x3D]", re.DOTALL)
 LEA_LEN = 7
 
@@ -45,7 +45,7 @@ CLASS_NAME_RE = re.compile(r"^Blaze::[A-Za-z0-9_]+::[A-Za-z0-9_]+$")
 
 
 def find_lea_refs(pe: PE) -> list[tuple[int, int]]:
-    """Zwraca (offset_instrukcji, docelowy_VA) dla kazdego lea rip-relative."""
+    """Returns (instruction_offset, target_VA) for every rip-relative lea."""
     text = next(s for s in pe.sections if s.name == ".text")
     lo, hi = text.raw_ptr, text.raw_ptr + text.raw_size
     blob = pe.data[lo:hi]
@@ -57,14 +57,14 @@ def find_lea_refs(pe: PE) -> list[tuple[int, int]]:
         if i + LEA_LEN > len(blob):
             continue
         disp = struct.unpack_from("<i", blob, i + 3)[0]
-        # adres liczony od nastepnej instrukcji
+        # address is relative to the next instruction
         target = base_va + i + LEA_LEN + disp
         refs.append((lo + i, target))
     return refs
 
 
 def find_class_names(pe: PE) -> dict[int, str]:
-    """VA -> nazwa klasy dla stringow postaci Blaze::Component::Type."""
+    """VA -> class name for strings of the form Blaze::Component::Type."""
     out: dict[int, str] = {}
     for m in re.finditer(rb"Blaze::[A-Za-z0-9_]+::[A-Za-z0-9_]+\x00", pe.data):
         text = m.group()[:-1].decode("ascii")
@@ -80,15 +80,15 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("exe", type=Path,
-                    help="NFS14.exe LUB pelny minidump .dmp (odszyfrowana .text z RAM)")
+                    help="NFS14.exe OR a full .dmp minidump (decrypted .text from RAM)")
     ap.add_argument("--members", type=Path, default=Path("docs/recon/tdf_members.json"))
     ap.add_argument("-o", "--out", type=Path, default=Path("docs/recon"))
     ap.add_argument("--window", type=int, default=256,
-                    help="ile bajtow kodu wokol lea szukac pary nazwa/tablica")
+                    help="how many bytes of code around a lea to search for a name/table pair")
     args = ap.parse_args()
 
-    # .exe -> PE (na dysku, .text zaszyfrowana); .dmp -> obraz z pamieci
-    # (.text odszyfrowana). Rozpoznajemy po sygnaturze MDMP.
+    # .exe -> PE (on disk, .text encrypted); .dmp -> image from memory
+    # (.text decrypted). Told apart by the MDMP signature.
     head = args.exe.read_bytes()[:4]
     if head == b"MDMP":
         from dump_image import load_dump
@@ -103,17 +103,17 @@ def main() -> int:
     class_names = find_class_names(pe)
     refs = find_lea_refs(pe)
     print(f"lea rip-relative:     {len(refs):,}")
-    print(f"nazwy klas Blaze:     {len(class_names):,}")
+    print(f"Blaze class names:    {len(class_names):,}")
 
-    # Cele lea, ktore trafiaja dokladnie w rekord pola = poczatki tablic.
+    # lea targets that hit a field record exactly = table starts.
     array_starts = sorted({t for _, t in refs if t in member_vas})
-    print(f"poczatki tablic pol:  {len(array_starts):,}")
+    print(f"field table starts:   {len(array_starts):,}")
 
-    # Indeks: offset kodu -> cel, posortowany, zeby szukac sasiedztwa.
+    # Index: code offset -> target, sorted, so we can search the neighbourhood.
     refs.sort()
     ref_offsets = [o for o, _ in refs]
 
-    # Dla kazdego lea na nazwe klasy szukamy w poblizu lea na tablice pol.
+    # For every lea to a class name, look nearby for a lea to a field table.
     pairs: dict[int, str] = {}          # array_start -> class name
     conflicts: dict[int, set[str]] = defaultdict(set)
     for off, target in refs:
@@ -122,7 +122,7 @@ def main() -> int:
             continue
         lo = bisect.bisect_left(ref_offsets, off - args.window)
         hi = bisect.bisect_right(ref_offsets, off + args.window)
-        best: tuple[int, int] | None = None      # (dystans, array_start)
+        best: tuple[int, int] | None = None      # (distance, array_start)
         for j in range(lo, hi):
             cand = refs[j][1]
             if cand not in member_vas:
@@ -138,22 +138,22 @@ def main() -> int:
             conflicts[start].add(name)
         pairs[start] = name
 
-    print(f"sparowanych klas:     {len(pairs):,}")
+    print(f"paired classes:       {len(pairs):,}")
     if conflicts:
-        print(f"kolizji (kilka nazw na jedna tablice): {len(conflicts):,}")
+        print(f"collisions (several names for one table): {len(conflicts):,}")
 
-    # Kazda tablica ciagnie sie do nastepnego poczatku tablicy.
+    # Each table extends up to the next table start.
     boundaries = sorted(set(array_starts) | set(pairs))
     lines = [
-        "# Klasy TDF i ich pola (rekonstrukcja z NFS14.exe)",
+        "# TDF classes and their fields (reconstructed from NFS14.exe)",
         "",
-        f"- Rekordow pol: **{len(members):,}**",
-        f"- Wykrytych tablic (granice z instrukcji `lea` w kodzie): **{len(boundaries):,}**",
-        f"- Nazwanych klas: **{len(pairs):,}**",
+        f"- Field records: **{len(members):,}**",
+        f"- Detected tables (boundaries from `lea` instructions in the code): **{len(boundaries):,}**",
+        f"- Named classes: **{len(pairs):,}**",
         "",
-        "Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania "
-        "w TDF. `meta` to 4 bajty metadanych rekordu (kandydaci: kod typu, "
-        "offset pola w strukturze, rozmiar).",
+        "Field order is the order from the table, i.e. the TDF encoding order. "
+        "`meta` is the record's 4 bytes of metadata (candidates: type code, "
+        "field offset in the structure, size).",
         "",
     ]
 
@@ -168,12 +168,12 @@ def main() -> int:
         name = pairs.get(start)
         if name:
             named += 1
-        title = name or f"(nienazwana tablica @ {start:#014x})"
+        title = name or f"(unnamed table @ {start:#014x})"
         lines.append(f"## {title}")
         lines.append("")
-        lines.append(f"`{start:#014x}` - {len(fields)} pol")
+        lines.append(f"`{start:#014x}` - {len(fields)} fields")
         lines.append("")
-        lines.append("| tag | pole | meta |")
+        lines.append("| tag | field | meta |")
         lines.append("| --- | --- | --- |")
         for f in fields:
             meta = " ".join(f"{b:02x}" for b in f["meta"])
@@ -188,7 +188,7 @@ def main() -> int:
         {f"{k:#014x}": v for k, v in sorted(pairs.items())}, indent=1),
         encoding="utf-8")
 
-    print(f"nazwanych tablic w raporcie: {named:,}")
+    print(f"named tables in the report: {named:,}")
     print(f"-> {out_md}")
     print(f"-> {out_json}")
     return 0

@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
-"""Sonda SSL redirectora EA - jaka wersja i jakie szyfry.
+"""SSL probe of the EA redirector - which version and which ciphers.
 
-Redirector EA nadal odpowiada mimo wylaczenia gry online, wiec nie musimy
-czekac na klienta, zeby poznac parametry SSL. Wysylamy wlasnorecznie
-sklecony ClientHello (biblioteka `ssl` nie zrobi juz SSLv3) i patrzymy,
-co odpowie serwer.
+The EA redirector still answers even though the game's online is shut down,
+so we do not have to wait for the client to learn the SSL parameters. We send
+a hand-built ClientHello (the `ssl` module can no longer do SSLv3) and look at
+what the server answers.
 
-Odpowiada na pytania otwarte nr 2 i 3 z docs/protocol.md:
-  - czy to SSLv3, czy nowszy TLS,
-  - jaki szyfr wybiera serwer,
-  - jak wyglada oryginalny certyfikat (do sklonowania).
+Answers open questions no. 2 and 3 from docs/protocol.md:
+  - is it SSLv3 or a newer TLS,
+  - which cipher the server picks,
+  - what the original certificate looks like (to clone it).
 
-Uzycie:
+Usage:
     python proto-lab/ssl_probe.py --host 159.153.51.18 --port 42127
 """
 
@@ -31,7 +31,7 @@ from tcp_proxy import parse_records  # noqa: E402
 VERSION_IDS = {"sslv3": 0x0300, "tls1.0": 0x0301, "tls1.1": 0x0302,
                "tls1.2": 0x0303}
 
-# RC4 na poczatku - to szyfr, ktorego uzywalo ProtoSSL w tej epoce.
+# RC4 first - that is the cipher ProtoSSL used in this era.
 OFFERED = [0x0005, 0x0004, 0x000A, 0x002F, 0x0035, 0x003C, 0x009C,
            0xC013, 0xC014, 0xC02F]
 
@@ -39,13 +39,13 @@ OFFERED = [0x0005, 0x0004, 0x000A, 0x002F, 0x0035, 0x003C, 0x009C,
 def build_client_hello(version: int, sni: str | None) -> bytes:
     body = struct.pack(">H", version)
     body += struct.pack(">I", int(time.time())) + os.urandom(28)
-    body += b"\x00"                                     # brak session id
+    body += b"\x00"                                     # no session id
     body += struct.pack(">H", len(OFFERED) * 2)
     body += b"".join(struct.pack(">H", c) for c in OFFERED)
-    body += b"\x01\x00"                                 # kompresja: brak
+    body += b"\x01\x00"                                 # compression: none
 
-    # SSLv3 nie zna rozszerzen; dla TLS dodajemy SNI, bo EA moze
-    # hostowac kilka uslug pod jednym adresem.
+    # SSLv3 has no extensions; for TLS we add SNI, because EA may
+    # host several services behind one address.
     if version >= 0x0301 and sni:
         host = sni.encode("ascii")
         server_name = b"\x00" + struct.pack(">H", len(host)) + host
@@ -66,7 +66,7 @@ def probe(host: str, port: int, version_name: str, sni: str | None,
     try:
         s = socket.create_connection((host, port), timeout=8)
     except OSError as e:
-        print(f"  nie moge sie polaczyc: {e}")
+        print(f"  cannot connect: {e}")
         return
 
     s.settimeout(8)
@@ -83,16 +83,16 @@ def probe(host: str, port: int, version_name: str, sni: str | None,
     except socket.timeout:
         pass
     except OSError as e:
-        print(f"  blad transmisji: {e}")
+        print(f"  transmission error: {e}")
     finally:
         s.close()
 
     resp = b"".join(chunks)
     if not resp:
-        print("  serwer nic nie odpowiedzial (polaczenie przyjete i zamkniete)")
+        print("  the server sent nothing back (connection accepted and closed)")
         return
 
-    print(f"  odpowiedz: {len(resp)} B")
+    print(f"  response: {len(resp)} B")
     out_dir.mkdir(parents=True, exist_ok=True)
     tag = f"probe-{version_name.replace('.', '')}"
     (out_dir / f"{tag}.bin").write_bytes(resp)
