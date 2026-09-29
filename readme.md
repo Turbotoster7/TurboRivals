@@ -49,8 +49,15 @@ Two things come out of `dist\`:
 
 | | |
 | --- | --- |
-| `TurboRivals\` | 35 MB folder — the portable build, zip it and hand it over as is |
+| `TurboRivals\` | 35 MB folder — a local copy; see the warning below before zipping it |
 | `TurboRivalsSetup.exe` | 14 MB installer — Start Menu entry, uninstaller, no UAC prompt |
+
+**Hand people the installer, not a zip of the folder.** Every file extracted from a
+downloaded archive inherits Mark-of-the-Web, and .NET then refuses to load
+`pythonnetuntime\Python.Runtime.dll`, which pywebview needs — the launcher dies with
+`Failed to resolve Python.Runtime.Loader.Initialize`. Inno Setup writes the files fresh, so
+an installed copy never hits this. A zip works only if the recipient unblocks it first
+(`Get-ChildItem -Recurse <folder> | Unblock-File`).
 
 The installer is per-user: it lands in `%LOCALAPPDATA%\Programs\TurboRivals` and needs no
 administrator rights, because the launcher asks for them itself when it touches `hosts` or

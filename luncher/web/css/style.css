@@ -132,7 +132,7 @@ body {
 
 /* --- TOP BAR (doubles as the window title bar) --- */
 .tech-header {
-    height: 64px;
+    height: 52px;
     display: flex; align-items: center; justify-content: space-between;
     padding: 0 18px;
     background: rgba(11, 16, 38, 0.75);
@@ -149,7 +149,7 @@ body {
 
 .tech-brand { display: flex; align-items: center; gap: 14px; }
 .brand-icon-box {
-    width: 40px; height: 40px;
+    width: 34px; height: 34px;
     background: rgba(0, 240, 255, 0.1);
     border: 1px solid var(--primary);
     display: flex; align-items: center; justify-content: center;
@@ -224,15 +224,17 @@ body {
 
 /* --- WORKSPACE LAYOUT --- */
 .workspace {
-    height: calc(100vh - 64px);
+    height: calc(100vh - 52px);
     display: grid;
-    grid-template-columns: minmax(420px, 1fr) minmax(430px, 1.05fr);
-    gap: 18px;
-    padding: 18px;
+    /* 360 + 380 + gap + padding fits inside the 880px minimum window width.
+       The old 420/430 needed ~904px of content alone. */
+    grid-template-columns: minmax(360px, 1fr) minmax(380px, 1.05fr);
+    gap: 12px;
+    padding: 12px;
     overflow: hidden;
 }
 
-.column { display: flex; flex-direction: column; gap: 14px; min-height: 0; }
+.column { display: flex; flex-direction: column; gap: 10px; min-height: 0; }
 
 .column-config {
     overflow-y: auto;
@@ -254,7 +256,7 @@ body {
     background: transparent; border: 1px solid rgba(77, 141, 255, 0.25);
     color: var(--secondary);
     font-family: var(--font-mono); font-size: 0.82rem; letter-spacing: 1px;
-    padding: 11px 0; cursor: pointer; transition: 0.3s;
+    padding: 8px 0; cursor: pointer; transition: 0.3s;
 }
 .link-bracket { opacity: 0; color: var(--primary); transition: 0.3s; display: inline-block; }
 .nav-link:hover { color: #fff; text-shadow: 0 0 8px var(--primary); }
@@ -284,7 +286,7 @@ body {
 
 .panel-header {
     background: rgba(0, 240, 255, 0.08);
-    padding: 11px 18px;
+    padding: 8px 14px;
     border-bottom: 1px solid rgba(0, 240, 255, 0.2);
     display: flex; justify-content: space-between; align-items: center;
     flex-shrink: 0;
@@ -297,10 +299,10 @@ body {
     font-family: var(--font-mono); font-size: 0.7rem; color: var(--muted);
     display: flex; align-items: center; gap: 10px;
 }
-.panel-body { padding: 16px 18px; display: flex; flex-direction: column; gap: 12px; min-height: 0; }
+.panel-body { padding: 12px 14px; display: flex; flex-direction: column; gap: 9px; min-height: 0; }
 .panel-footer {
     border-top: 1px solid rgba(0, 240, 255, 0.12);
-    padding: 8px 18px; flex-shrink: 0;
+    padding: 6px 14px; flex-shrink: 0;
 }
 
 /* --- PRE-FLIGHT --- */
@@ -335,7 +337,7 @@ body {
     border: 1px solid rgba(77, 141, 255, 0.3);
     color: var(--text);
     font-family: var(--font-mono); font-size: 0.85rem;
-    padding: 9px 11px;
+    padding: 7px 10px;
     outline: none; transition: 0.25s;
     user-select: text;
     min-width: 0;
@@ -385,7 +387,7 @@ body {
 .player-row {
     display: flex; align-items: center; gap: 10px;
     background: #0f182e; border: 1px solid #1f3a6e;
-    padding: 8px 12px; transition: 0.25s;
+    padding: 6px 11px; transition: 0.25s;
 }
 .player-row:hover { border-color: var(--accent); }
 .player-slot { font-family: var(--font-mono); font-size: 0.68rem; color: var(--muted); }
@@ -409,10 +411,10 @@ body {
 
 /* --- LOG CONSOLE --- */
 .log-body {
-    flex: 1; overflow-y: auto;
+    flex: 1; min-height: 120px; overflow-y: auto;
     font-family: var(--font-mono); font-size: 0.74rem;
     line-height: 1.55; gap: 0;
-    padding: 12px 18px;
+    padding: 10px 14px;
     user-select: text;
 }
 .log-empty { color: var(--muted); }
@@ -442,8 +444,8 @@ body {
 
 /* --- BUTTONS --- */
 .btn {
-    padding: 12px 26px; border: none;
-    font-family: var(--font-mono); font-weight: bold; font-size: 0.8rem;
+    padding: 10px 22px; border: none;
+    font-family: var(--font-mono); font-weight: bold; font-size: 0.78rem;
     text-transform: uppercase; letter-spacing: 1px;
     cursor: pointer; transition: 0.3s;
     display: inline-flex; align-items: center; justify-content: center; gap: 8px;
@@ -476,7 +478,7 @@ body {
     border-radius: 50%; animation: spin 0.7s linear infinite;
 }
 
-.action-bar { display: flex; gap: 12px; flex-shrink: 0; }
+.action-bar { display: flex; gap: 10px; flex-shrink: 0; }
 .action-bar .btn { flex: 1; }
 
 /* --- TOASTS --- */
@@ -507,3 +509,16 @@ body {
 ::-webkit-scrollbar-track { background: rgba(0, 0, 0, 0.3); }
 ::-webkit-scrollbar-thumb { background: rgba(0, 240, 255, 0.25); }
 ::-webkit-scrollbar-thumb:hover { background: rgba(0, 240, 255, 0.5); }
+
+/* --- SHORT WINDOWS ---
+   At the 560px minimum height every row counts: trim the vertical rhythm
+   rather than let the left column turn into a scroll-fest. */
+@media (max-height: 640px) {
+    .panel-body { padding: 9px 14px; gap: 7px; }
+    .panel-header { padding: 6px 14px; }
+    .column { gap: 8px; }
+    .workspace { padding: 10px; gap: 10px; }
+    .client-steps { gap: 4px; }
+    .check-note { font-size: 0.64rem; }
+    .btn { padding: 8px 18px; }
+}

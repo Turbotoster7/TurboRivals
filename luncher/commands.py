@@ -85,6 +85,24 @@ def is_admin() -> bool:
     return hosts_switch.is_admin()
 
 
+def ea_app_running() -> bool:
+    """Is the EA App up?
+
+    Worth its own check because it is the most common reason a session fails,
+    and the failure is silent: without the EA App the game never receives an
+    Origin token, so it connects, exchanges Util.preAuth and Util.ping, then
+    closes without ever sending Authentication.login (1/152). Nothing in the
+    server log says why.
+    """
+    try:
+        result = subprocess.run(
+            ["tasklist", "/FI", "IMAGENAME eq EADesktop.exe", "/NH"],
+            capture_output=True, text=True, creationflags=NO_WINDOW, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return "EADesktop" in (result.stdout or "")
+
+
 def relaunch_as_admin() -> bool:
     """Starts this same launcher elevated (UAC prompt).
 

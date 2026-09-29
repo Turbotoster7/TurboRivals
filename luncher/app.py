@@ -108,13 +108,13 @@ class Api:
         self._game = commands.Game([tuple(p) for p in config.get("players", [])])
         return {
             "admin": commands.is_admin(),
+            "ea_app": commands.ea_app_running(),
             "hosts": commands.hosts_status(),
             "cert": commands.cert_exists(),
             "server_running": self._server.is_running(),
             "addresses": commands.local_addresses(),
             "suggested_ip": commands.suggested_public_ip(),
             "max_guests": commands.MAX_GUESTS,
-            "python": sys.executable,   # so the UI's command preview is honest
             "config": config,
         }
 
@@ -201,9 +201,11 @@ def main() -> int:
         "TurboRivals Launcher",
         str(WEB_DIR / "index.html"),
         js_api=api,
-        width=1120,
-        height=780,
-        min_size=(960, 680),
+        # Sized for a 14" laptop: at 150% scaling its working area is about
+        # 1280x680 logical pixels, so the old 780 height could never fit.
+        width=1000,
+        height=620,
+        min_size=(880, 560),
         background_color="#0b1026",
         frameless=True,
         easy_drag=False,
@@ -215,15 +217,33 @@ def main() -> int:
         # The window IS WebView2, so there is nothing left to draw an error in.
         # Without this the launcher would just fail to appear, which is a bad
         # thing to hand to someone else.
+        #
+        # Name the actual cause rather than guessing. An earlier version blamed
+        # WebView2 for every startup failure and sent us hunting in the wrong
+        # place for half an hour, while the real message underneath said
+        # Python.Runtime.
         import ctypes
+
+        text = str(error)
+        if any(hint in text for hint in ("Python.Runtime", "clr_loader", "pythonnet")):
+            # .NET refuses to load an assembly carrying Mark-of-the-Web, which
+            # every file extracted from a downloaded archive inherits. Installing
+            # through the setup avoids it: Inno writes the files fresh.
+            advice = (
+                "Its files are blocked because they came out of a downloaded "
+                "archive, so Windows will not let .NET load them.\n\n"
+                "Either install with TurboRivalsSetup.exe, or unblock the folder "
+                "in PowerShell:\n"
+                "    Get-ChildItem -Recurse <folder> | Unblock-File")
+        else:
+            advice = (
+                "It needs the Microsoft Edge WebView2 Runtime. Windows 11 has it "
+                "built in, but an older Windows 10 may not - it is a free download "
+                "from Microsoft (\"Evergreen WebView2 Runtime\").")
 
         ctypes.windll.user32.MessageBoxW(
             None,
-            "TurboRivals could not open its window.\n\n"
-            "It needs the Microsoft Edge WebView2 Runtime. Windows 11 has it "
-            "built in, but an older Windows 10 may not - it is a free download "
-            "from Microsoft (\"Evergreen WebView2 Runtime\").\n\n"
-            f"Details: {error}",
+            f"TurboRivals could not open its window.\n\n{advice}\n\nDetails: {error}",
             "TurboRivals", 0x10)
         api._server.stop()
         return 1

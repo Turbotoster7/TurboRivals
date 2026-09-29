@@ -19,7 +19,7 @@ const state = {
     players: [],
     maxGuests: 5,
     addresses: [],
-    python: 'python',
+    eaApp: false,
 };
 
 /* --- bridge ----------------------------------------------------------
@@ -201,6 +201,10 @@ function render() {
         state.admin ? 'running elevated' : 'hosts and firewall will not work');
     $('#checkAdmin').querySelector('button').style.display = state.admin ? 'none' : '';
 
+    setCheck('#checkEaApp', state.eaApp,
+        state.eaApp ? 'running'
+                    : 'not running - the game gets no Origin token and never logs in');
+
     setCheck('#checkCert', state.cert,
         state.cert ? 'proto-lab/pki/server.der' : 'missing - generate before starting');
     $('#checkCert').querySelector('button').style.display = state.cert ? 'none' : '';
@@ -221,11 +225,15 @@ function render() {
         ? 'TCP 42127,14219,17502 + UDP 17502-17503, 3659'
         : 'UDP 3659 (player-to-player traffic)';
 
-    const ready = [state.admin, state.cert || state.mode === 'client', hostsOn]
-        .filter(Boolean).length;
-    const total = state.mode === 'host' ? 3 : 2;
+    /* Count only the checks that actually apply: the certificate is the host's
+       business alone. Folding it in as "cert || client" used to hand the
+       joining player a free point and print 3/3 next to a red EA APP row. */
+    const checks = state.mode === 'host'
+        ? [state.admin, state.eaApp, state.cert, hostsOn]
+        : [state.admin, state.eaApp, hostsOn];
+    const ready = checks.filter(Boolean).length;
     $('#checkSummary').textContent = state.known
-        ? `${Math.min(ready, total)}/${total} OK` : '--';
+        ? `${ready}/${checks.length} OK` : '--';
 
     /* mode panels */
     $$('.mode-panel').forEach((panel) => {
@@ -334,8 +342,9 @@ function renderCommandPreview() {
     if (state.mode !== 'host') { $('#cmdPreview').textContent = ' '; return; }
 
     const quote = (v) => (/\s/.test(v) ? `"${v}"` : v);
-    const parts = [quote(state.python), '-u', 'proto-lab/tls_terminator.py',
-                   '--entitlements', 'online'];
+    /* Deliberately no absolute path: it is always the same, and printing it
+       would put the Windows user name on screen and in any screenshot. */
+    const parts = ['TurboRivals', '--run-server', '--entitlements', 'online'];
 
     const ip = $('#publicIp').value.trim();
     const name = $('#persona').value.trim();
@@ -360,7 +369,7 @@ async function refreshState() {
     state.serverRunning = fresh.server_running;
     state.maxGuests = fresh.max_guests;
     state.addresses = fresh.addresses;
-    state.python = fresh.python || 'python';
+    state.eaApp = fresh.ea_app;
     state.players = await callApi('get_players');
 
     const config = fresh.config;
