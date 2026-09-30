@@ -2,6 +2,8 @@
 
 Private multiplayer servers for **Need for Speed Rivals**.
 
+** Discord  https://discord.gg/efckqjhR2z  **
+
 EA shut the game's online services down on 7 October 2025. Rivals still runs offline, but
 AllDrive — the shared open world for up to six players — died with the servers. This project
 puts a replacement server in its place.
