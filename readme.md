@@ -203,9 +203,13 @@ run `python proto-lab/ea_identity.py`.
 
 - login, session setup, client configuration, QoS
 - public games and matchmaking (find-or-create)
-- a shared AllDrive session for two players, with direct connections between them
-- progress saved from GameReporting reports (`~/TurboRivals/data`)
+- a shared AllDrive session for up to six players, with direct connections between them.
+  Sessions of 3 to 6 players have been tested.
+- host migration: when the host leaves, another player takes over and the session goes on
+- progress saved from GameReporting reports (`~/TurboRivals/data`), and career progress that
+  survives a game restart (see *Career saves*)
 - speed walls served from saved results
+- player names and profile pictures, in the launcher and in the game
 
 ## Known issues that are not bugs
 
@@ -246,10 +250,7 @@ Read the section above first — the three most common reports are not bugs.
 
 ## What is missing
 
-- **host migration** — when the host leaves, the game ends and everyone else gets
-  `NotifyGameRemoved`
 - **internet play without a VPN** — the game connects players directly and EA's relay is gone
-- sessions with three or more players are untested
 - a few RPCs still answered with an empty acknowledgement: `UserSessions.lookupUsers`,
   `NFS.getSpecialGuestInfo`, `getInGameRecommendations`, `getAutologPlaylist`
 
@@ -285,5 +286,5 @@ python proto-lab/frida_run.py                                  # diagnostic hook
 | 1 | working out the protocol | done |
 | 2 | prototype server, first shared session | done |
 | 3 | launcher: hosts, firewall and names without a console | done |
-| 4 | host migration, sessions for 3-6 players | |
+| 4 | host migration, sessions for 3-6 players | done |
 | 5 | internet play without a VPN (NAT traversal) | |
