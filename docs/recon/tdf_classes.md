@@ -1,26 +1,28 @@
-# Klasy TDF i ich pola (rekonstrukcja z NFS14.exe)
+# TDF classes and their fields (reconstructed from NFS14.exe)
 
-- Rekordow pol: **2,864**
-- Wykrytych tablic (granice z instrukcji `lea` w kodzie): **352**
-- Nazwanych klas: **5**
+> Older heuristic (table boundaries from `lea` instructions): it glues neighbouring classes together. The exact boundaries come from `tools/tdf_classes.py` (a record with `meta[1] == 0` ends its class) - see docs/protocol.md, section 3.
 
-Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `meta` to 4 bajty metadanych rekordu (kandydaci: kod typu, offset pola w strukturze, rozmiar).
+- Field records: **2,864**
+- Detected tables (boundaries from `lea` instructions in the code): **352**
+- Named classes: **5**
 
-## (nienazwana tablica @ 0x0001416ac880)
+Field order is the order from the table, i.e. the TDF encoding order. `meta` is the record's 4 bytes of metadata (candidates: type code, field offset in the structure, size).
 
-`0x0001416ac880` - 3 pol
+## (unnamed table @ 0x0001416ac880)
 
-| tag | pole | meta |
+`0x0001416ac880` - 3 fields
+
+| tag | field | meta |
 | --- | --- | --- |
 | `EAMC` | mEaMayContact | `15 18 10 00` |
 | `PMC ` | mPartnersMayContact | `15 00 14 00` |
 | `PID ` | mPersonaId | `16 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416ac928)
+## (unnamed table @ 0x0001416ac928)
 
-`0x0001416ac928` - 13 pol
+`0x0001416ac928` - 13 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `MAIL` | mEmail | `05 20 10 00` |
 | `PLST` | mPersonaDetailsList | `02 00 20 00` |
@@ -36,11 +38,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `XPTS` | mXp | `16 00 20 00` |
 | `LSDT` | mListsInfo | `02 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416acc70)
+## (unnamed table @ 0x0001416acc70)
 
-`0x0001416acc70` - 6 pol
+`0x0001416acc70` - 6 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `CREQ` | mCreateAccountParameters | `0a 18 10 00` |
 | `MAC ` | mMacAddress | `05 20 c8 01` |
@@ -49,11 +51,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `TICK` | mTicketBlob | `08 10 a0 01` |
 | `XREF` | mExtId | `17 00 90 01` |
 
-## (nienazwana tablica @ 0x0001416acd10)
+## (unnamed table @ 0x0001416acd10)
 
-`0x0001416acd10` - 6 pol
+`0x0001416acd10` - 6 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `INFO` | mInfo | `0a 18 10 00` |
 | `MEML` | mListMemberInfoVector | `02 18 88 00` |
@@ -62,11 +64,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `CUR ` | mCurrent | `16 18 18 00` |
 | `PTS ` | mPoints | `16 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416acda0)
+## (unnamed table @ 0x0001416acda0)
 
-`0x0001416acda0` - 12 pol
+`0x0001416acda0` - 12 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `LMID` | mListMemberId | `0a 18 18 00` |
 | `TIME` | mTimeAdded | `16 00 10 00` |
@@ -81,20 +83,20 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `PJID` | mProjectId | `05 20 28 00` |
 | `PRID` | mProductId | `05 00 18 00` |
 
-## (nienazwana tablica @ 0x0001416acfc8)
+## (unnamed table @ 0x0001416acfc8)
 
-`0x0001416acfc8` - 2 pol
+`0x0001416acfc8` - 2 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `LNM ` | mListName | `05 20 18 00` |
 | `TYPE` | mListType | `13 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416ad240)
+## (unnamed table @ 0x0001416ad240)
 
-`0x0001416ad240` - 7 pol
+`0x0001416ad240` - 7 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `BUID` | mBlazeUserId | `18 18 20 00` |
 | `FRST` | mIsFirstLogin | `0f 18 40 00` |
@@ -104,11 +106,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `PDTL` | mPersonaDetails | `0a 18 50 00` |
 | `UID ` | mUserId | `16 00 28 00` |
 
-## (nienazwana tablica @ 0x0001416ad300)
+## (unnamed table @ 0x0001416ad300)
 
-`0x0001416ad300` - 15 pol
+`0x0001416ad300` - 15 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `LDVC` | mLegalDocVersion | `05 20 28 00` |
 | `TCOL` | mLegalDocContentLength | `15 18 10 00` |
@@ -126,11 +128,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `OPT3` | mThirdPartyOptin | `10 18 31 00` |
 | `PASS` | mPassword | `05 00 20 00` |
 
-## (nienazwana tablica @ 0x0001416ad4f0)
+## (unnamed table @ 0x0001416ad4f0)
 
-`0x0001416ad4f0` - 5 pol
+`0x0001416ad4f0` - 5 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `BID ` | mBlazeId | `18 18 10 00` |
 | `BIDL` | mListMemberIdVector | `02 18 40 00` |
@@ -138,32 +140,32 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `LID ` | mListIdentification | `0a 18 18 00` |
 | `VALD` | mValidateDelete | `0e 00 9c 00` |
 
-## (nienazwana tablica @ 0x0001416ad588)
+## (unnamed table @ 0x0001416ad588)
 
-`0x0001416ad588` - 4 pol
+`0x0001416ad588` - 4 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `LIST` | mList | `02 00 10 00` |
 | `BID ` | mMemberBlazeId | `18 18 60 00` |
 | `LBID` | mOwnersBlazeIds | `0a 18 10 00` |
 | `LID ` | mListIdentification | `0a 00 68 00` |
 
-## (nienazwana tablica @ 0x0001416ad6c0)
+## (unnamed table @ 0x0001416ad6c0)
 
-`0x0001416ad6c0` - 3 pol
+`0x0001416ad6c0` - 3 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `ALST` | mListInfoVector | `02 18 10 00` |
 | `MXRC` | mMaxResultCount | `15 18 68 00` |
 | `OFRC` | mOffset | `15 00 6c 00` |
 
-## (nienazwana tablica @ 0x0001416ad710)
+## (unnamed table @ 0x0001416ad710)
 
-`0x0001416ad710` - 17 pol
+`0x0001416ad710` - 17 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `PRMF` | mFloatParamList | `02 18 98 00` |
 | `PRMI` | mInt32ParamList | `02 18 18 00` |
@@ -183,11 +185,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `BASE` | mBaseName | `05 20 10 00` |
 | `NSUG` | mNumberSuggestions | `15 00 60 00` |
 
-## (nienazwana tablica @ 0x0001416ad8c0)
+## (unnamed table @ 0x0001416ad8c0)
 
-`0x0001416ad8c0` - 12 pol
+`0x0001416ad8c0` - 12 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `BID ` | mOwnerId | `18 18 10 00` |
 | `LMID` | mListMemberInfoVector | `02 18 20 00` |
@@ -202,11 +204,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `USER` | mUser | `0a 18 10 00` |
 | `WINC` | mWincodes | `01 00 50 00` |
 
-## (nienazwana tablica @ 0x0001416ad9f8)
+## (unnamed table @ 0x0001416ad9f8)
 
-`0x0001416ad9f8` - 6 pol
+`0x0001416ad9f8` - 6 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `AUTH` | mAuthToken | `05 00 10 00` |
 | `BID ` | mOwnerBlazeId | `18 18 60 00` |
@@ -215,11 +217,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `GTAG` | mGamerTag | `05 20 18 00` |
 | `XUID` | mXuid | `17 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416adaa0)
+## (unnamed table @ 0x0001416adaa0)
 
-`0x0001416adaa0` - 14 pol
+`0x0001416adaa0` - 14 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `BDAY` | mBirthDay | `14 18 34 00` |
 | `BMON` | mBirthMonth | `14 18 30 00` |
@@ -236,21 +238,21 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `PROF` | mUserProfileInfo | `0a 18 98 00` |
 | `TSUI` | mTermsOfServiceUri | `05 00 60 00` |
 
-## (nienazwana tablica @ 0x0001416adc30)
+## (unnamed table @ 0x0001416adc30)
 
-`0x0001416adc30` - 3 pol
+`0x0001416adc30` - 3 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `AUTH` | mAuthCode | `05 20 10 00` |
 | `EXTB` | mExternalBlob | `08 10 28 00` |
 | `EXTI` | mExternalId | `17 00 20 00` |
 
-## (nienazwana tablica @ 0x0001416adc80)
+## (unnamed table @ 0x0001416adc80)
 
-`0x0001416adc80` - 9 pol
+`0x0001416adc80` - 9 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `CPWD` | mCurrentPassword | `05 20 78 00` |
 | `CTRY` | mCountry | `05 20 40 00` |
@@ -262,11 +264,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `PASS` | mPassword | `05 20 20 00` |
 | `PRNT` | mParentalEmail | `05 00 60 00` |
 
-## (nienazwana tablica @ 0x0001416add90)
+## (unnamed table @ 0x0001416add90)
 
-`0x0001416add90` - 16 pol
+`0x0001416add90` - 16 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `BOID` | mBlazeObjId | `0c 10 68 00` |
 | `FLGS` | mStatusFlags | `07 10 40 00` |
@@ -285,11 +287,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `SCRI` | mSubscribe | `0e 18 29 00` |
 | `SIZE` | mMaxSize | `15 00 24 00` |
 
-## (nienazwana tablica @ 0x0001416adf18)
+## (unnamed table @ 0x0001416adf18)
 
-`0x0001416adf18` - 8 pol
+`0x0001416adf18` - 8 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `INFO` | mAccountInfo | `0a 18 20 00` |
 | `PCTK` | mPCLoginToken | `05 00 10 00` |
@@ -300,19 +302,19 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `BID ` | mBlazeId | `18 18 10 00` |
 | `LID ` | mListIdentification | `0a 00 18 00` |
 
-## (nienazwana tablica @ 0x0001416adfe8)
+## (unnamed table @ 0x0001416adfe8)
 
-`0x0001416adfe8` - 1 pol
+`0x0001416adfe8` - 1 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `NLST` | mEntitlements | `02 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416ae000)
+## (unnamed table @ 0x0001416ae000)
 
-`0x0001416ae000` - 28 pol
+`0x0001416ae000` - 28 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `MAIL` | mEmail | `05 20 10 00` |
 | `PASS` | mPassword | `05 20 20 00` |
@@ -343,20 +345,20 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `PASS` | mPassword | `05 20 28 00` |
 | `XUID` | mXuid | `17 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416ae368)
+## (unnamed table @ 0x0001416ae368)
 
-`0x0001416ae368` - 2 pol
+`0x0001416ae368` - 2 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `BID ` | mBlazeId | `18 18 10 00` |
 | `LIDS` | mListIdentificationVector | `02 00 18 00` |
 
-## (nienazwana tablica @ 0x0001416ae3a0)
+## (unnamed table @ 0x0001416ae3a0)
 
-`0x0001416ae3a0` - 7 pol
+`0x0001416ae3a0` - 7 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `BUID` | mBlazeUserId | `18 18 20 00` |
 | `FRST` | mIsFirstLogin | `0f 18 40 00` |
@@ -366,11 +368,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `PDTL` | mPersonaDetails | `0a 18 50 00` |
 | `UID ` | mUserId | `16 00 28 00` |
 
-## (nienazwana tablica @ 0x0001416ae460)
+## (unnamed table @ 0x0001416ae460)
 
-`0x0001416ae460` - 11 pol
+`0x0001416ae460` - 11 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `MAXS` | mMaxLength | `13 18 12 00` |
 | `MIND` | mMinDigits | `13 18 18 00` |
@@ -384,11 +386,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `MXRC` | mMaxResultCount | `15 18 40 00` |
 | `OFRC` | mOffset | `15 00 44 00` |
 
-## (nienazwana tablica @ 0x0001416ae580)
+## (unnamed table @ 0x0001416ae580)
 
-`0x0001416ae580` - 6 pol
+`0x0001416ae580` - 6 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `CDKY` | mIsCdKey | `0f 18 41 00` |
 | `GNAM` | mGroupName | `05 20 30 00` |
@@ -397,11 +399,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `PNID` | mIsBindPersona | `0f 00 40 00` |
 | `TCKT` | mPS3Ticket | `08 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416ae620)
+## (unnamed table @ 0x0001416ae620)
 
-`0x0001416ae620` - 13 pol
+`0x0001416ae620` - 13 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `AGUP` | mCanAgeUp | `0f 18 b0 00` |
 | `ANON` | mIsAnonymous | `0f 18 b2 00` |
@@ -417,11 +419,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `GNLS` | mGroupNameList | `02 00 18 00` |
 | `NAME` | mOptInName | `05 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416ae790)
+## (unnamed table @ 0x0001416ae790)
 
-`0x0001416ae790` - 15 pol
+`0x0001416ae790` - 15 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `ANON` | mIsAnonymous | `0f 18 12 00` |
 | `NTOS` | mNeedsLegalDoc | `0f 18 13 00` |
@@ -439,30 +441,30 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `UNDR` | mIsUnderage | `0f 00 a1 00` |
 | `SKEY` | mSessionKey | `05 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416aea20)
+## (unnamed table @ 0x0001416aea20)
 
-`0x0001416aea20` - 4 pol
+`0x0001416aea20` - 4 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `ENTI` | mEntitlementInfo | `0a 18 10 00` |
 | `ISGR` | mIsGranted | `0f 00 c0 00` |
 | `PINF` | mPersonaInfo | `0a 18 18 00` |
 | `UID ` | mUserId | `16 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416aeb50)
+## (unnamed table @ 0x0001416aeb50)
 
-`0x0001416aeb50` - 1 pol
+`0x0001416aeb50` - 1 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `LMAP` | mListMembersVector | `02 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416aeb70)
+## (unnamed table @ 0x0001416aeb70)
 
-`0x0001416aeb70` - 5 pol
+`0x0001416aeb70` - 5 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `PRIV` | mPrivacyPolicyUri | `05 20 20 00` |
 | `TSUI` | mTermsOfServiceUri | `05 00 10 00` |
@@ -470,30 +472,30 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `CLID` | mClubId | `17 18 10 00` |
 | `RCID` | mRecordIdList | `02 00 18 00` |
 
-## (nienazwana tablica @ 0x0001416b4da8)
+## (unnamed table @ 0x0001416b4da8)
 
-`0x0001416b4da8` - 4 pol
+`0x0001416b4da8` - 4 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `BLID` | mBlazeId | `18 00 10 00` |
 | `CUNT` | mCount | `15 00 10 00` |
 | `CLID` | mClubId | `17 18 10 00` |
 | `PSWD` | mPassword | `05 00 18 00` |
 
-## (nienazwana tablica @ 0x0001416b4ef0)
+## (unnamed table @ 0x0001416b4ef0)
 
-`0x0001416b4ef0` - 1 pol
+`0x0001416b4ef0` - 1 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `BLIS` | mBlazeId | `18 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416b4f08)
+## (unnamed table @ 0x0001416b4f08)
 
-`0x0001416b4f08` - 7 pol
+`0x0001416b4f08` - 7 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `SUCC` | mMbSuccess | `0e 00 10 00` |
 | `ISSP` | mIsItemSpecial | `0e 18 1c 00` |
@@ -503,11 +505,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `TYPE` | mItemType | `11 00 10 00` |
 | `CLID` | mClubId | `17 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416b4fb0)
+## (unnamed table @ 0x0001416b4fb0)
 
-`0x0001416b4fb0` - 9 pol
+`0x0001416b4fb0` - 9 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `FDCD` | mFeedbackCode | `14 18 1c 00` |
 | `INTL` | mIntList | `02 18 20 00` |
@@ -519,21 +521,21 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `CLTG` | mTagList | `02 00 20 01` |
 | `PERM` | mPermissionsByAdminTypeMap | `01 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416b50c0)
+## (unnamed table @ 0x0001416b50c0)
 
-`0x0001416b50c0` - 3 pol
+`0x0001416b50c0` - 3 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `DATA` | mBlob | `08 10 20 00` |
 | `MIME` | mContentType | `05 00 10 00` |
 | `ROWS` | mSpeedwalls | `02 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416b5138)
+## (unnamed table @ 0x0001416b5138)
 
-`0x0001416b5138` - 6 pol
+`0x0001416b5138` - 6 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `SUCC` | mMbSuccess | `0e 00 10 00` |
 | `MESS` | mResponseMessage | `05 20 18 00` |
@@ -542,11 +544,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `IDLT` | mBlazeIdList | `02 00 10 00` |
 | `SUCC` | mPlayerOnlineList | `02 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416b5278)
+## (unnamed table @ 0x0001416b5278)
 
-`0x0001416b5278` - 21 pol
+`0x0001416b5278` - 21 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `SUCC` | mMbSuccess | `0e 00 10 00` |
 | `CMLS` | mClubMemberList | `02 18 10 00` |
@@ -570,27 +572,27 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `TIME` | mTimestamp | `05 00 20 00` |
 | `BLID` | mBlazeId | `18 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416b54a0)
+## (unnamed table @ 0x0001416b54a0)
 
-`0x0001416b54a0` - 1 pol
+`0x0001416b54a0` - 1 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `BLID` | mBlazeId | `18 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416b54b8)
+## (unnamed table @ 0x0001416b54b8)
 
-`0x0001416b54b8` - 1 pol
+`0x0001416b54b8` - 1 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `RESP` | mSuccess | `0e 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416b54d0)
+## (unnamed table @ 0x0001416b54d0)
 
-`0x0001416b54d0` - 12 pol
+`0x0001416b54d0` - 12 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `BLUS` | mBlazeUser | `0a 18 d8 00` |
 | `EXBL` | mExternalBlob | `08 10 c0 00` |
@@ -605,11 +607,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `PLST` | mPlaylist | `15 18 28 00` |
 | `TYPE` | mType | `05 00 18 00` |
 
-## (nienazwana tablica @ 0x0001416b5630)
+## (unnamed table @ 0x0001416b5630)
 
-`0x0001416b5630` - 13 pol
+`0x0001416b5630` - 13 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `BLID` | mBlazeId | `18 18 10 00` |
 | `LANG` | mLanguageCode | `15 00 18 00` |
@@ -625,11 +627,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `NWLI` | mLocalizedNewsList | `02 18 10 00` |
 | `TLPG` | mTotalPages | `13 00 68 00` |
 
-## (nienazwana tablica @ 0x0001416b5778)
+## (unnamed table @ 0x0001416b5778)
 
-`0x0001416b5778` - 9 pol
+`0x0001416b5778` - 9 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `ADMN` | mAdminEmail | `05 20 10 00` |
 | `MAP ` | mAdminTypeListByContextMap | `01 00 20 00` |
@@ -641,11 +643,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `MAP ` | mAdminTypeListByContextMap | `01 18 10 00` |
 | `PERM` | mPermissionsByAdminTypeMap | `01 00 78 00` |
 
-## (nienazwana tablica @ 0x0001416b5870)
+## (unnamed table @ 0x0001416b5870)
 
-`0x0001416b5870` - 6 pol
+`0x0001416b5870` - 6 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `SPWA` | mSpeedwalls | `02 00 10 00` |
 | `GENS` | mBillboardLeaderResponseList | `02 00 10 00` |
@@ -654,11 +656,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `AWNA` | mAwardName | `05 20 18 00` |
 | `AWUR` | mAwardURL | `05 00 28 00` |
 
-## (nienazwana tablica @ 0x0001416b5910)
+## (unnamed table @ 0x0001416b5910)
 
-`0x0001416b5910` - 7 pol
+`0x0001416b5910` - 7 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `RESP` | mInGameRealtimePresenceResponseList | `02 00 10 00` |
 | `EVNT` | mEvent | `15 18 10 00` |
@@ -668,11 +670,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `NUM ` | mNumNotifications | `11 00 18 00` |
 | `CLID` | mClubId | `17 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416b59c0)
+## (unnamed table @ 0x0001416b59c0)
 
-`0x0001416b59c0` - 30 pol
+`0x0001416b59c0` - 30 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `CIHA` | mCityHash | `17 18 30 00` |
 | `GECI` | mGeoCity | `05 20 10 00` |
@@ -705,19 +707,19 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `WPID` | mWeaponId | `17 18 18 00` |
 | `WPTY` | mWeaponType | `15 00 20 00` |
 
-## (nienazwana tablica @ 0x0001416b5d08)
+## (unnamed table @ 0x0001416b5d08)
 
-`0x0001416b5d08` - 1 pol
+`0x0001416b5d08` - 1 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `BLID` | mBlazeId | `18 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416b5d20)
+## (unnamed table @ 0x0001416b5d20)
 
-`0x0001416b5d20` - 7 pol
+`0x0001416b5d20` - 7 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `BLUS` | mRivalBlazeUser | `0a 18 88 00` |
 | `PENA` | mRivalName | `05 20 78 00` |
@@ -727,11 +729,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `RISC` | mRivalScore | `15 00 6c 00` |
 | `CMSL` | mClubMembershipList | `02 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416b5dd0)
+## (unnamed table @ 0x0001416b5dd0)
 
-`0x0001416b5dd0` - 15 pol
+`0x0001416b5dd0` - 15 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `AMOA` | mWeaponAAmmo | `10 18 20 01` |
 | `AMOB` | mWeaponBAmmo | `10 18 21 01` |
@@ -749,11 +751,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `WEPA` | mWeaponAId | `10 18 1e 01` |
 | `WEPB` | mWeaponBId | `10 00 1f 01` |
 
-## (nienazwana tablica @ 0x0001416b5f38)
+## (unnamed table @ 0x0001416b5f38)
 
-`0x0001416b5f38` - 44 pol
+`0x0001416b5f38` - 44 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `BLID` | mBlazeId | `18 18 10 00` |
 | `STTS` | mOverwatchStats | `01 00 18 00` |
@@ -800,19 +802,19 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `MBER` | mClubMember | `0a 18 30 00` |
 | `NAME` | mClubName | `05 00 20 00` |
 
-## (nienazwana tablica @ 0x0001416b64c8)
+## (unnamed table @ 0x0001416b64c8)
 
-`0x0001416b64c8` - 1 pol
+`0x0001416b64c8` - 1 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `BLID` | mBlazeId | `18 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416b6550)
+## (unnamed table @ 0x0001416b6550)
 
-`0x0001416b6550` - 45 pol
+`0x0001416b6550` - 45 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `STTS` | mOverwatchStats | `01 18 18 00` |
 | `SUCC` | mSuccess | `0e 00 10 00` |
@@ -860,22 +862,22 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `RCID` | mRecordId | `15 18 10 00` |
 | `RCNA` | mRecordName | `05 00 18 00` |
 
-## (nienazwana tablica @ 0x0001416b6ab0)
+## (unnamed table @ 0x0001416b6ab0)
 
-`0x0001416b6ab0` - 4 pol
+`0x0001416b6ab0` - 4 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `CIHA` | mCityHash | `17 18 30 00` |
 | `GECI` | mGeoCity | `05 20 10 00` |
 | `GECO` | mGeoCountry | `05 20 20 00` |
 | `ISSE` | mIsSet | `0e 00 38 00` |
 
-## (nienazwana tablica @ 0x0001416b6b50)
+## (unnamed table @ 0x0001416b6b50)
 
-`0x0001416b6b50` - 13 pol
+`0x0001416b6b50` - 13 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `AMOA` | mWeaponAAmmo | `10 18 1c 01` |
 | `AMOB` | mWeaponBAmmo | `10 18 1d 01` |
@@ -891,11 +893,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `WEPA` | mWeaponAId | `10 18 1a 01` |
 | `WEPB` | mWeaponBId | `10 00 1b 01` |
 
-## (nienazwana tablica @ 0x0001416b6c88)
+## (unnamed table @ 0x0001416b6c88)
 
-`0x0001416b6c88` - 8 pol
+`0x0001416b6c88` - 8 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `CNOU` | mNumOfUsersByRegion | `01 00 10 00` |
 | `CLID` | mRivalClubId | `17 18 10 00` |
@@ -906,11 +908,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `LATI` | mLastUpdateTime | `15 18 44 00` |
 | `META` | mMetaData | `05 00 30 00` |
 
-## (nienazwana tablica @ 0x0001416b6d90)
+## (unnamed table @ 0x0001416b6d90)
 
-`0x0001416b6d90` - 11 pol
+`0x0001416b6d90` - 11 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `ADDR` | mRecordAddress | `0a 18 10 00` |
 | `AUTH` | mAuthCredentials | `0a 00 70 00` |
@@ -926,9 +928,9 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 
 ## Blaze::ByteVault::User
 
-`0x0001416b6e98` - 7 pol
+`0x0001416b6e98` - 7 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `OTHR` | mOthers | `07 10 30 00` |
 | `OWNR` | mOwner | `07 10 10 00` |
@@ -938,11 +940,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `LVLS` | mLevelSpTargets | `02 00 18 00` |
 | `CLIN` | mClubsComponentInfo | `0a 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416b6f30)
+## (unnamed table @ 0x0001416b6f30)
 
-`0x0001416b6f30` - 19 pol
+`0x0001416b6f30` - 19 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `ADDR` | mRecordAddress | `0a 18 10 00` |
 | `AUTH` | mAuthCredentials | `0a 18 b0 00` |
@@ -964,11 +966,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `NLMP` | mLocalizedNewsListMap | `01 18 10 00` |
 | `TLPG` | mTotalPages | `13 00 78 00` |
 
-## (nienazwana tablica @ 0x0001416b7120)
+## (unnamed table @ 0x0001416b7120)
 
-`0x0001416b7120` - 10 pol
+`0x0001416b7120` - 10 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `ROWS` | mSpeedWall | `02 18 18 00` |
 | `SWID` | mSpeedWallId | `15 00 10 00` |
@@ -981,11 +983,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `UINP` | mUint64ParamList | `02 00 60 00` |
 | `ENTL` | mEntitlements | `01 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416b7210)
+## (unnamed table @ 0x0001416b7210)
 
-`0x0001416b7210` - 15 pol
+`0x0001416b7210` - 15 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `DSOO` | mDistanceToUnlockOverwatch | `14 18 14 00` |
 | `DSPF` | mDistancePerFuel | `14 18 10 00` |
@@ -1003,11 +1005,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `MXRC` | mMaxResultCount | `15 18 20 00` |
 | `OFFS` | mOffset | `15 00 24 00` |
 
-## (nienazwana tablica @ 0x0001416b73a8)
+## (unnamed table @ 0x0001416b73a8)
 
-`0x0001416b73a8` - 7 pol
+`0x0001416b73a8` - 7 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `BLID` | mBlazeId | `18 18 10 00` |
 | `STTS` | mOverwatchStats | `01 00 18 00` |
@@ -1017,22 +1019,22 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `IMCS` | mAwardImgCheckSum | `14 18 28 00` |
 | `LUDT` | mLastUpdateTime | `15 00 30 00` |
 
-## (nienazwana tablica @ 0x0001416b7490)
+## (unnamed table @ 0x0001416b7490)
 
-`0x0001416b7490` - 4 pol
+`0x0001416b7490` - 4 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `RILI` | mRivalList | `02 18 78 00` |
 | `SPWA` | mSpeedWallIDToSpeedWallMap | `01 00 10 00` |
 | `CLID` | mClubId | `17 00 10 00` |
 | `SUCC` | mMbSuccess | `0e 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416b75d0)
+## (unnamed table @ 0x0001416b75d0)
 
-`0x0001416b75d0` - 9 pol
+`0x0001416b75d0` - 9 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `LOC ` | mLocation | `05 20 68 00` |
 | `RCIN` | mRecord | `0a 18 10 00` |
@@ -1044,11 +1046,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `CTCT` | mTotalCount | `15 18 18 00` |
 | `SQID` | mSequenceID | `15 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416b76c0)
+## (unnamed table @ 0x0001416b76c0)
 
-`0x0001416b76c0` - 6 pol
+`0x0001416b76c0` - 6 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `BLID` | mBlazeId | `18 18 10 00` |
 | `SWIS` | mSpeedWallIds | `02 18 18 00` |
@@ -1057,11 +1059,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `BLID` | mUserId | `18 18 18 00` |
 | `CLID` | mClubId | `17 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416b7750)
+## (unnamed table @ 0x0001416b7750)
 
-`0x0001416b7750` - 10 pol
+`0x0001416b7750` - 10 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `ALLE` | mAllRecordsEditable | `0e 18 20 00` |
 | `EDIT` | mEditableRecordNames | `02 18 28 00` |
@@ -1074,11 +1076,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `REPR` | mReports | `01 00 80 00` |
 | `RESP` | mSuccess | `0e 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416b7840)
+## (unnamed table @ 0x0001416b7840)
 
-`0x0001416b7840` - 13 pol
+`0x0001416b7840` - 13 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `MIME` | mContentType | `05 20 10 00` |
 | `SDAT` | mBlob | `05 00 20 00` |
@@ -1094,11 +1096,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `SUCC` | mMbSuccess | `0e 00 10 00` |
 | `RESP` | mInGameRichPresenceResponseList | `02 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416b7ab0)
+## (unnamed table @ 0x0001416b7ab0)
 
-`0x0001416b7ab0` - 7 pol
+`0x0001416b7ab0` - 7 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `BLID` | mBlazeId | `18 18 10 00` |
 | `DBG ` | mShowDebug | `0e 18 2c 00` |
@@ -1108,21 +1110,21 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `RDID` | mRoadId | `14 18 20 00` |
 | `VHID` | mVehicleId | `14 00 1c 00` |
 
-## (nienazwana tablica @ 0x0001416b7b58)
+## (unnamed table @ 0x0001416b7b58)
 
-`0x0001416b7b58` - 3 pol
+`0x0001416b7b58` - 3 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `SUCC` | mMbSuccess | `0e 00 10 00` |
 | `ROAD` | mRoad | `15 18 10 00` |
 | `ROWS` | mSpeedwall | `02 00 18 00` |
 
-## (nienazwana tablica @ 0x0001416b7bf8)
+## (unnamed table @ 0x0001416b7bf8)
 
-`0x0001416b7bf8` - 10 pol
+`0x0001416b7bf8` - 10 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `STTS` | mOverwatchStats | `01 18 18 00` |
 | `SUCC` | mSuccess | `0e 00 10 00` |
@@ -1135,11 +1137,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `RATE` | mDataRates | `0a 18 10 00` |
 | `RATM` | mDataRatesPerCategoryPerContext | `01 00 50 00` |
 
-## (nienazwana tablica @ 0x0001416b7d20)
+## (unnamed table @ 0x0001416b7d20)
 
-`0x0001416b7d20` - 8 pol
+`0x0001416b7d20` - 8 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `ADDR` | mRecordAddress | `0a 18 10 00` |
 | `AUTH` | mAuthCredentials | `0a 18 80 00` |
@@ -1150,22 +1152,22 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `BLID` | mBlazeId | `18 18 10 00` |
 | `GLOB` | mGetGlobal | `0e 00 18 00` |
 
-## (nienazwana tablica @ 0x0001416b7e10)
+## (unnamed table @ 0x0001416b7e10)
 
-`0x0001416b7e10` - 4 pol
+`0x0001416b7e10` - 4 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `BLID` | mBlazeId | `18 18 10 00` |
 | `DBG ` | mShowDebug | `0e 18 58 00` |
 | `PLID` | mPlayerBlazeIdList | `02 00 18 00` |
 | `BANS` | mUserIdToBanStatusMap | `01 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416b7e70)
+## (unnamed table @ 0x0001416b7e70)
 
-`0x0001416b7e70` - 8 pol
+`0x0001416b7e70` - 8 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `CBD ` | mNumOfClubsByDomain | `01 18 b0 00` |
 | `MBD ` | mNumOfClubMembersByDomain | `01 18 10 00` |
@@ -1176,11 +1178,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `TNC ` | mNumOfClubs | `15 18 58 01` |
 | `TOC ` | mNumOfOnlineClubs | `15 00 5c 01` |
 
-## (nienazwana tablica @ 0x0001416b7f70)
+## (unnamed table @ 0x0001416b7f70)
 
-`0x0001416b7f70` - 7 pol
+`0x0001416b7f70` - 7 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `LIST` | mRecords | `02 18 10 00` |
 | `TOTL` | mTotalCount | `15 00 68 00` |
@@ -1190,22 +1192,22 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `CBID` | mClubId | `17 18 10 00` |
 | `USID` | mUserIds | `02 00 18 00` |
 
-## (nienazwana tablica @ 0x0001416b8050)
+## (unnamed table @ 0x0001416b8050)
 
-`0x0001416b8050` - 4 pol
+`0x0001416b8050` - 4 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `BLID` | mBlazeId | `18 18 10 00` |
 | `PLSC` | mPlayerScore | `15 18 20 00` |
 | `RIBL` | mRivalBlazeId | `18 18 18 00` |
 | `RISC` | mRivalScore | `15 00 24 00` |
 
-## (nienazwana tablica @ 0x0001416b80b0)
+## (unnamed table @ 0x0001416b80b0)
 
-`0x0001416b80b0` - 6 pol
+`0x0001416b80b0` - 6 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `SUCC` | mSuccess | `0e 00 10 00` |
 | `HOTS` | mHotRecommendationsData | `02 18 c0 00` |
@@ -1214,11 +1216,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `CLID` | mClubId | `17 18 10 00` |
 | `PSWD` | mPassword | `05 00 18 00` |
 
-## (nienazwana tablica @ 0x0001416b8150)
+## (unnamed table @ 0x0001416b8150)
 
-`0x0001416b8150` - 26 pol
+`0x0001416b8150` - 26 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `BEST` | mBlazeIdToPlayedAgainstStatus | `01 18 20 00` |
 | `BLIS` | mBlazeId | `18 18 10 00` |
@@ -1247,11 +1249,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `INUI` | mIncludeUserId | `18 18 18 00` |
 | `PRMS` | mParams | `05 00 28 00` |
 
-## (nienazwana tablica @ 0x0001416b8440)
+## (unnamed table @ 0x0001416b8440)
 
-`0x0001416b8440` - 10 pol
+`0x0001416b8440` - 10 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `GUID` | mResponseGUID | `05 20 18 00` |
 | `SUCC` | mMbSuccess | `0e 00 10 00` |
@@ -1264,11 +1266,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `MOSM` | mStatus | `01 00 10 00` |
 | `INID` | mInvitationId | `15 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416b8580)
+## (unnamed table @ 0x0001416b8580)
 
-`0x0001416b8580` - 21 pol
+`0x0001416b8580` - 21 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `CAT ` | mCategoryName | `05 20 20 00` |
 | `CTXT` | mContext | `05 20 10 00` |
@@ -1292,11 +1294,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `DBG ` | mShowDebug | `0e 18 58 00` |
 | `GETP` | mFriendBlazeIdList | `02 00 18 00` |
 
-## (nienazwana tablica @ 0x0001416b87a0)
+## (unnamed table @ 0x0001416b87a0)
 
-`0x0001416b87a0` - 10 pol
+`0x0001416b87a0` - 10 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `BLUS` | mBlazeUser | `0a 18 10 00` |
 | `STAF` | mStatsFlt | `01 18 90 00` |
@@ -1309,11 +1311,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `CAT ` | mCategoryName | `05 20 20 00` |
 | `CTXT` | mContext | `05 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416b8928)
+## (unnamed table @ 0x0001416b8928)
 
-`0x0001416b8928` - 9 pol
+`0x0001416b8928` - 9 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `BLIS` | mFriendRecommendations | `02 00 10 00` |
 | `NLOS` | mLoss | `15 18 1c 00` |
@@ -1325,11 +1327,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `TITX` | mText | `05 20 10 00` |
 | `TSTM` | mTimestamp | `15 00 30 00` |
 
-## (nienazwana tablica @ 0x0001416b8a18)
+## (unnamed table @ 0x0001416b8a18)
 
-`0x0001416b8a18` - 9 pol
+`0x0001416b8a18` - 9 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `BLID` | mBlazeId | `18 18 10 00` |
 | `ROWS` | mPlaylist | `02 00 18 00` |
@@ -1341,11 +1343,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `URID` | mUserIds | `02 00 10 00` |
 | `MOML` | mMsgListMap | `01 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416b8b20)
+## (unnamed table @ 0x0001416b8b20)
 
-`0x0001416b8b20` - 17 pol
+`0x0001416b8b20` - 17 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `AWCN` | mAwardCount | `15 18 18 00` |
 | `CIMC` | mMemberCount | `15 18 10 00` |
@@ -1365,11 +1367,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `BLID` | mBlazeId | `18 18 10 00` |
 | `REPO` | mTdf | `06 00 18 00` |
 
-## (nienazwana tablica @ 0x0001416b8d40)
+## (unnamed table @ 0x0001416b8d40)
 
-`0x0001416b8d40` - 15 pol
+`0x0001416b8d40` - 15 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `BLID` | mBlazeId | `18 18 10 00` |
 | `GECI` | mGeoCity | `05 20 18 00` |
@@ -1387,11 +1389,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `RDID` | mRoadId | `14 18 20 00` |
 | `VHID` | mVehicleId | `14 00 1c 00` |
 
-## (nienazwana tablica @ 0x0001416b8f00)
+## (unnamed table @ 0x0001416b8f00)
 
-`0x0001416b8f00` - 5 pol
+`0x0001416b8f00` - 5 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `COP1` | mCustOpt1 | `15 18 10 00` |
 | `COP2` | mCustOpt2 | `15 18 14 00` |
@@ -1399,21 +1401,21 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `COP4` | mCustOpt4 | `15 18 1c 00` |
 | `COP5` | mCustOpt5 | `15 00 20 00` |
 
-## (nienazwana tablica @ 0x0001416b8f78)
+## (unnamed table @ 0x0001416b8f78)
 
-`0x0001416b8f78` - 3 pol
+`0x0001416b8f78` - 3 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `BLID` | mBlazeId | `18 00 10 00` |
 | `BLID` | mBlazeId | `18 18 10 00` |
 | `PLAY` | mPlaylistSimplified | `02 00 18 00` |
 
-## (nienazwana tablica @ 0x0001416b8fc0)
+## (unnamed table @ 0x0001416b8fc0)
 
-`0x0001416b8fc0` - 26 pol
+`0x0001416b8fc0` - 26 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `BLID` | mBlazeId | `18 18 10 00` |
 | `PLAY` | mPlaylist | `02 00 18 00` |
@@ -1442,21 +1444,21 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `ROWS` | mSpeedwall | `02 00 10 00` |
 | `CIST` | mClubInvList | `02 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416b9278)
+## (unnamed table @ 0x0001416b9278)
 
-`0x0001416b9278` - 3 pol
+`0x0001416b9278` - 3 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `SUCC` | mMbSuccess | `0e 00 10 00` |
 | `RATM` | mErrorsPerCategoryPerContext | `01 00 10 00` |
 | `INID` | mPetitionId | `15 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416b92c0)
+## (unnamed table @ 0x0001416b92c0)
 
-`0x0001416b92c0` - 6 pol
+`0x0001416b92c0` - 6 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `BLID` | mBlazeId | `18 18 10 00` |
 | `FRID` | mFriendBlazeId | `18 00 18 00` |
@@ -1465,11 +1467,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `CSET` | mClubSettings | `0a 18 28 00` |
 | `DMID` | mClubDomainId | `15 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416b9380)
+## (unnamed table @ 0x0001416b9380)
 
-`0x0001416b9380` - 8 pol
+`0x0001416b9380` - 8 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `ADDR` | mRecordAddress | `0a 18 10 00` |
 | `AUTH` | mAuthCredentials | `0a 18 78 00` |
@@ -1480,11 +1482,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `CLID` | mClubId | `17 18 10 00` |
 | `WIPS` | mWipeSet | `05 00 18 00` |
 
-## (nienazwana tablica @ 0x0001416b94a0)
+## (unnamed table @ 0x0001416b94a0)
 
-`0x0001416b94a0` - 7 pol
+`0x0001416b94a0` - 7 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `CLID` | mClubId | `17 18 10 00` |
 | `CLIN` | mClubInfo | `0a 18 38 01` |
@@ -1494,11 +1496,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `NAME` | mName | `05 00 18 00` |
 | `MCMP` | mCountMap | `01 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416b9550)
+## (unnamed table @ 0x0001416b9550)
 
-`0x0001416b9550` - 13 pol
+`0x0001416b9550` - 13 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `ISSP` | mIsItemSpecial | `0e 18 1c 00` |
 | `MEDL` | mTargetMedal | `14 18 20 00` |
@@ -1514,11 +1516,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `TYPE` | mItemType | `11 00 10 00` |
 | `SID ` | mServerId | `15 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416c39f0)
+## (unnamed table @ 0x0001416c39f0)
 
-`0x0001416c39f0` - 7 pol
+`0x0001416c39f0` - 7 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `AGKY` | mAggregateKeyValue | `16 18 68 00` |
 | `ENAG` | mEnableAggregation | `0f 18 60 00` |
@@ -1528,11 +1530,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `CLR ` | mClearBannerUrl | `0e 18 28 00` |
 | `SID ` | mServerId | `15 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416c3aa0)
+## (unnamed table @ 0x0001416c3aa0)
 
-`0x0001416c3aa0` - 6 pol
+`0x0001416c3aa0` - 6 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `ADRS` | mAddress | `05 20 10 00` |
 | `PORT` | mPort | `15 18 20 00` |
@@ -1541,11 +1543,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `CODE` | mResultCode | `13 18 10 00` |
 | `OFFS` | mOffendingString | `05 00 18 00` |
 
-## (nienazwana tablica @ 0x0001416c3b50)
+## (unnamed table @ 0x0001416c3b50)
 
-`0x0001416c3b50` - 35 pol
+`0x0001416c3b50` - 35 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `PSS ` | mPssConfig | `0a 18 10 00` |
 | `TELE` | mTelemetryServer | `0a 18 a0 00` |
@@ -1583,40 +1585,40 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `MDAT` | mMemberData | `0a 18 a8 03` |
 | `RDAT` | mRoomData | `0a 00 20 03` |
 
-## (nienazwana tablica @ 0x0001416c3ed8)
+## (unnamed table @ 0x0001416c3ed8)
 
-`0x0001416c3ed8` - 4 pol
+`0x0001416c3ed8` - 4 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `LDLS` | mRows | `02 00 10 00` |
 | `MID ` | mMatchId | `17 18 28 00` |
 | `PGID` | mPersistedGameId | `05 20 18 00` |
 | `UID ` | mAdminUserId | `18 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416c3f40)
+## (unnamed table @ 0x0001416c3f40)
 
-`0x0001416c3f40` - 2 pol
+`0x0001416c3f40` - 2 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `CMAC` | mMacAddress | `05 20 10 00` |
 | `SNAM` | mServiceName | `05 00 20 00` |
 
-## (nienazwana tablica @ 0x0001416c3f80)
+## (unnamed table @ 0x0001416c3f80)
 
-`0x0001416c3f80` - 2 pol
+`0x0001416c3f80` - 2 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `DATA` | mData | `05 20 20 00` |
 | `KEY ` | mKey | `05 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416c3fc0)
+## (unnamed table @ 0x0001416c3fc0)
 
-`0x0001416c3fc0` - 15 pol
+`0x0001416c3fc0` - 15 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `DISP` | mDisplayName | `05 20 20 00` |
 | `GMET` | mGameMetaData | `01 18 88 00` |
@@ -1634,30 +1636,30 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `SID ` | mServerId | `15 00 10 00` |
 | `RMSL` | mRoomDataList | `02 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416c4148)
+## (unnamed table @ 0x0001416c4148)
 
-`0x0001416c4148` - 3 pol
+`0x0001416c4148` - 3 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `STIM` | mServerTime | `15 00 10 00` |
 | `PGID` | mPersistedGameId | `05 00 10 00` |
 | `VMAP` | mSpecMap | `01 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416c4198)
+## (unnamed table @ 0x0001416c4198)
 
-`0x0001416c4198` - 2 pol
+`0x0001416c4198` - 2 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `KEY ` | mKey | `05 20 18 00` |
 | `UID ` | mUserId | `18 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416c41d8)
+## (unnamed table @ 0x0001416c41d8)
 
-`0x0001416c41d8` - 10 pol
+`0x0001416c41d8` - 10 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `TLST` | mFilteredTextList | `02 00 10 00` |
 | `ATTR` | mRoomAttributes | `01 18 40 00` |
@@ -1670,11 +1672,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `POPA` | mPopulationAttributes | `01 18 60 00` |
 | `POPM` | mPopulation | `01 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416c4310)
+## (unnamed table @ 0x0001416c4310)
 
-`0x0001416c4310` - 10 pol
+`0x0001416c4310` - 10 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `AGGR` | mEntityAggrList | `02 18 68 00` |
 | `STAT` | mEntityStatsList | `02 00 10 00` |
@@ -1687,20 +1689,20 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `KEY ` | mKey | `05 20 10 00` |
 | `NAME` | mName | `05 00 20 00` |
 
-## (nienazwana tablica @ 0x0001416c4418)
+## (unnamed table @ 0x0001416c4418)
 
-`0x0001416c4418` - 2 pol
+`0x0001416c4418` - 2 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `ACC ` | mAccept | `05 20 10 00` |
 | `SIR ` | mRequest | `0a 00 20 00` |
 
 ## Blaze::Util::UserText
 
-`0x0001416c4450` - 10 pol
+`0x0001416c4450` - 10 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `BOTT` | mShowAtBottomIfNotFound | `0e 18 a8 00` |
 | `CENT` | mCenter | `1b 18 30 00` |
@@ -1713,11 +1715,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `TIME` | mTime | `14 18 90 00` |
 | `USET` | mUserSetId | `0c 00 98 00` |
 
-## (nienazwana tablica @ 0x0001416c45a0)
+## (unnamed table @ 0x0001416c45a0)
 
-`0x0001416c45a0` - 11 pol
+`0x0001416c45a0` - 11 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `CDAT` | mClientData | `0a 18 a0 00` |
 | `CINF` | mClientInfo | `0a 18 10 00` |
@@ -1731,11 +1733,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `PRID` | mParentId | `15 18 10 00` |
 | `SDES` | mShortDesc | `05 00 38 00` |
 
-## (nienazwana tablica @ 0x0001416c46d0)
+## (unnamed table @ 0x0001416c46d0)
 
-`0x0001416c46d0` - 11 pol
+`0x0001416c46d0` - 11 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `DATA` | mData | `05 20 28 00` |
 | `KEY ` | mKey | `05 20 18 00` |
@@ -1749,11 +1751,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `VWID` | mViewId | `17 00 10 00` |
 | `UID ` | mUserId | `18 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416c47f0)
+## (unnamed table @ 0x0001416c47f0)
 
-`0x0001416c47f0` - 21 pol
+`0x0001416c47f0` - 21 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `CAPA` | mCapacity | `15 18 70 00` |
 | `CMET` | mClientMetaData | `01 18 f0 00` |
@@ -1777,11 +1779,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `RDAT` | mRoomData | `0a 18 10 04` |
 | `VDAT` | mViewData | `0a 00 f8 00` |
 
-## (nienazwana tablica @ 0x0001416c4a10)
+## (unnamed table @ 0x0001416c4a10)
 
-`0x0001416c4a10` - 33 pol
+`0x0001416c4a10` - 33 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `CNAM` | mCategoryName | `05 20 30 00` |
 | `DESC` | mDesc | `05 20 20 00` |
@@ -1817,11 +1819,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `UID ` | mUserId | `18 00 18 00` |
 | `UPDT` | mUpdates | `15 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416c4d70)
+## (unnamed table @ 0x0001416c4d70)
 
-`0x0001416c4d70` - 10 pol
+`0x0001416c4d70` - 10 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `ASCD` | mAscending | `0f 18 2c 01` |
 | `BNAM` | mBoardName | `05 20 38 00` |
@@ -1834,11 +1836,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `NAME` | mName | `05 20 28 00` |
 | `SNAM` | mStatName | `05 00 18 00` |
 
-## (nienazwana tablica @ 0x0001416c4e80)
+## (unnamed table @ 0x0001416c4e80)
 
-`0x0001416c4e80` - 11 pol
+`0x0001416c4e80` - 11 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `ENAM` | mEntityName | `05 20 40 00` |
 | `ENID` | mEntityId | `1b 18 18 00` |
@@ -1852,11 +1854,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `STAT` | mOtherStats | `02 18 68 00` |
 | `UATT` | mAttribute | `17 00 50 00` |
 
-## (nienazwana tablica @ 0x0001416c4f90)
+## (unnamed table @ 0x0001416c4f90)
 
-`0x0001416c4f90` - 31 pol
+`0x0001416c4f90` - 31 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `FILT` | mIncludeStatlessEntities | `0f 18 d8 00` |
 | `IDLS` | mListOfIds | `02 18 30 00` |
@@ -1890,11 +1892,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `UID ` | mUserId | `18 00 10 00` |
 | `CTID` | mCategoryId | `17 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416c52a0)
+## (unnamed table @ 0x0001416c52a0)
 
-`0x0001416c52a0` - 9 pol
+`0x0001416c52a0` - 9 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `COUN` | mCount | `14 18 30 00` |
 | `KSUM` | mKeyScopeNameValueMap | `01 18 38 00` |
@@ -1906,29 +1908,29 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `TIME` | mTime | `14 18 88 00` |
 | `USET` | mUserSetId | `0c 00 90 00` |
 
-## (nienazwana tablica @ 0x0001416c5378)
+## (unnamed table @ 0x0001416c5378)
 
-`0x0001416c5378` - 1 pol
+`0x0001416c5378` - 1 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `CFID` | mConfigSection | `05 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416c5398)
+## (unnamed table @ 0x0001416c5398)
 
-`0x0001416c5398` - 3 pol
+`0x0001416c5398` - 3 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `UTXT` | mTextList | `02 00 10 00` |
 | `ETYP` | mEntityType | `0b 10 10 00` |
 | `STAT` | mStatDescs | `02 00 18 00` |
 
-## (nienazwana tablica @ 0x0001416c53e0)
+## (unnamed table @ 0x0001416c53e0)
 
-`0x0001416c53e0` - 17 pol
+`0x0001416c53e0` - 17 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `CATG` | mCategory | `05 20 88 00` |
 | `DFLT` | mDefaultValue | `05 20 48 00` |
@@ -1948,11 +1950,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `SDES` | mShortDesc | `05 00 38 00` |
 | `GRPS` | mGroups | `02 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416c55d0)
+## (unnamed table @ 0x0001416c55d0)
 
-`0x0001416c55d0` - 26 pol
+`0x0001416c55d0` - 26 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `GRNM` | mGroupName | `05 20 18 00` |
 | `KEY ` | mKeyString | `05 20 28 00` |
@@ -1981,19 +1983,19 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `BZID` | mUserId | `18 18 10 00` |
 | `RMID` | mRoomId | `17 00 18 00` |
 
-## (nienazwana tablica @ 0x0001416c5870)
+## (unnamed table @ 0x0001416c5870)
 
-`0x0001416c5870` - 1 pol
+`0x0001416c5870` - 1 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `CONF` | mConfig | `01 00 60 00` |
 
-## (nienazwana tablica @ 0x0001416c5890)
+## (unnamed table @ 0x0001416c5890)
 
-`0x0001416c5890` - 18 pol
+`0x0001416c5890` - 18 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `AREM` | mAutoRemove | `0f 18 2c 01` |
 | `ATTR` | mAttributes | `01 18 88 00` |
@@ -2014,22 +2016,22 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `RMID` | mRoomId | `17 18 10 00` |
 | `UCRT` | mIsUserCreated | `0f 00 2d 01` |
 
-## (nienazwana tablica @ 0x0001416c5a68)
+## (unnamed table @ 0x0001416c5a68)
 
-`0x0001416c5a68` - 4 pol
+`0x0001416c5a68` - 4 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `KSIT` | mKeyScopesMap | `01 00 78 00` |
 | `ATTR` | mMemberAttributes | `01 18 20 00` |
 | `EID ` | mBlazeId | `18 18 18 00` |
 | `RMID` | mRoomId | `17 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416c5ac8)
+## (unnamed table @ 0x0001416c5ac8)
 
-`0x0001416c5ac8` - 11 pol
+`0x0001416c5ac8` - 11 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `NAME` | mName | `05 00 10 00` |
 | `GID ` | mGameId | `17 18 18 00` |
@@ -2043,11 +2045,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `SCHS` | mScheduledSpec | `0a 18 18 00` |
 | `SOID` | mScheduledId | `15 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416c5c70)
+## (unnamed table @ 0x0001416c5c70)
 
-`0x0001416c5c70` - 10 pol
+`0x0001416c5c70` - 10 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `AGGR` | mAggrFlags | `07 10 c8 00` |
 | `EID ` | mEntityIds | `02 18 20 00` |
@@ -2060,11 +2062,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `TIME` | mTime | `14 18 d8 00` |
 | `VID ` | mViewId | `15 00 c0 00` |
 
-## (nienazwana tablica @ 0x0001416c5d60)
+## (unnamed table @ 0x0001416c5d60)
 
-`0x0001416c5d60` - 14 pol
+`0x0001416c5d60` - 14 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `EID ` | mEntityId | `1b 18 10 00` |
 | `ETYP` | mEntityType | `0b 10 18 00` |
@@ -2081,11 +2083,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `VERS` | mMapVersion | `17 00 10 00` |
 | `SOID` | mScheduledId | `15 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416c5eb0)
+## (unnamed table @ 0x0001416c5eb0)
 
-`0x0001416c5eb0` - 9 pol
+`0x0001416c5eb0` - 9 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `ADRS` | mAddress | `05 20 10 00` |
 | `AMAX` | mMaxAchievEnumSize | `15 18 8c 00` |
@@ -2097,11 +2099,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `TIID` | mTitleId | `15 00 24 00` |
 | `ERKM` | mEntityRankMap | `01 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416c6070)
+## (unnamed table @ 0x0001416c6070)
 
-`0x0001416c6070` - 13 pol
+`0x0001416c6070` - 13 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `CHDE` | mNext2Last | `15 18 3c 00` |
 | `CHDS` | mFirstChild | `15 18 38 00` |
@@ -2117,20 +2119,20 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `CTID` | mCategoryId | `17 00 10 00` |
 | `SMAP` | mLocalizedStrings | `01 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416c6308)
+## (unnamed table @ 0x0001416c6308)
 
-`0x0001416c6308` - 2 pol
+`0x0001416c6308` - 2 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `LBID` | mBoardId | `14 18 20 00` |
 | `NAME` | mBoardName | `05 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416c6440)
+## (unnamed table @ 0x0001416c6440)
 
-`0x0001416c6440` - 15 pol
+`0x0001416c6440` - 15 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `ASRC` | mAuthenticationSource | `05 20 b8 01` |
 | `CIDS` | mComponentIds | `02 18 40 00` |
@@ -2148,11 +2150,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `USET` | mUserSetId | `0c 00 18 00` |
 | `053 ` | mLanguage | `01 00 00 00` |
 
-## (nienazwana tablica @ 0x0001416c6790)
+## (unnamed table @ 0x0001416c6790)
 
-`0x0001416c6790` - 9 pol
+`0x0001416c6790` - 9 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `ATTR` | mMemberAttributes | `01 18 20 00` |
 | `BZID` | mBlazeId | `18 18 10 00` |
@@ -2164,11 +2166,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `PTYP` | mPeriodType | `14 00 20 00` |
 | `CATS` | mCategories | `02 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416c6c70)
+## (unnamed table @ 0x0001416c6c70)
 
-`0x0001416c6c70` - 42 pol
+`0x0001416c6c70` - 42 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `UTXT` | mText | `05 00 10 00` |
 | `ATTR` | mRoomAttributes | `01 18 18 00` |
@@ -2213,11 +2215,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `PTYP` | mPeriodType | `14 00 24 00` |
 | `STRL` | mStringstoVerify | `02 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416c7510)
+## (unnamed table @ 0x0001416c7510)
 
-`0x0001416c7510` - 15 pol
+`0x0001416c7510` - 15 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `ADRS` | mAddress | `05 20 10 00` |
 | `ANON` | mIsAnonymous | `0f 18 84 00` |
@@ -2235,11 +2237,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `STIM` | mUseServerTime | `05 20 58 00` |
 | `SVNM` | mTelemetryServiceName | `05 00 a0 00` |
 
-## (nienazwana tablica @ 0x0001416c77b8)
+## (unnamed table @ 0x0001416c77b8)
 
-`0x0001416c77b8` - 20 pol
+`0x0001416c77b8` - 20 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `KSVL` | mKeyScopeValues | `01 00 10 00` |
 | `ATTR` | mMemberAttributes | `01 18 20 00` |
@@ -2262,11 +2264,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `ATKN` | mAuthToken | `05 20 10 00` |
 | `BODY` | mPayload | `0a 00 20 00` |
 
-## (nienazwana tablica @ 0x0001416c7a20)
+## (unnamed table @ 0x0001416c7a20)
 
-`0x0001416c7a20` - 17 pol
+`0x0001416c7a20` - 17 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `MAC ` | mMacAddress | `05 00 10 00` |
 | `VWID` | mViewId | `17 00 10 00` |
@@ -2286,11 +2288,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `VAL ` | mValue | `12 00 20 00` |
 | `GDAT` | mGameData | `02 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416d78c0)
+## (unnamed table @ 0x0001416d78c0)
 
-`0x0001416d78c0` - 8 pol
+`0x0001416d78c0` - 8 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `AID ` | mAccountId | `16 18 48 00` |
 | `ALOC` | mAccountLocale | `15 18 50 00` |
@@ -2301,29 +2303,29 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `ORIG` | mOriginPersonaId | `17 18 58 00` |
 | `PIDI` | mPidId | `16 00 60 00` |
 
-## (nienazwana tablica @ 0x0001416d7980)
+## (unnamed table @ 0x0001416d7980)
 
-`0x0001416d7980` - 3 pol
+`0x0001416d7980` - 3 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `CRIT` | mRoleEntryCriteriaMap | `01 18 10 00` |
 | `RCAP` | mRoleCapacity | `13 00 60 00` |
 | `ULST` | mUserIdentificationList | `02 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416d79c8)
+## (unnamed table @ 0x0001416d79c8)
 
-`0x0001416d79c8` - 1 pol
+`0x0001416d79c8` - 1 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `MOD ` | mCustomModRuleCriteria | `0a 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416d79e0)
+## (unnamed table @ 0x0001416d79e0)
 
-`0x0001416d79e0` - 8 pol
+`0x0001416d79e0` - 8 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `GID ` | mGameId | `17 18 10 00` |
 | `NTID` | mNewTeamId | `13 18 1a 00` |
@@ -2334,19 +2336,19 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `PLST` | mPlayerIds | `02 00 18 00` |
 | `LMAP` | mMachineLoadCapacityMap | `01 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416d7aa8)
+## (unnamed table @ 0x0001416d7aa8)
 
-`0x0001416d7aa8` - 1 pol
+`0x0001416d7aa8` - 1 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `RVAL` | mMatchedRankFlags | `11 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416d7ac0)
+## (unnamed table @ 0x0001416d7ac0)
 
-`0x0001416d7ac0` - 10 pol
+`0x0001416d7ac0` - 10 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `ADDR` | mAddress | `09 10 98 01` |
 | `BPS ` | mBestPingSiteAlias | `05 20 a0 00` |
@@ -2359,11 +2361,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `UATT` | mUserInfoAttribute | `17 18 d8 01` |
 | `ULST` | mBlazeObjectIdList | `02 00 60 00` |
 
-## (nienazwana tablica @ 0x0001416d7ba8)
+## (unnamed table @ 0x0001416d7ba8)
 
-`0x0001416d7ba8` - 5 pol
+`0x0001416d7ba8` - 5 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `THLD` | mMinFitThresholdName | `05 00 10 00` |
 | `ULST` | mUserIdList | `02 00 10 00` |
@@ -2371,19 +2373,19 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `THLS` | mThresholdNames | `02 18 20 00` |
 | `WGHT` | mWeight | `15 00 60 00` |
 
-## (nienazwana tablica @ 0x0001416d7c50)
+## (unnamed table @ 0x0001416d7c50)
 
-`0x0001416d7c50` - 1 pol
+`0x0001416d7c50` - 1 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `SKEY` | mSessionKey | `05 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416d7c70)
+## (unnamed table @ 0x0001416d7c70)
 
-`0x0001416d7c70` - 5 pol
+`0x0001416d7c70` - 5 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `ATTR` | mPlayerAttribs | `01 18 70 00` |
 | `GID ` | mGameId | `17 18 10 00` |
@@ -2391,11 +2393,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `CTID` | mComponentId | `13 00 10 00` |
 | `UID ` | mBlazeId | `18 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416d7cf0)
+## (unnamed table @ 0x0001416d7cf0)
 
-`0x0001416d7cf0` - 5 pol
+`0x0001416d7cf0` - 5 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `GAME` | mGameData | `0a 18 f0 04` |
 | `LFPJ` | mIsLockableForPreferredJoins | `0f 18 d0 05` |
@@ -2403,11 +2405,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `QUEU` | mGameQueue | `02 18 50 05` |
 | `REAS` | mGameSetupReason | `09 00 a8 05` |
 
-## (nienazwana tablica @ 0x0001416d7db0)
+## (unnamed table @ 0x0001416d7db0)
 
-`0x0001416d7db0` - 5 pol
+`0x0001416d7db0` - 5 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `AGN ` | mNumOfActiveGame | `15 18 14 00` |
 | `GACD` | mGameAttributesData | `02 18 20 00` |
@@ -2415,11 +2417,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `LSN ` | mNumOfLoggedSession | `15 18 10 00` |
 | `MMSN` | mNumOfMatchmakingSession | `15 00 1c 00` |
 
-## (nienazwana tablica @ 0x0001416d7e28)
+## (unnamed table @ 0x0001416d7e28)
 
-`0x0001416d7e28` - 14 pol
+`0x0001416d7e28` - 14 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `GID ` | mGameId | `17 00 10 00` |
 | `MLST` | mRegisteredMachineList | `02 00 10 00` |
@@ -2436,20 +2438,20 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `IGNO` | mIgnoreEntryCriteriaWithInvite | `0f 18 d0 00` |
 | `RCRT` | mRoleEntryCriteriaMap | `01 00 68 00` |
 
-## (nienazwana tablica @ 0x0001416d7f80)
+## (unnamed table @ 0x0001416d7f80)
 
-`0x0001416d7f80` - 2 pol
+`0x0001416d7f80` - 2 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `GMID` | mGameId | `17 18 10 00` |
 | `GMRG` | mGameModRegister | `15 00 18 00` |
 
-## (nienazwana tablica @ 0x0001416d7fb0)
+## (unnamed table @ 0x0001416d7fb0)
 
-`0x0001416d7fb0` - 9 pol
+`0x0001416d7fb0` - 9 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `FIT ` | mFitScore | `15 18 00 04` |
 | `GAM ` | mGameData | `0a 00 f8 03` |
@@ -2461,20 +2463,20 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `ROLE` | mPlayerRole | `05 20 28 00` |
 | `TIDX` | mPlayerTeamIndex | `13 00 20 00` |
 
-## (nienazwana tablica @ 0x0001416d8098)
+## (unnamed table @ 0x0001416d8098)
 
-`0x0001416d8098` - 2 pol
+`0x0001416d8098` - 2 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `FLGS` | mStatusFlags | `07 10 18 00` |
 | `ID  ` | mBlazeId | `18 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416d80c0)
+## (unnamed table @ 0x0001416d80c0)
 
-`0x0001416d80c0` - 7 pol
+`0x0001416d80c0` - 7 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `PCAP` | mMaxPlayerCapacity | `13 18 6a 00` |
 | `PCNT` | mDesiredPlayerCount | `13 18 68 00` |
@@ -2484,42 +2486,42 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `TID ` | mTeamId | `13 18 20 00` |
 | `TLST` | mTeamIdVector | `02 00 28 00` |
 
-## (nienazwana tablica @ 0x0001416d8170)
+## (unnamed table @ 0x0001416d8170)
 
-`0x0001416d8170` - 3 pol
+`0x0001416d8170` - 3 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `GID ` | mGameId | `17 18 10 00` |
 | `GNAM` | mGameName | `05 00 18 00` |
 | `MLST` | mMachineIdList | `02 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416d81c0)
+## (unnamed table @ 0x0001416d81c0)
 
-`0x0001416d81c0` - 4 pol
+`0x0001416d81c0` - 4 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `DATA` | mExtendedData | `0a 18 f0 01` |
 | `SUBS` | mSubscribed | `0f 18 00 02` |
 | `USID` | mUserId | `18 00 f8 01` |
 | `GID ` | mGameId | `17 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416d8220)
+## (unnamed table @ 0x0001416d8220)
 
-`0x0001416d8220` - 3 pol
+`0x0001416d8220` - 3 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `GID ` | mGameId | `17 18 10 00` |
 | `PDAT` | mJoiningPlayer | `0a 00 c0 01` |
 | `ID  ` | mBlazeId | `18 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416d8270)
+## (unnamed table @ 0x0001416d8270)
 
-`0x0001416d8270` - 5 pol
+`0x0001416d8270` - 5 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `NOMM` | mNumOfMatchmakingSessions | `15 00 10 00` |
 | `LAHE` | mLastAuthError | `05 20 20 00` |
@@ -2527,11 +2529,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `GID ` | mGameId | `17 18 10 00` |
 | `HOST` | mNewHostPlayer | `18 00 18 00` |
 
-## (nienazwana tablica @ 0x0001416d8370)
+## (unnamed table @ 0x0001416d8370)
 
-`0x0001416d8370` - 7 pol
+`0x0001416d8370` - 7 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `CRIT` | mEntryCriteriaMap | `01 18 18 00` |
 | `GMID` | mGameId | `17 18 10 00` |
@@ -2541,11 +2543,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `GLST` | mGameIds | `02 18 10 00` |
 | `PIDL` | mPersistedGameIdList | `02 00 50 00` |
 
-## (nienazwana tablica @ 0x0001416d8420)
+## (unnamed table @ 0x0001416d8420)
 
-`0x0001416d8420` - 6 pol
+`0x0001416d8420` - 6 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `GID ` | mGameId | `17 18 10 00` |
 | `NPSI` | mNpSessionId | `05 20 48 00` |
@@ -2554,11 +2556,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `CAP ` | mMaxResultCount | `15 18 20 00` |
 | `PREF` | mPrefixName | `05 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416d84b0)
+## (unnamed table @ 0x0001416d84b0)
 
-`0x0001416d84b0` - 5 pol
+`0x0001416d84b0` - 5 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `RMAP` | mRoleSizeMap | `01 18 18 00` |
 | `TID ` | mTeamId | `13 18 10 00` |
@@ -2566,55 +2568,55 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `MLST` | mMachineIdList | `02 00 10 00` |
 | `BANM` | mBannedMembers | `02 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416d86a8)
+## (unnamed table @ 0x0001416d86a8)
 
-`0x0001416d86a8` - 1 pol
+`0x0001416d86a8` - 1 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `ERR ` | mJoinErr | `15 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416d86c0)
+## (unnamed table @ 0x0001416d86c0)
 
-`0x0001416d86c0` - 2 pol
+`0x0001416d86c0` - 2 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `GID ` | mGameId | `17 18 10 00` |
 | `PIDL` | mPlayerIdList | `02 00 18 00` |
 
-## (nienazwana tablica @ 0x0001416d8770)
+## (unnamed table @ 0x0001416d8770)
 
-`0x0001416d8770` - 2 pol
+`0x0001416d8770` - 2 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `TMAX` | mMaxTeamSizeAccepted | `13 18 10 00` |
 | `TMIN` | mMinTeamSizeAccepted | `13 00 12 00` |
 
-## (nienazwana tablica @ 0x0001416d87a0)
+## (unnamed table @ 0x0001416d87a0)
 
-`0x0001416d87a0` - 2 pol
+`0x0001416d87a0` - 2 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `GID ` | mGameId | `17 18 10 00` |
 | `PID ` | mPlayerId | `18 00 18 00` |
 
-## (nienazwana tablica @ 0x0001416d87d0)
+## (unnamed table @ 0x0001416d87d0)
 
-`0x0001416d87d0` - 2 pol
+`0x0001416d87d0` - 2 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `DATA` | mExtendedData | `0a 18 58 02` |
 | `USER` | mUserInfo | `0a 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416d8800)
+## (unnamed table @ 0x0001416d8800)
 
-`0x0001416d8800` - 7 pol
+`0x0001416d8800` - 7 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `GID ` | mGameId | `17 18 10 00` |
 | `GSET` | mGameSettings | `07 00 18 00` |
@@ -2624,20 +2626,20 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `GID ` | mGameId | `17 18 10 00` |
 | `LGAM` | mSwapPlayers | `02 00 18 00` |
 
-## (nienazwana tablica @ 0x0001416d88b8)
+## (unnamed table @ 0x0001416d88b8)
 
-`0x0001416d88b8` - 2 pol
+`0x0001416d88b8` - 2 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `GREQ` | mCreateGameRequest | `0a 18 20 00` |
 | `MID ` | mMachineId | `05 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416d88f0)
+## (unnamed table @ 0x0001416d88f0)
 
-`0x0001416d88f0` - 6 pol
+`0x0001416d88f0` - 6 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `CDAT` | mCustomData | `08 10 20 00` |
 | `GID ` | mGameId | `17 18 10 00` |
@@ -2646,37 +2648,37 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `GRP ` | mUserSetId | `0c 10 78 00` |
 | `USER` | mUser | `0a 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416d8978)
+## (unnamed table @ 0x0001416d8978)
 
-`0x0001416d8978` - 2 pol
+`0x0001416d8978` - 2 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `GID ` | mGameId | `17 18 10 00` |
 | `PID ` | mAdminPlayerId | `18 00 18 00` |
 
-## (nienazwana tablica @ 0x0001416d89a8)
+## (unnamed table @ 0x0001416d89a8)
 
-`0x0001416d89a8` - 1 pol
+`0x0001416d89a8` - 1 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `BUID` | mUserId | `18 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416d89c0)
+## (unnamed table @ 0x0001416d89c0)
 
-`0x0001416d89c0` - 2 pol
+`0x0001416d89c0` - 2 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `ATTR` | mGameAttributes | `01 18 18 00` |
 | `GID ` | mGameId | `17 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416d89f0)
+## (unnamed table @ 0x0001416d89f0)
 
-`0x0001416d89f0` - 15 pol
+`0x0001416d89f0` - 15 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `ISSG` | mIsSingleGroupMatch | `11 18 10 00` |
 | `PCAP` | mMaxPlayerCapacity | `13 18 2a 00` |
@@ -2694,40 +2696,40 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `UFAT` | mUserFirstAuthTime | `16 18 10 00` |
 | `ULAT` | mUserLastAuthTime | `16 00 18 00` |
 
-## (nienazwana tablica @ 0x0001416d8b70)
+## (unnamed table @ 0x0001416d8b70)
 
-`0x0001416d8b70` - 4 pol
+`0x0001416d8b70` - 4 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `ATTN` | mAttributeName | `05 20 10 00` |
 | `ATTV` | mAttributevalue | `05 20 20 00` |
 | `NOFG` | mNumOfGames | `15 18 30 00` |
 | `NOFP` | mNumOfPlayers | `15 00 34 00` |
 
-## (nienazwana tablica @ 0x0001416d8be8)
+## (unnamed table @ 0x0001416d8be8)
 
-`0x0001416d8be8` - 2 pol
+`0x0001416d8be8` - 2 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `GID ` | mGameId | `17 00 10 00` |
 | `LGAM` | mGames | `02 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416d8c18)
+## (unnamed table @ 0x0001416d8c18)
 
-`0x0001416d8c18` - 2 pol
+`0x0001416d8c18` - 2 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `GRID` | mUserGroupId | `0c 10 10 00` |
 | `RPVC` | mRequiresClientVersionCheck | `0f 00 20 00` |
 
-## (nienazwana tablica @ 0x0001416d8c40)
+## (unnamed table @ 0x0001416d8c40)
 
-`0x0001416d8c40` - 5 pol
+`0x0001416d8c40` - 5 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `ASIL` | mMatchmakingAsyncStatusList | `02 18 20 00` |
 | `MSID` | mMatchmakingSessionId | `17 18 18 00` |
@@ -2735,60 +2737,60 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `GID ` | mGameId | `17 18 10 00` |
 | `LGAM` | mSwapPlayersTeam | `02 00 18 00` |
 
-## (nienazwana tablica @ 0x0001416d8cb8)
+## (unnamed table @ 0x0001416d8cb8)
 
-`0x0001416d8cb8` - 3 pol
+`0x0001416d8cb8` - 3 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `GID ` | mGameId | `17 18 10 00` |
 | `REX ` | mJoinedReservedExternalPlayers | `02 00 18 00` |
 | `BUID` | mUserId | `18 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416d8d08)
+## (unnamed table @ 0x0001416d8d08)
 
-`0x0001416d8d08` - 2 pol
+`0x0001416d8d08` - 2 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `RSTR` | mTeamRoster | `02 18 18 00` |
 | `TID ` | mTeamId | `13 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416d8d40)
+## (unnamed table @ 0x0001416d8d40)
 
-`0x0001416d8d40` - 3 pol
+`0x0001416d8d40` - 3 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `ATTR` | mPlayerAttributes | `01 18 20 00` |
 | `GID ` | mGameId | `17 18 10 00` |
 | `PID ` | mPlayerId | `18 00 18 00` |
 
-## (nienazwana tablica @ 0x0001416d8d88)
+## (unnamed table @ 0x0001416d8d88)
 
-`0x0001416d8d88` - 3 pol
+`0x0001416d8d88` - 3 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `PMAX` | mMaxPlayerCountAccepted | `15 18 14 00` |
 | `PMIN` | mMinPlayerCountAccepted | `15 00 10 00` |
 | `BUID` | mUserId | `18 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416d8dd0)
+## (unnamed table @ 0x0001416d8dd0)
 
-`0x0001416d8dd0` - 3 pol
+`0x0001416d8dd0` - 3 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `GID ` | mGameId | `17 18 10 00` |
 | `PHID` | mPlatformHostId | `18 18 20 00` |
 | `PHST` | mPlatformHostSlotId | `11 00 18 00` |
 
-## (nienazwana tablica @ 0x0001416d8e18)
+## (unnamed table @ 0x0001416d8e18)
 
-`0x0001416d8e18` - 5 pol
+`0x0001416d8e18` - 5 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `GID ` | mGameId | `17 00 10 00` |
 | `CAP ` | mMaxPlayerCapacity | `15 18 10 00` |
@@ -2796,11 +2798,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `VSTR` | mGameProtocolVersionString | `05 00 28 00` |
 | `USID` | mUserSetId | `0c 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416d8e98)
+## (unnamed table @ 0x0001416d8e98)
 
-`0x0001416d8e98` - 8 pol
+`0x0001416d8e98` - 8 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `DATA` | mGameData | `0a 00 f0 04` |
 | `GID ` | mGameId | `17 18 10 00` |
@@ -2811,11 +2813,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `GID ` | mGameId | `17 18 10 00` |
 | `PID ` | mPlayerId | `18 00 18 00` |
 
-## (nienazwana tablica @ 0x0001416d9070)
+## (unnamed table @ 0x0001416d9070)
 
-`0x0001416d9070` - 28 pol
+`0x0001416d9070` - 28 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `AGAM` | mAvoidGamesRuleCriteria | `0a 18 00 03` |
 | `APLR` | mAvoidPlayersRuleCriteria | `0a 18 50 03` |
@@ -2846,11 +2848,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `VIAB` | mHostViabilityRulePrefs | `0a 18 a0 01` |
 | `VIRT` | mVirtualGameRulePrefs | `0a 00 38 00` |
 
-## (nienazwana tablica @ 0x0001416d9310)
+## (unnamed table @ 0x0001416d9310)
 
-`0x0001416d9310` - 6 pol
+`0x0001416d9310` - 6 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `PCAP` | mMaxPlayerCount | `13 18 12 00` |
 | `PMIN` | mMinPlayerCount | `13 00 10 00` |
@@ -2859,22 +2861,22 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `NGD ` | mNumberOfGamesToBeDownloaded | `15 00 1c 00` |
 | `BUID` | mOnline | `0f 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416d93a0)
+## (unnamed table @ 0x0001416d93a0)
 
-`0x0001416d93a0` - 4 pol
+`0x0001416d93a0` - 4 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `GID ` | mGameId | `17 18 10 00` |
 | `GRID` | mGameReportingId | `17 00 18 00` |
 | `GMID` | mGameId | `17 18 10 00` |
 | `GMRG` | mGameModRegister | `15 00 18 00` |
 
-## (nienazwana tablica @ 0x0001416d94b0)
+## (unnamed table @ 0x0001416d94b0)
 
-`0x0001416d94b0` - 21 pol
+`0x0001416d94b0` - 21 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `CGS ` | mCreateGameStatus | `0a 18 28 02` |
 | `CUST` | mCustomAsynStatus | `0a 18 d0 02` |
@@ -2898,33 +2900,33 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `UEDS` | mUEDRuleStatusMap | `01 18 68 02` |
 | `VGRS` | mVirtualGameRuleStatus | `0a 00 f0 00` |
 
-## (nienazwana tablica @ 0x0001416d96a8)
+## (unnamed table @ 0x0001416d96a8)
 
-`0x0001416d96a8` - 4 pol
+`0x0001416d96a8` - 4 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `ULST` | mUserDataList | `02 00 10 00` |
 | `ETOK` | mCachedExternalSessionToken | `05 20 20 00` |
 | `EXID` | mExternalId | `17 18 10 00` |
 | `IRES` | mReserved | `0f 00 18 00` |
 
-## (nienazwana tablica @ 0x0001416d9710)
+## (unnamed table @ 0x0001416d9710)
 
-`0x0001416d9710` - 4 pol
+`0x0001416d9710` - 4 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `GID ` | mGameId | `17 00 10 00` |
 | `NQOS` | mNetworkQosData | `0a 00 10 00` |
 | `GLID` | mListId | `17 00 10 00` |
 | `CVAR` | mClientData | `06 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416d9860)
+## (unnamed table @ 0x0001416d9860)
 
-`0x0001416d9860` - 9 pol
+`0x0001416d9860` - 9 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `GID ` | mGameId | `17 00 10 00` |
 | `CNTY` | mCountry | `05 20 30 00` |
@@ -2936,19 +2938,19 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `OVER` | mIsOverridden | `0f 18 51 00` |
 | `ST  ` | mStateRegion | `05 00 40 00` |
 
-## (nienazwana tablica @ 0x0001416d9968)
+## (unnamed table @ 0x0001416d9968)
 
-`0x0001416d9968` - 1 pol
+`0x0001416d9968` - 1 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `GID ` | mGameId | `17 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416d99e0)
+## (unnamed table @ 0x0001416d99e0)
 
-`0x0001416d99e0` - 11 pol
+`0x0001416d99e0` - 11 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `CRIT` | mRoleCriteriaMap | `01 18 10 00` |
 | `RCRT` | mMultiRoleCriteria | `01 00 78 00` |
@@ -2962,58 +2964,58 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `PPSR` | mPingSiteRule | `0a 18 68 00` |
 | `RLST` | mPredefinedRules | `02 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416d9b48)
+## (unnamed table @ 0x0001416d9b48)
 
-`0x0001416d9b48` - 4 pol
+`0x0001416d9b48` - 4 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `THLD` | mMinFitThresholdName | `05 00 10 00` |
 | `GIDL` | mGameIdList | `02 18 10 00` |
 | `PIDL` | mPersistedGameIdList | `02 00 50 00` |
 | `GID ` | mGameId | `17 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416d9c30)
+## (unnamed table @ 0x0001416d9c30)
 
-`0x0001416d9c30` - 1 pol
+`0x0001416d9c30` - 1 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `GID ` | mGameId | `17 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416d9c48)
+## (unnamed table @ 0x0001416d9c48)
 
-`0x0001416d9c48` - 1 pol
+`0x0001416d9c48` - 1 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `GNUM` | mNumOfGames | `15 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416d9c60)
+## (unnamed table @ 0x0001416d9c60)
 
-`0x0001416d9c60` - 4 pol
+`0x0001416d9c60` - 4 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `COMP` | mComponent | `13 18 14 00` |
 | `KEY ` | mKey | `13 18 12 00` |
 | `OPER` | mRemove | `0f 18 10 00` |
 | `VALU` | mValue | `16 00 18 00` |
 
-## (nienazwana tablica @ 0x0001416d9cc8)
+## (unnamed table @ 0x0001416d9cc8)
 
-`0x0001416d9cc8` - 2 pol
+`0x0001416d9cc8` - 2 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `PID ` | mPlayerId | `18 18 10 00` |
 | `ROLE` | mPlayerRole | `05 00 18 00` |
 
-## (nienazwana tablica @ 0x0001416d9d00)
+## (unnamed table @ 0x0001416d9d00)
 
-`0x0001416d9d00` - 7 pol
+`0x0001416d9d00` - 7 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `NAME` | mRuleName | `05 20 10 00` |
 | `SKMN` | mMinSkillAccepted | `16 18 20 00` |
@@ -3023,27 +3025,27 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `COID` | mCorrelationId | `05 00 10 00` |
 | `PELM` | mPermissionsByComponent | `01 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416d9eb8)
+## (unnamed table @ 0x0001416d9eb8)
 
-`0x0001416d9eb8` - 1 pol
+`0x0001416d9eb8` - 1 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `VALU` | mMatchedValues | `02 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416d9ed8)
+## (unnamed table @ 0x0001416d9ed8)
 
-`0x0001416d9ed8` - 1 pol
+`0x0001416d9ed8` - 1 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `DNF ` | mMaxDNFValue | `16 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416d9ef0)
+## (unnamed table @ 0x0001416d9ef0)
 
-`0x0001416d9ef0` - 5 pol
+`0x0001416d9ef0` - 5 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `COID` | mExternalSessionCorrelationId | `05 20 48 00` |
 | `ESNM` | mExternalSessionName | `05 20 38 00` |
@@ -3051,50 +3053,50 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `SCID` | mScid | `05 20 18 00` |
 | `STMN` | mExternalSessionTemplateName | `05 00 28 00` |
 
-## (nienazwana tablica @ 0x0001416d9ff0)
+## (unnamed table @ 0x0001416d9ff0)
 
-`0x0001416d9ff0` - 4 pol
+`0x0001416d9ff0` - 4 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `DONE` | mIsFinalUpdate | `11 18 18 00` |
 | `GLID` | mListId | `17 18 10 00` |
 | `REMV` | mRemovedGameList | `02 18 20 00` |
 | `UPDT` | mUpdatedGames | `02 00 60 00` |
 
-## (nienazwana tablica @ 0x0001416da050)
+## (unnamed table @ 0x0001416da050)
 
-`0x0001416da050` - 2 pol
+`0x0001416da050` - 2 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `ATTR` | mGameAttribs | `01 18 18 00` |
 | `GID ` | mGameId | `17 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416da080)
+## (unnamed table @ 0x0001416da080)
 
-`0x0001416da080` - 1 pol
+`0x0001416da080` - 1 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `HWFG` | mHardwareFlags | `07 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416da0c0)
+## (unnamed table @ 0x0001416da0c0)
 
-`0x0001416da0c0` - 4 pol
+`0x0001416da0c0` - 4 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `GID ` | mGameId | `17 18 10 00` |
 | `NPSI` | mNpSessionId | `05 20 48 00` |
 | `XNNC` | mXnetNonce | `08 10 18 00` |
 | `XSES` | mXnetSession | `08 00 30 00` |
 
-## (nienazwana tablica @ 0x0001416da168)
+## (unnamed table @ 0x0001416da168)
 
-`0x0001416da168` - 6 pol
+`0x0001416da168` - 6 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `ATTR` | mGameSettings | `07 10 18 00` |
 | `GID ` | mGameId | `17 00 10 00` |
@@ -3103,21 +3105,21 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `UREA` | mUpdateReason | `15 18 28 00` |
 | `VALU` | mValue | `17 00 20 00` |
 
-## (nienazwana tablica @ 0x0001416da1f0)
+## (unnamed table @ 0x0001416da1f0)
 
-`0x0001416da1f0` - 3 pol
+`0x0001416da1f0` - 3 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `EVST` | mEvaluateStatus | `07 10 18 00` |
 | `MMSN` | mNumOfMatchmakingSession | `15 18 10 00` |
 | `NOMP` | mNumOfMatchedPlayers | `15 00 14 00` |
 
-## (nienazwana tablica @ 0x0001416da230)
+## (unnamed table @ 0x0001416da230)
 
-`0x0001416da230` - 6 pol
+`0x0001416da230` - 6 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `NAME` | mRuleName | `05 20 10 00` |
 | `THLD` | mMinFitThresholdName | `05 20 20 00` |
@@ -3126,55 +3128,55 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `NGD ` | mNumberOfGamesToBeDownloaded | `15 18 14 00` |
 | `UPDT` | mGameList | `02 00 18 00` |
 
-## (nienazwana tablica @ 0x0001416da2d8)
+## (unnamed table @ 0x0001416da2d8)
 
-`0x0001416da2d8` - 1 pol
+`0x0001416da2d8` - 1 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `MSG ` | mErrMessage | `05 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416da2f8)
+## (unnamed table @ 0x0001416da2f8)
 
-`0x0001416da2f8` - 2 pol
+`0x0001416da2f8` - 2 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `MDNF` | mMyDNFValue | `16 18 18 00` |
 | `XDNF` | mMaxDNFValue | `16 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416da330)
+## (unnamed table @ 0x0001416da330)
 
-`0x0001416da330` - 3 pol
+`0x0001416da330` - 3 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `EDAT` | mExtendedData | `0a 18 78 00` |
 | `FLGS` | mStatusFlags | `07 10 58 02` |
 | `USER` | mUserInfo | `0a 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416da370)
+## (unnamed table @ 0x0001416da370)
 
-`0x0001416da370` - 1 pol
+`0x0001416da370` - 1 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `MSID` | mMatchmakingSessionId | `17 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416da388)
+## (unnamed table @ 0x0001416da388)
 
-`0x0001416da388` - 2 pol
+`0x0001416da388` - 2 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `NAME` | mRuleName | `05 20 10 00` |
 | `VALU` | mMatchedValues | `02 00 20 00` |
 
-## (nienazwana tablica @ 0x0001416da480)
+## (unnamed table @ 0x0001416da480)
 
-`0x0001416da480` - 5 pol
+`0x0001416da480` - 5 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `CAP ` | mSlotCapacities | `02 18 18 00` |
 | `GID ` | mGameId | `17 18 10 00` |
@@ -3182,89 +3184,89 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `RNFO` | mRoleInformation | `0a 18 b0 00` |
 | `TRST` | mTeamRosters | `02 00 58 00` |
 
-## (nienazwana tablica @ 0x0001416da4f8)
+## (unnamed table @ 0x0001416da4f8)
 
-`0x0001416da4f8` - 3 pol
+`0x0001416da4f8` - 3 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `THLD` | mMinFitThresholdName | `05 00 10 00` |
 | `GAME` | mGame | `0a 18 f0 04` |
 | `PROS` | mGameRoster | `02 00 f8 04` |
 
-## (nienazwana tablica @ 0x0001416da550)
+## (unnamed table @ 0x0001416da550)
 
-`0x0001416da550` - 4 pol
+`0x0001416da550` - 4 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `CONG` | mConnectionGroupId | `17 18 20 00` |
 | `CSID` | mConnectionSlotId | `11 18 28 00` |
 | `HPID` | mPlayerId | `18 18 10 00` |
 | `HSLT` | mSlotId | `11 00 18 00` |
 
-## (nienazwana tablica @ 0x0001416da5f0)
+## (unnamed table @ 0x0001416da5f0)
 
-`0x0001416da5f0` - 2 pol
+`0x0001416da5f0` - 2 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `MODS` | mMods | `15 18 10 00` |
 | `THLD` | mMinFitThresholdName | `05 00 18 00` |
 
-## (nienazwana tablica @ 0x0001416da658)
+## (unnamed table @ 0x0001416da658)
 
-`0x0001416da658` - 3 pol
+`0x0001416da658` - 3 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `CPCM` | mConnectedPlayerCounts | `01 00 10 00` |
 | `GID ` | mGameId | `17 18 10 00` |
 | `PID ` | mPlayerId | `18 00 18 00` |
 
-## (nienazwana tablica @ 0x0001416ecc78)
+## (unnamed table @ 0x0001416ecc78)
 
-`0x0001416ecc78` - 2 pol
+`0x0001416ecc78` - 2 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `MAP ` | mMapId | `14 18 10 00` |
 | `MODE` | mMode | `05 00 18 00` |
 
-## (nienazwana tablica @ 0x0001416eccb0)
+## (unnamed table @ 0x0001416eccb0)
 
-`0x0001416eccb0` - 4 pol
+`0x0001416eccb0` - 4 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `LOSS` | mLosses | `13 18 12 00` |
 | `POIN` | mPoints | `13 18 16 00` |
 | `TIES` | mTies | `13 18 14 00` |
 | `WINS` | mWins | `13 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416ecd10)
+## (unnamed table @ 0x0001416ecd10)
 
-`0x0001416ecd10` - 2 pol
+`0x0001416ecd10` - 2 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `DUR ` | mDurationSec | `03 18 14 00` |
 | `TIME` | mReplayTimes | `15 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416ecd40)
+## (unnamed table @ 0x0001416ecd40)
 
-`0x0001416ecd40` - 2 pol
+`0x0001416ecd40` - 2 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `CLUB` | mClubReports | `01 18 78 00` |
 | `PLYR` | mPlayerReports | `01 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416ecd70)
+## (unnamed table @ 0x0001416ecd70)
 
-`0x0001416ecd70` - 5 pol
+`0x0001416ecd70` - 5 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `ISSG` | mIsSingleGroupMatch | `11 18 10 00` |
 | `PCAP` | mMaxPlayerCount | `13 18 2a 00` |
@@ -3272,11 +3274,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `PMIN` | mMinPlayerCount | `13 18 2c 00` |
 | `THLD` | mRangeOffsetListName | `05 00 18 00` |
 
-## (nienazwana tablica @ 0x0001416ecdf0)
+## (unnamed table @ 0x0001416ecdf0)
 
-`0x0001416ecdf0` - 6 pol
+`0x0001416ecdf0` - 6 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `DUR ` | mDurationSec | `03 18 14 00` |
 | `GNAM` | mGameName | `05 20 28 00` |
@@ -3285,158 +3287,158 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `RATG` | mRating | `14 18 3c 00` |
 | `TIME` | mReplayTimes | `15 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416ece98)
+## (unnamed table @ 0x0001416ece98)
 
-`0x0001416ece98` - 1 pol
+`0x0001416ece98` - 1 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `FCAP` | mFlagsCaptured | `15 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416eceb0)
+## (unnamed table @ 0x0001416eceb0)
 
-`0x0001416eceb0` - 3 pol
+`0x0001416eceb0` - 3 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `DETH` | mDeaths | `13 18 12 00` |
 | `FCAP` | mFlagsCaptured | `15 18 14 00` |
 | `KILL` | mKills | `13 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416ecef8)
+## (unnamed table @ 0x0001416ecef8)
 
-`0x0001416ecef8` - 2 pol
+`0x0001416ecef8` - 2 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `GAME` | mGameAttrs | `0a 18 78 00` |
 | `PLYR` | mPlayerReports | `01 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416ecf28)
+## (unnamed table @ 0x0001416ecf28)
 
-`0x0001416ecf28` - 2 pol
+`0x0001416ecf28` - 2 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `PMAX` | mMaxPlayerCountAccepted | `13 18 12 00` |
 | `PMIN` | mMinPlayerCountAccepted | `13 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416ecf58)
+## (unnamed table @ 0x0001416ecf58)
 
-`0x0001416ecf58` - 1 pol
+`0x0001416ecf58` - 1 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `THLD` | mMinFitThresholdName | `05 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416ecf78)
+## (unnamed table @ 0x0001416ecf78)
 
-`0x0001416ecf78` - 2 pol
+`0x0001416ecf78` - 2 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `GAME` | mGameAttrs | `0a 18 78 00` |
 | `PLYR` | mPlayerReports | `01 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416ecfa8)
+## (unnamed table @ 0x0001416ecfa8)
 
-`0x0001416ecfa8` - 1 pol
+`0x0001416ecfa8` - 1 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `DIST` | mMaxDistance | `15 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416ecfc0)
+## (unnamed table @ 0x0001416ecfc0)
 
-`0x0001416ecfc0` - 4 pol
+`0x0001416ecfc0` - 4 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `DESS` | mDesiredTotalPlayerSlots | `13 18 22 00` |
 | `MAXS` | mMaxTotalPlayerSlots | `13 18 24 00` |
 | `MINS` | mMinTotalPlayerSlots | `13 18 20 00` |
 | `THLD` | mRangeOffsetListName | `05 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416ed028)
+## (unnamed table @ 0x0001416ed028)
 
-`0x0001416ed028` - 2 pol
+`0x0001416ed028` - 2 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `GAME` | mGameAttrs | `0a 18 78 00` |
 | `PLYR` | mPlayerReports | `01 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416ed060)
+## (unnamed table @ 0x0001416ed060)
 
-`0x0001416ed060` - 4 pol
+`0x0001416ed060` - 4 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `DUR ` | mDurationSec | `03 18 14 00` |
 | `GNAM` | mGameName | `05 20 28 00` |
 | `MAP ` | mMapName | `05 20 18 00` |
 | `TIME` | mReplayTimes | `15 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416ed0d0)
+## (unnamed table @ 0x0001416ed0d0)
 
-`0x0001416ed0d0` - 2 pol
+`0x0001416ed0d0` - 2 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `GAME` | mGameAttrs | `0a 18 78 00` |
 | `PLYR` | mPlayerReports | `01 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416ed100)
+## (unnamed table @ 0x0001416ed100)
 
-`0x0001416ed100` - 3 pol
+`0x0001416ed100` - 3 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `FCAP` | mFlagsCaptured | `15 18 10 00` |
 | `LOC ` | mAccountLocale | `15 18 18 00` |
 | `RMR ` | mLeavingReason | `15 00 14 00` |
 
-## (nienazwana tablica @ 0x0001416ed178)
+## (unnamed table @ 0x0001416ed178)
 
-`0x0001416ed178` - 2 pol
+`0x0001416ed178` - 2 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `PMAX` | mMaxTotalPlayerSlotsAccepted | `13 18 12 00` |
 | `PMIN` | mMinTotalPlayerSlotsAccepted | `13 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416ed1d8)
+## (unnamed table @ 0x0001416ed1d8)
 
-`0x0001416ed1d8` - 1 pol
+`0x0001416ed1d8` - 1 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `SUBS` | mSearchString | `05 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416ed200)
+## (unnamed table @ 0x0001416ed200)
 
-`0x0001416ed200` - 4 pol
+`0x0001416ed200` - 4 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `DERV` | mCustomReport | `06 10 18 00` |
 | `DETH` | mDeaths | `13 18 12 00` |
 | `KILL` | mKills | `13 18 10 00` |
 | `WEPN` | mWeapon | `14 00 14 00` |
 
-## (nienazwana tablica @ 0x0001416ed258)
+## (unnamed table @ 0x0001416ed258)
 
-`0x0001416ed258` - 1 pol
+`0x0001416ed258` - 1 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `VVAL` | mMatchedVirtualizedFlags | `11 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416ed270)
+## (unnamed table @ 0x0001416ed270)
 
-`0x0001416ed270` - 7 pol
+`0x0001416ed270` - 7 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `DETH` | mDeaths | `13 18 12 00` |
 | `FCAP` | mFlagsCaptured | `15 18 14 00` |
@@ -3446,20 +3448,20 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `RSMP` | mResultMap | `01 18 30 00` |
 | `SKRP` | mSkippedReport | `06 00 18 00` |
 
-## (nienazwana tablica @ 0x0001416ed310)
+## (unnamed table @ 0x0001416ed310)
 
-`0x0001416ed310` - 2 pol
+`0x0001416ed310` - 2 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `MAXS` | mMaxFreePlayerSlots | `13 18 12 00` |
 | `MINS` | mMinFreePlayerSlots | `13 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416ed340)
+## (unnamed table @ 0x0001416ed340)
 
-`0x0001416ed340` - 5 pol
+`0x0001416ed340` - 5 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `DERV` | mCustomReport | `06 10 18 00` |
 | `DETH` | mDeaths | `13 18 12 00` |
@@ -3467,29 +3469,29 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `LOC ` | mAccountLocale | `15 18 34 00` |
 | `RMR ` | mLeavingReason | `15 00 30 00` |
 
-## (nienazwana tablica @ 0x0001416ed3b0)
+## (unnamed table @ 0x0001416ed3b0)
 
-`0x0001416ed3b0` - 3 pol
+`0x0001416ed3b0` - 3 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `CLUB` | mClubReports | `01 18 10 00` |
 | `OFFS` | mOffensiveAthleteReports | `01 18 e0 00` |
 | `PLYR` | mPlayerReports | `01 00 78 00` |
 
-## (nienazwana tablica @ 0x0001416ed3f8)
+## (unnamed table @ 0x0001416ed3f8)
 
-`0x0001416ed3f8` - 1 pol
+`0x0001416ed3f8` - 1 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `LTAL` | mLongestTimeAlive | `13 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416ed410)
+## (unnamed table @ 0x0001416ed410)
 
-`0x0001416ed410` - 5 pol
+`0x0001416ed410` - 5 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `DETH` | mDeaths | `13 18 12 00` |
 | `FCAP` | mFlagsCaptured | `15 18 14 00` |
@@ -3497,39 +3499,39 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `RSMP` | mResultMap | `01 18 20 00` |
 | `WEPN` | mWeapon | `14 00 18 00` |
 
-## (nienazwana tablica @ 0x0001416ed488)
+## (unnamed table @ 0x0001416ed488)
 
-`0x0001416ed488` - 2 pol
+`0x0001416ed488` - 2 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `LOSS` | mLosses | `13 18 12 00` |
 | `WINS` | mWins | `13 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416ed4c0)
+## (unnamed table @ 0x0001416ed4c0)
 
-`0x0001416ed4c0` - 4 pol
+`0x0001416ed4c0` - 4 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `DESP` | mDesiredPercentFull | `11 18 21 00` |
 | `MAXP` | mMaxPercentFull | `11 18 22 00` |
 | `MINP` | mMinPercentFull | `11 18 20 00` |
 | `THLD` | mRangeOffsetListName | `05 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416ed528)
+## (unnamed table @ 0x0001416ed528)
 
-`0x0001416ed528` - 1 pol
+`0x0001416ed528` - 1 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `GIDL` | mGameIdList | `02 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416ed540)
+## (unnamed table @ 0x0001416ed540)
 
-`0x0001416ed540` - 5 pol
+`0x0001416ed540` - 5 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `DUR ` | mDurationSec | `03 18 14 00` |
 | `GNAM` | mGameName | `05 20 28 00` |
@@ -3537,11 +3539,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `MAP ` | mMapName | `05 20 18 00` |
 | `TIME` | mReplayTimes | `15 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416ed5d0)
+## (unnamed table @ 0x0001416ed5d0)
 
-`0x0001416ed5d0` - 6 pol
+`0x0001416ed5d0` - 6 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `DUR ` | mDurationSec | `03 18 14 00` |
 | `GNAM` | mGameName | `05 20 28 00` |
@@ -3550,40 +3552,40 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `MAP ` | mMapName | `05 20 18 00` |
 | `TIME` | mReplayTimes | `15 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416ed680)
+## (unnamed table @ 0x0001416ed680)
 
-`0x0001416ed680` - 2 pol
+`0x0001416ed680` - 2 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `SCOR` | mPlayerScores | `01 18 50 00` |
 | `WINP` | mWinners | `02 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416ed6b0)
+## (unnamed table @ 0x0001416ed6b0)
 
-`0x0001416ed6b0` - 2 pol
+`0x0001416ed6b0` - 2 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `PMAX` | mMaxPercentFullAccepted | `11 18 11 00` |
 | `PMIN` | mMinPercentFullAccepted | `11 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416ed6e0)
+## (unnamed table @ 0x0001416ed6e0)
 
-`0x0001416ed6e0` - 4 pol
+`0x0001416ed6e0` - 4 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `HITS` | mHits | `13 18 18 00` |
 | `PID ` | mPlayerId | `18 18 10 00` |
 | `SERV` | mServes | `13 18 1a 00` |
 | `TEAM` | mTeam | `13 00 1c 00` |
 
-## (nienazwana tablica @ 0x0001416ed740)
+## (unnamed table @ 0x0001416ed740)
 
-`0x0001416ed740` - 5 pol
+`0x0001416ed740` - 5 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `DUR ` | mDurationSec | `03 18 14 00` |
 | `GNAM` | mGameName | `05 20 28 00` |
@@ -3591,20 +3593,20 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `MAP ` | mMapName | `05 20 18 00` |
 | `TIME` | mReplayTimes | `15 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416ed7c8)
+## (unnamed table @ 0x0001416ed7c8)
 
-`0x0001416ed7c8` - 2 pol
+`0x0001416ed7c8` - 2 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `SDIF` | mMaxTeamSizeDifferenceAllowed | `13 18 20 00` |
 | `THLD` | mRangeOffsetListName | `05 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416ed800)
+## (unnamed table @ 0x0001416ed800)
 
-`0x0001416ed800` - 6 pol
+`0x0001416ed800` - 6 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `DUR ` | mDurationSec | `03 18 14 00` |
 | `GNAM` | mGameName | `05 20 28 00` |
@@ -3613,121 +3615,121 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `MAP ` | mMapName | `05 20 18 00` |
 | `TIME` | mReplayTimes | `15 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416ed8b0)
+## (unnamed table @ 0x0001416ed8b0)
 
-`0x0001416ed8b0` - 3 pol
+`0x0001416ed8b0` - 3 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `CLID` | mClubId | `17 18 10 00` |
 | `PNTS` | mPoints | `13 18 18 00` |
 | `RPTS` | mRivalPoints | `13 00 1a 00` |
 
-## (nienazwana tablica @ 0x0001416ed8f8)
+## (unnamed table @ 0x0001416ed8f8)
 
-`0x0001416ed8f8` - 2 pol
+`0x0001416ed8f8` - 2 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `GAME` | mGameAttrs | `0a 18 78 00` |
 | `PLYR` | mPlayerReports | `01 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416ed928)
+## (unnamed table @ 0x0001416ed928)
 
-`0x0001416ed928` - 2 pol
+`0x0001416ed928` - 2 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `ALST` | mAvoidList | `02 18 50 00` |
 | `ASTS` | mAvoidListIds | `02 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416ed958)
+## (unnamed table @ 0x0001416ed958)
 
-`0x0001416ed958` - 2 pol
+`0x0001416ed958` - 2 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `GAME` | mGameAttrs | `0a 18 78 00` |
 | `PLYR` | mPlayerReports | `01 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416ed988)
+## (unnamed table @ 0x0001416ed988)
 
-`0x0001416ed988` - 2 pol
+`0x0001416ed988` - 2 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `GAME` | mGameAttrs | `0a 18 78 00` |
 | `PLYR` | mPlayerReports | `01 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416ed9b8)
+## (unnamed table @ 0x0001416ed9b8)
 
-`0x0001416ed9b8` - 1 pol
+`0x0001416ed9b8` - 1 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `SDIF` | mMaxTeamSizeDifferenceAccepted | `13 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416ed9d0)
+## (unnamed table @ 0x0001416ed9d0)
 
-`0x0001416ed9d0` - 3 pol
+`0x0001416ed9d0` - 3 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `CLID` | mClubId | `17 18 10 00` |
 | `CREG` | mClubregion | `15 18 1c 00` |
 | `PNTS` | mPoints | `13 00 18 00` |
 
-## (nienazwana tablica @ 0x0001416eda20)
+## (unnamed table @ 0x0001416eda20)
 
-`0x0001416eda20` - 3 pol
+`0x0001416eda20` - 3 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `PLST` | mPreferredList | `02 18 28 00` |
 | `PSET` | mPreferredListId | `0c 10 18 00` |
 | `REQP` | mRequirePreferredPlayer | `0f 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416eda60)
+## (unnamed table @ 0x0001416eda60)
 
-`0x0001416eda60` - 3 pol
+`0x0001416eda60` - 3 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `CUST` | mCustomReports | `06 10 a0 00` |
 | `GAME` | mGameAttrs | `0a 18 78 00` |
 | `PLYR` | mPlayerReports | `01 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416edaa0)
+## (unnamed table @ 0x0001416edaa0)
 
-`0x0001416edaa0` - 2 pol
+`0x0001416edaa0` - 2 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `GAME` | mGameAttrs | `0a 18 78 00` |
 | `PLYR` | mPlayerReports | `01 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416edad0)
+## (unnamed table @ 0x0001416edad0)
 
-`0x0001416edad0` - 1 pol
+`0x0001416edad0` - 1 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `FCAP` | mFlagsCaptured | `15 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416edae8)
+## (unnamed table @ 0x0001416edae8)
 
-`0x0001416edae8` - 2 pol
+`0x0001416edae8` - 2 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `PCNT` | mTeamMinSize | `13 18 20 00` |
 | `THLD` | mRangeOffsetListName | `05 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416edb20)
+## (unnamed table @ 0x0001416edb20)
 
-`0x0001416edb20` - 10 pol
+`0x0001416edb20` - 10 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `CREG` | mClubRegion | `15 18 10 00` |
 | `LOSS` | mLosses | `13 18 1a 00` |
@@ -3740,57 +3742,57 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `TIES` | mTies | `13 18 1c 00` |
 | `WINS` | mWins | `13 00 18 00` |
 
-## (nienazwana tablica @ 0x0001416edc10)
+## (unnamed table @ 0x0001416edc10)
 
-`0x0001416edc10` - 3 pol
+`0x0001416edc10` - 3 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `ATHL` | mOffensiveAthletes | `01 18 e0 00` |
 | `CLUB` | mClubReports | `01 18 78 00` |
 | `PLYR` | mPlayerReports | `01 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416edc60)
+## (unnamed table @ 0x0001416edc60)
 
-`0x0001416edc60` - 4 pol
+`0x0001416edc60` - 4 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `CVAL` | mClientUEDSearchValue | `16 18 30 00` |
 | `NAME` | mRuleName | `05 20 10 00` |
 | `OVAL` | mOverrideUEDValue | `16 18 38 00` |
 | `THLD` | mThresholdName | `05 00 20 00` |
 
-## (nienazwana tablica @ 0x0001416edcd0)
+## (unnamed table @ 0x0001416edcd0)
 
-`0x0001416edcd0` - 2 pol
+`0x0001416edcd0` - 2 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `HITS` | mHits | `13 18 12 00` |
 | `SERV` | mServes | `13 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416edd00)
+## (unnamed table @ 0x0001416edd00)
 
-`0x0001416edd00` - 1 pol
+`0x0001416edd00` - 1 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `PCNT` | mTeamMinSizeAccepted | `13 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416edd18)
+## (unnamed table @ 0x0001416edd18)
 
-`0x0001416edd18` - 1 pol
+`0x0001416edd18` - 1 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `TCNT` | mTeamCount | `13 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416edd30)
+## (unnamed table @ 0x0001416edd30)
 
-`0x0001416edd30` - 5 pol
+`0x0001416edd30` - 5 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `ACCR` | mAccuracy | `03 18 14 00` |
 | `DERV` | mCustomReport | `06 10 20 00` |
@@ -3798,49 +3800,49 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `KILL` | mKills | `13 18 10 00` |
 | `SCOR` | mScore | `15 00 18 00` |
 
-## (nienazwana tablica @ 0x0001416edda0)
+## (unnamed table @ 0x0001416edda0)
 
-`0x0001416edda0` - 2 pol
+`0x0001416edda0` - 2 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `FCAP` | mFlagsCaptured | `15 18 14 00` |
 | `KILL` | mKills | `13 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416eddd0)
+## (unnamed table @ 0x0001416eddd0)
 
-`0x0001416eddd0` - 4 pol
+`0x0001416eddd0` - 4 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `AMAX` | mMaxUEDAccepted | `16 18 30 00` |
 | `AMIN` | mMinUEDAccepted | `16 18 28 00` |
 | `MUED` | mMyUEDValue | `16 18 20 00` |
 | `NAME` | mRuleName | `05 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416ede38)
+## (unnamed table @ 0x0001416ede38)
 
-`0x0001416ede38` - 2 pol
+`0x0001416ede38` - 2 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `GAME` | mGameAttrs | `0a 18 78 00` |
 | `PLYR` | mPlayerReports | `01 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416ede68)
+## (unnamed table @ 0x0001416ede68)
 
-`0x0001416ede68` - 2 pol
+`0x0001416ede68` - 2 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `CLUB` | mClubId | `17 18 18 00` |
 | `PTS ` | mPoints | `13 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416edea0)
+## (unnamed table @ 0x0001416edea0)
 
-`0x0001416edea0` - 12 pol
+`0x0001416edea0` - 12 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `DETH` | mDeaths | `13 18 12 00` |
 | `GLRD` | mGlickoRd | `14 18 28 00` |
@@ -3855,20 +3857,20 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `WDNF` | mWinnerByDNF | `0f 18 1e 00` |
 | `WINR` | mWinner | `0f 00 1c 00` |
 
-## (nienazwana tablica @ 0x0001416edfc0)
+## (unnamed table @ 0x0001416edfc0)
 
-`0x0001416edfc0` - 2 pol
+`0x0001416edfc0` - 2 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `DETH` | mDeaths | `13 18 10 00` |
 | `RSMP` | mResultMap | `01 00 18 00` |
 
-## (nienazwana tablica @ 0x0001416edff0)
+## (unnamed table @ 0x0001416edff0)
 
-`0x0001416edff0` - 5 pol
+`0x0001416edff0` - 5 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `ACCR` | mAccuracy | `03 18 18 00` |
 | `DETH` | mDeaths | `13 18 12 00` |
@@ -3876,29 +3878,29 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `KILL` | mKills | `13 18 10 00` |
 | `SCOR` | mScore | `15 00 1c 00` |
 
-## (nienazwana tablica @ 0x0001416ee070)
+## (unnamed table @ 0x0001416ee070)
 
-`0x0001416ee070` - 2 pol
+`0x0001416ee070` - 2 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `GNAM` | mGameName | `05 20 20 00` |
 | `MAP ` | mMapName | `05 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416ee0b0)
+## (unnamed table @ 0x0001416ee0b0)
 
-`0x0001416ee0b0` - 2 pol
+`0x0001416ee0b0` - 2 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `ISEN` | mIsEnabled | `0f 18 14 00` |
 | `MODS` | mDesiredModRegister | `15 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416ee0e0)
+## (unnamed table @ 0x0001416ee0e0)
 
-`0x0001416ee0e0` - 28 pol
+`0x0001416ee0e0` - 28 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `DUR ` | mDurationSec | `03 18 14 00` |
 | `GNAM` | mGameName | `05 20 28 00` |
@@ -3929,11 +3931,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `PRES` | mSessionChanging | `0e 00 18 00` |
 | `UID ` | mUserId | `18 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416f5510)
+## (unnamed table @ 0x0001416f5510)
 
-`0x0001416f5510` - 64 pol
+`0x0001416f5510` - 64 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `INFO` | mPlaygroupInfo | `0a 18 50 00` |
 | `MLST` | mPlaygroupMemberInfoList | `02 18 20 02` |
@@ -4000,11 +4002,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `PINF` | mPersona | `02 18 10 00` |
 | `PURI` | mPersonaUri | `02 00 68 00` |
 
-## (nienazwana tablica @ 0x0001416f5c48)
+## (unnamed table @ 0x0001416f5c48)
 
-`0x0001416f5c48` - 5 pol
+`0x0001416f5c48` - 5 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `PGN ` | mNumOfPlaygroup | `15 18 10 00` |
 | `PIPN` | mNumOfPlayersInPlaygroup | `15 00 14 00` |
@@ -4012,11 +4014,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `BLID` | mBlazeId | `18 00 10 00` |
 | `MSET` | mMailSettings | `0a 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416f5cc0)
+## (unnamed table @ 0x0001416f5cc0)
 
-`0x0001416f5cc0` - 41 pol
+`0x0001416f5cc0` - 41 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `MEMB` | mPlaygroupMemberInfoList | `02 18 18 00` |
 | `PGID` | mPlaygroupId | `17 00 10 00` |
@@ -4062,9 +4064,9 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 
 ## Blaze::Redirector::XboxServerAddress
 
-`0x0001416f61f0` - 42 pol
+`0x0001416f61f0` - 42 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `DPRT` | mDstPort | `13 18 1e 00` |
 | `MASK` | mNetMask | `15 18 14 00` |
@@ -4109,11 +4111,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `ERR ` | mErrorStatus | `15 18 20 00` |
 | `PKEY` | mPackKey | `05 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416f66b0)
+## (unnamed table @ 0x0001416f66b0)
 
-`0x0001416f66b0` - 15 pol
+`0x0001416f66b0` - 15 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `DPRT` | mDstPort | `13 18 3a 00` |
 | `SID ` | mServiceId | `15 18 20 00` |
@@ -4131,11 +4133,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `FILT` | mFilter | `0a 18 68 00` |
 | `PID ` | mPid | `17 00 50 00` |
 
-## (nienazwana tablica @ 0x0001416f6890)
+## (unnamed table @ 0x0001416f6890)
 
-`0x0001416f6890` - 25 pol
+`0x0001416f6890` - 25 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `ADDR` | mAddress | `09 10 10 00` |
 | `AMAP` | mAddressRemaps | `02 18 40 00` |
@@ -4163,11 +4165,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `EXPD` | mExpandResults | `05 20 50 00` |
 | `FILT` | mFilter | `0a 00 60 00` |
 
-## (nienazwana tablica @ 0x0001416f6b50)
+## (unnamed table @ 0x0001416f6b50)
 
-`0x0001416f6b50` - 42 pol
+`0x0001416f6b50` - 42 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `AMAP` | mAddressRemaps | `02 18 30 03` |
 | `BTGT` | mBuildTarget | `05 20 b0 00` |
@@ -4212,21 +4214,21 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `STAT` | mStatus | `05 20 30 00` |
 | `STRM` | mStartTerminationDate | `05 00 70 00` |
 
-## (nienazwana tablica @ 0x0001416f6fe0)
+## (unnamed table @ 0x0001416f6fe0)
 
-`0x0001416f6fe0` - 3 pol
+`0x0001416f6fe0` - 3 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `MSGS` | mMessages | `02 00 10 00` |
 | `CCAT` | mCategory | `05 20 10 00` |
 | `CID ` | mContentId | `16 00 20 00` |
 
-## (nienazwana tablica @ 0x0001416f7030)
+## (unnamed table @ 0x0001416f7030)
 
-`0x0001416f7030` - 32 pol
+`0x0001416f7030` - 32 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `HCID` | mNewHostConnectionGroupId | `17 18 28 00` |
 | `HCSD` | mNewHostConnectionSlotId | `11 18 21 00` |
@@ -4261,11 +4263,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `UPDT` | mCacheUpdates | `02 00 10 00` |
 | `INFO` | mContentInfo | `0a 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416f73a0)
+## (unnamed table @ 0x0001416f73a0)
 
-`0x0001416f73a0` - 14 pol
+`0x0001416f73a0` - 14 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `ATTR` | mAttrMap | `01 18 d0 00` |
 | `FLAG` | mFlags | `07 10 60 00` |
@@ -4282,11 +4284,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `VNAM` | mVisualName | `05 00 20 00` |
 | `PURI` | mPersonaUri | `05 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416f7510)
+## (unnamed table @ 0x0001416f7510)
 
-`0x0001416f7510` - 24 pol
+`0x0001416f7510` - 24 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `LID ` | mBlazeId | `18 18 18 00` |
 | `PERM` | mPermissions | `07 10 20 00` |
@@ -4313,11 +4315,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `CTYP` | mContextType | `0b 10 2c 00` |
 | `ETYP` | mEntityType | `0b 00 28 00` |
 
-## (nienazwana tablica @ 0x0001416f77b8)
+## (unnamed table @ 0x0001416f77b8)
 
-`0x0001416f77b8` - 35 pol
+`0x0001416f77b8` - 35 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `GTAG` | mGamertag | `05 20 18 00` |
 | `XUID` | mXuid | `17 00 10 00` |
@@ -4355,11 +4357,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `PYLD` | mPayload | `0a 18 e8 00` |
 | `SRCE` | mSource | `0c 00 f0 00` |
 
-## (nienazwana tablica @ 0x0001416f7b80)
+## (unnamed table @ 0x0001416f7b80)
 
-`0x0001416f7b80` - 13 pol
+`0x0001416f7b80` - 13 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `ATTR` | mMemberAttributes | `01 18 88 00` |
 | `CONG` | mConnectionGroupId | `17 18 68 01` |
@@ -4375,11 +4377,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `MSIZ` | mSizeAllowed | `14 18 10 00` |
 | `TCNT` | mTotalCount | `15 00 80 00` |
 
-## (nienazwana tablica @ 0x0001416f7ca8)
+## (unnamed table @ 0x0001416f7ca8)
 
-`0x0001416f7ca8` - 10 pol
+`0x0001416f7ca8` - 10 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `ATTR` | mPlaygroupAttributes | `01 18 18 00` |
 | `PGID` | mPlaygroupId | `17 00 10 00` |
@@ -4392,21 +4394,21 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `PID ` | mPid | `17 00 10 00` |
 | `INFO` | mContentInfo | `0a 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416f7e00)
+## (unnamed table @ 0x0001416f7e00)
 
-`0x0001416f7e00` - 3 pol
+`0x0001416f7e00` - 3 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `MGID` | mMessageId | `17 18 10 00` |
 | `MIDS` | mMessageIds | `02 00 18 00` |
 | `LIST` | mCategorySummaries | `02 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416f7ea0)
+## (unnamed table @ 0x0001416f7ea0)
 
-`0x0001416f7ea0` - 36 pol
+`0x0001416f7ea0` - 36 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `EXBL` | mExternalBlob | `08 10 40 00` |
 | `EXID` | mExternalId | `17 18 38 00` |
@@ -4445,11 +4447,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `END ` | mEnd | `15 18 14 00` |
 | `STRT` | mStart | `15 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416f82c0)
+## (unnamed table @ 0x0001416f82c0)
 
-`0x0001416f82c0` - 7 pol
+`0x0001416f82c0` - 7 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `ATTR` | mMemberAttributes | `01 18 20 00` |
 | `EID ` | mBlazeId | `18 18 18 00` |
@@ -4459,21 +4461,21 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `EID ` | mEntitlementId | `16 18 10 00` |
 | `PEID` | mPersonaId | `17 00 18 00` |
 
-## (nienazwana tablica @ 0x0001416f8368)
+## (unnamed table @ 0x0001416f8368)
 
-`0x0001416f8368` - 3 pol
+`0x0001416f8368` - 3 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `PGID` | mId | `17 18 10 00` |
 | `XNNC` | mXnetNonce | `08 10 18 00` |
 | `XSES` | mXnetSession | `08 00 30 00` |
 
-## (nienazwana tablica @ 0x0001416f83e0)
+## (unnamed table @ 0x0001416f83e0)
 
-`0x0001416f83e0` - 14 pol
+`0x0001416f83e0` - 14 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `PGID` | mId | `17 18 10 00` |
 | `PRES` | mUsesPresence | `0e 18 48 00` |
@@ -4490,11 +4492,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `PCAT` | mProfileInfoCategory | `05 20 18 00` |
 | `PID ` | mPid | `17 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416f8580)
+## (unnamed table @ 0x0001416f8580)
 
-`0x0001416f8580` - 19 pol
+`0x0001416f8580` - 19 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `HOST` | mHostname | `05 20 10 00` |
 | `IP  ` | mIp | `15 18 20 00` |
@@ -4516,11 +4518,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `UID ` | mUserId | `18 00 10 00` |
 | `PGID` | mPlaygroupId | `17 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416f87a0)
+## (unnamed table @ 0x0001416f87a0)
 
-`0x0001416f87a0` - 5 pol
+`0x0001416f87a0` - 5 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `PORT` | mPort | `13 18 28 00` |
 | `SID ` | mServiceId | `15 18 10 00` |
@@ -4528,11 +4530,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `REPS` | mLicenseReports | `01 00 10 00` |
 | `GUID` | mPetitionGuid | `05 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416fcc90)
+## (unnamed table @ 0x0001416fcc90)
 
-`0x0001416fcc90` - 17 pol
+`0x0001416fcc90` - 17 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `ATRB` | mStats | `01 18 10 00` |
 | `PLYR` | mPlayerReports | `01 00 60 00` |
@@ -4552,11 +4554,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `SDSC` | mShortDesc | `05 20 50 00` |
 | `UNKV` | mUnknownValue | `05 00 a8 00` |
 
-## (nienazwana tablica @ 0x0001416fce50)
+## (unnamed table @ 0x0001416fce50)
 
-`0x0001416fce50` - 29 pol
+`0x0001416fce50` - 29 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `MAP ` | mMapId | `14 18 10 00` |
 | `MODE` | mMode | `14 00 14 00` |
@@ -4588,11 +4590,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `EVET` | mEventMap | `01 00 10 00` |
 | `CONC` | mConcours | `01 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416fd140)
+## (unnamed table @ 0x0001416fd140)
 
-`0x0001416fd140` - 9 pol
+`0x0001416fd140` - 9 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `GAME` | mReport | `06 10 28 00` |
 | `GRID` | mGameReportingId | `17 18 10 00` |
@@ -4604,11 +4606,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `REPS` | mAccoladeReports | `01 00 10 00` |
 | `INFO` | mViewInfo | `02 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416fd210)
+## (unnamed table @ 0x0001416fd210)
 
-`0x0001416fd210` - 20 pol
+`0x0001416fd210` - 20 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `CLBS` | mGroupReports | `01 18 c8 00` |
 | `GAME` | mGameAttributes | `01 18 10 00` |
@@ -4633,19 +4635,19 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 
 ## Blaze::GameReporting::SubmitGameReportRequest
 
-`0x0001416fd440` - 3 pol
+`0x0001416fd440` - 3 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `STAT` | mStats | `01 00 10 00` |
 | `ENID` | mEntityIds | `02 18 10 00` |
 | `LGRC` | mColumns | `02 00 50 00` |
 
-## (nienazwana tablica @ 0x0001416fd490)
+## (unnamed table @ 0x0001416fd490)
 
-`0x0001416fd490` - 75 pol
+`0x0001416fd490` - 75 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `DATA` | mCustomData | `06 10 28 00` |
 | `EROR` | mBlazeError | `14 18 10 00` |
@@ -4723,11 +4725,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `QUER` | mGameReportQuery | `0a 18 68 00` |
 | `QVAR` | mQueryVarValues | `02 00 20 00` |
 
-## (nienazwana tablica @ 0x0001416fdc38)
+## (unnamed table @ 0x0001416fdc38)
 
-`0x0001416fdc38` - 38 pol
+`0x0001416fdc38` - 38 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `GAME` | mGameAttrs | `0a 18 78 00` |
 | `PLYR` | mPlayerReports | `01 00 10 00` |
@@ -4768,11 +4770,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `QNAM` | mName | `05 00 10 00` |
 | `NAME` | mName | `05 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416fe070)
+## (unnamed table @ 0x0001416fe070)
 
-`0x0001416fe070` - 5 pol
+`0x0001416fe070` - 5 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `CTRY` | mCountry | `05 20 20 00` |
 | `DETH` | mDeaths | `13 18 12 00` |
@@ -4780,68 +4782,68 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `MONY` | mMoney | `15 18 18 00` |
 | `TALV` | mLongestTimeAlive | `15 00 14 00` |
 
-## (nienazwana tablica @ 0x0001416ffae0)
+## (unnamed table @ 0x0001416ffae0)
 
-`0x0001416ffae0` - 1 pol
+`0x0001416ffae0` - 1 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `LEAG` | mLeagueId | `1b 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416ffb00)
+## (unnamed table @ 0x0001416ffb00)
 
-`0x0001416ffb00` - 3 pol
+`0x0001416ffb00` - 3 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `HITS` | mHits | `13 18 18 00` |
 | `PID ` | mPlayerId | `18 18 10 00` |
 | `SERV` | mServes | `13 00 1a 00` |
 
-## (nienazwana tablica @ 0x0001416ffb48)
+## (unnamed table @ 0x0001416ffb48)
 
-`0x0001416ffb48` - 4 pol
+`0x0001416ffb48` - 4 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `DEFS` | mDefensivePlayerStats | `0a 18 38 00` |
 | `OFFS` | mOffensivePlayerStats | `0a 00 10 00` |
 | `CHAL` | mChallenges | `01 18 10 00` |
 | `LIST` | mChallengeList | `02 00 78 00` |
 
-## (nienazwana tablica @ 0x0001416ffba8)
+## (unnamed table @ 0x0001416ffba8)
 
-`0x0001416ffba8` - 1 pol
+`0x0001416ffba8` - 1 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `STAT` | mStats | `01 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416ffbc0)
+## (unnamed table @ 0x0001416ffbc0)
 
-`0x0001416ffbc0` - 4 pol
+`0x0001416ffbc0` - 4 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `CID ` | mClubId | `17 18 10 00` |
 | `LOSS` | mLosses | `13 18 1a 00` |
 | `PNTS` | mPoints | `13 18 1c 00` |
 | `WINS` | mWins | `13 00 18 00` |
 
-## (nienazwana tablica @ 0x0001416ffc20)
+## (unnamed table @ 0x0001416ffc20)
 
-`0x0001416ffc20` - 2 pol
+`0x0001416ffc20` - 2 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `LEAG` | mLeagueId | `1b 18 10 00` |
 | `MAP ` | mMapId | `13 00 18 00` |
 
-## (nienazwana tablica @ 0x0001416ffc50)
+## (unnamed table @ 0x0001416ffc50)
 
-`0x0001416ffc50` - 5 pol
+`0x0001416ffc50` - 5 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `DEFS` | mDefensiveAthleteReports | `01 18 00 01` |
 | `GAME` | mGameAttrs | `0a 18 10 00` |
@@ -4849,149 +4851,149 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `PLYR` | mPlayerReports | `01 00 30 00` |
 | `CNT ` | mCount | `15 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416ffcd0)
+## (unnamed table @ 0x0001416ffcd0)
 
-`0x0001416ffcd0` - 3 pol
+`0x0001416ffcd0` - 3 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `GAME` | mGameAttrs | `0a 18 10 00` |
 | `OFFS` | mOffensiveAthleteReports | `01 18 98 00` |
 | `PLYR` | mPlayerReports | `01 00 30 00` |
 
-## (nienazwana tablica @ 0x0001416ffd18)
+## (unnamed table @ 0x0001416ffd18)
 
-`0x0001416ffd18` - 1 pol
+`0x0001416ffd18` - 1 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `WEAP` | mWeapons | `01 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416ffd30)
+## (unnamed table @ 0x0001416ffd30)
 
-`0x0001416ffd30` - 3 pol
+`0x0001416ffd30` - 3 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `HITS` | mHits | `13 18 18 00` |
 | `PID ` | mPlayerId | `18 18 10 00` |
 | `SERV` | mServes | `13 00 1a 00` |
 
-## (nienazwana tablica @ 0x0001416ffd78)
+## (unnamed table @ 0x0001416ffd78)
 
-`0x0001416ffd78` - 1 pol
+`0x0001416ffd78` - 1 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `LVL ` | mLevel | `13 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416ffd90)
+## (unnamed table @ 0x0001416ffd90)
 
-`0x0001416ffd90` - 3 pol
+`0x0001416ffd90` - 3 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `LOSS` | mLosses | `13 18 12 00` |
 | `SLVL` | mSeasonLevel | `13 18 14 00` |
 | `WINS` | mWins | `13 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416ffdd8)
+## (unnamed table @ 0x0001416ffdd8)
 
-`0x0001416ffdd8` - 1 pol
+`0x0001416ffdd8` - 1 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `PLYR` | mPlayerReports | `01 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416ffdf0)
+## (unnamed table @ 0x0001416ffdf0)
 
-`0x0001416ffdf0` - 3 pol
+`0x0001416ffdf0` - 3 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `GAME` | mGameAttrs | `0a 18 10 00` |
 | `OFFS` | mAthleteReports | `01 18 98 00` |
 | `PLYR` | mPlayerReports | `01 00 30 00` |
 
-## (nienazwana tablica @ 0x0001416ffe38)
+## (unnamed table @ 0x0001416ffe38)
 
-`0x0001416ffe38` - 2 pol
+`0x0001416ffe38` - 2 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `SERV` | mServes | `13 18 10 00` |
 | `TEAM` | mTeam | `13 00 12 00` |
 
-## (nienazwana tablica @ 0x0001416ffe68)
+## (unnamed table @ 0x0001416ffe68)
 
-`0x0001416ffe68` - 2 pol
+`0x0001416ffe68` - 2 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `GAME` | mGameAttrs | `0a 18 78 00` |
 | `PLYR` | mPlayerReports | `01 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416ffe98)
+## (unnamed table @ 0x0001416ffe98)
 
-`0x0001416ffe98` - 1 pol
+`0x0001416ffe98` - 1 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `BLKS` | mBlocks | `13 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416ffeb0)
+## (unnamed table @ 0x0001416ffeb0)
 
-`0x0001416ffeb0` - 3 pol
+`0x0001416ffeb0` - 3 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `GAME` | mGameAttrs | `0a 18 10 00` |
 | `OFFS` | mOffensiveAthleteReports | `01 18 90 00` |
 | `PLYR` | mPlayerReports | `01 00 28 00` |
 
-## (nienazwana tablica @ 0x0001416ffef8)
+## (unnamed table @ 0x0001416ffef8)
 
-`0x0001416ffef8` - 3 pol
+`0x0001416ffef8` - 3 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `COUN` | mCountry | `13 18 78 00` |
 | `RES ` | mBountyScores | `01 00 10 00` |
 | `MILE` | mMilestoneReports | `01 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416fff40)
+## (unnamed table @ 0x0001416fff40)
 
-`0x0001416fff40` - 3 pol
+`0x0001416fff40` - 3 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `CLBS` | mGroupReports | `01 18 c8 00` |
 | `GAME` | mGameAttributes | `01 18 10 00` |
 | `PLYR` | mPlayerReports | `01 00 60 00` |
 
-## (nienazwana tablica @ 0x0001416fff90)
+## (unnamed table @ 0x0001416fff90)
 
-`0x0001416fff90` - 2 pol
+`0x0001416fff90` - 2 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `CLBS` | mGroups | `02 18 50 00` |
 | `PLYR` | mPlayers | `02 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416fffc0)
+## (unnamed table @ 0x0001416fffc0)
 
-`0x0001416fffc0` - 2 pol
+`0x0001416fffc0` - 2 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `HITS` | mHits | `13 18 12 00` |
 | `SHOT` | mShotsFired | `13 00 10 00` |
 
-## (nienazwana tablica @ 0x0001416ffff0)
+## (unnamed table @ 0x0001416ffff0)
 
-`0x0001416ffff0` - 6 pol
+`0x0001416ffff0` - 6 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `BLKS` | mBlocks | `14 18 20 00` |
 | `HITS` | mHits | `14 18 14 00` |
@@ -5000,11 +5002,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `SCOR` | mScore | `14 18 10 00` |
 | `SERV` | mServes | `14 00 18 00` |
 
-## (nienazwana tablica @ 0x000141700080)
+## (unnamed table @ 0x000141700080)
 
-`0x000141700080` - 5 pol
+`0x000141700080` - 5 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `HITS` | mHits | `13 18 10 00` |
 | `LOSE` | mLoser | `13 18 18 00` |
@@ -5012,31 +5014,31 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `TRCH` | mTorchings | `13 18 14 00` |
 | `WIN ` | mWinner | `13 00 16 00` |
 
-## (nienazwana tablica @ 0x0001417000f8)
+## (unnamed table @ 0x0001417000f8)
 
-`0x0001417000f8` - 2 pol
+`0x0001417000f8` - 2 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `ISIM` | mIsSim | `14 18 18 00` |
 | `LGID` | mLeagueId | `1b 00 10 00` |
 
-## (nienazwana tablica @ 0x000141700130)
+## (unnamed table @ 0x000141700130)
 
-`0x000141700130` - 4 pol
+`0x000141700130` - 4 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `ENTI` | mEntityId | `15 18 10 00` |
 | `STAF` | mStatsFlt | `01 18 68 00` |
 | `STAI` | mStatsInt | `01 18 18 00` |
 | `STAS` | mStatsStr | `01 00 b8 00` |
 
-## (nienazwana tablica @ 0x000141700190)
+## (unnamed table @ 0x000141700190)
 
-`0x000141700190` - 10 pol
+`0x000141700190` - 10 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `ATMP` | mAttempts | `13 18 1e 00` |
 | `EVNT` | mEvent | `15 18 10 00` |
@@ -5049,40 +5051,40 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `VEHI` | mVehicle | `15 18 18 00` |
 | `WIN ` | mWin | `11 00 1d 00` |
 
-## (nienazwana tablica @ 0x000141700280)
+## (unnamed table @ 0x000141700280)
 
-`0x000141700280` - 2 pol
+`0x000141700280` - 2 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `ATRB` | mStats | `01 18 10 00` |
 | `PLYR` | mPlayerReports | `01 00 60 00` |
 
-## (nienazwana tablica @ 0x0001417002b0)
+## (unnamed table @ 0x0001417002b0)
 
-`0x0001417002b0` - 2 pol
+`0x0001417002b0` - 2 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `MAP ` | mMapId | `14 18 10 00` |
 | `MODE` | mMode | `14 00 14 00` |
 
-## (nienazwana tablica @ 0x0001417002e0)
+## (unnamed table @ 0x0001417002e0)
 
-`0x0001417002e0` - 4 pol
+`0x0001417002e0` - 4 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `LEAG` | mLeagueId | `1b 18 10 00` |
 | `LEVE` | mLevel | `14 00 18 00` |
 | `CHAL` | mChallenge | `15 18 10 00` |
 | `CNT ` | mCount | `15 00 14 00` |
 
-## (nienazwana tablica @ 0x000141700340)
+## (unnamed table @ 0x000141700340)
 
-`0x000141700340` - 6 pol
+`0x000141700340` - 6 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `GAME` | mGames | `15 18 10 00` |
 | `HITS` | mHits | `15 18 18 00` |
@@ -5091,11 +5093,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `TIME` | mTime | `15 00 14 00` |
 | `REPS` | mMilestoneReports | `01 00 10 00` |
 
-## (nienazwana tablica @ 0x0001417003e0)
+## (unnamed table @ 0x0001417003e0)
 
-`0x0001417003e0` - 5 pol
+`0x0001417003e0` - 5 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `CID ` | mClubId | `17 18 10 00` |
 | `LOSS` | mLosses | `13 18 1e 00` |
@@ -5103,20 +5105,20 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `WEPN` | mWeapon | `14 18 18 00` |
 | `WINS` | mWins | `13 00 1c 00` |
 
-## (nienazwana tablica @ 0x000141700458)
+## (unnamed table @ 0x000141700458)
 
-`0x000141700458` - 2 pol
+`0x000141700458` - 2 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `GAME` | mGameAttrs | `0a 18 10 00` |
 | `PLYR` | mPlayerReports | `01 00 28 00` |
 
-## (nienazwana tablica @ 0x000141700490)
+## (unnamed table @ 0x000141700490)
 
-`0x000141700490` - 6 pol
+`0x000141700490` - 6 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `BLOC` | mBlocks | `15 18 1c 00` |
 | `GAME` | mGames | `15 18 10 00` |
@@ -5125,11 +5127,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `TIME` | mTime | `15 00 14 00` |
 | `ENTS` | mEntries | `02 00 10 00` |
 
-## (nienazwana tablica @ 0x000141705ce0)
+## (unnamed table @ 0x000141705ce0)
 
-`0x000141705ce0` - 17 pol
+`0x000141705ce0` - 17 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `FCRT` | mFailedCriteria | `05 00 10 00` |
 | `PDLS` | mCheckoutProducts | `02 18 20 00` |
@@ -5149,11 +5151,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `UID ` | mId | `17 00 10 00` |
 | `PDRL` | mProductVector | `02 00 10 00` |
 
-## (nienazwana tablica @ 0x000141705ee0)
+## (unnamed table @ 0x000141705ee0)
 
-`0x000141705ee0` - 13 pol
+`0x000141705ee0` - 13 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `IP  ` | mIp | `15 18 10 00` |
 | `MACI` | mMachineId | `17 18 18 00` |
@@ -5169,11 +5171,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `TCTE` | mIsFree | `0f 00 10 00` |
 | `CSTR` | mCode | `05 00 10 00` |
 
-## (nienazwana tablica @ 0x000141706090)
+## (unnamed table @ 0x000141706090)
 
-`0x000141706090` - 23 pol
+`0x000141706090` - 23 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `MACI` | mMachineId | `17 18 28 00` |
 | `NAME` | mHostName | `05 20 10 00` |
@@ -5199,11 +5201,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `TEXT` | mText | `05 00 18 00` |
 | `NAME` | mEntityNames | `02 00 10 00` |
 
-## (nienazwana tablica @ 0x000141706320)
+## (unnamed table @ 0x000141706320)
 
-`0x000141706320` - 8 pol
+`0x000141706320` - 8 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `EXIP` | mExternalAddress | `0a 18 30 00` |
 | `INIP` | mInternalAddress | `0a 18 10 00` |
@@ -5214,11 +5216,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `RID ` | mRowId | `15 18 10 00` |
 | `SNET` | mSubNet | `0a 00 38 00` |
 
-## (nienazwana tablica @ 0x000141706430)
+## (unnamed table @ 0x000141706430)
 
-`0x000141706430` - 14 pol
+`0x000141706430` - 14 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `MACI` | mMachineId | `17 18 30 00` |
 | `XDDR` | mXnAddr | `08 10 18 00` |
@@ -5235,22 +5237,22 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `PPLC` | mLocale | `05 20 50 00` |
 | `PPT ` | mPriceType | `05 00 10 00` |
 
-## (nienazwana tablica @ 0x0001417065c0)
+## (unnamed table @ 0x0001417065c0)
 
-`0x0001417065c0` - 4 pol
+`0x0001417065c0` - 4 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `PSA ` | mAddress | `05 20 10 00` |
 | `PSP ` | mPort | `13 18 20 00` |
 | `SNA ` | mSiteName | `05 00 28 00` |
 | `CLNM` | mCatalogMap | `01 00 10 00` |
 
-## (nienazwana tablica @ 0x000141706630)
+## (unnamed table @ 0x000141706630)
 
-`0x000141706630` - 4 pol
+`0x000141706630` - 4 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `MACI` | mMachineId | `17 18 30 00` |
 | `PORT` | mPort | `13 18 28 00` |
@@ -5259,9 +5261,9 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 
 ## Blaze::DynamicInetFilter::ReplicatedInetFilterReplicationReason
 
-`0x0001417066c8` - 16 pol
+`0x0001417066c8` - 16 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `IP  ` | mIp | `05 20 10 00` |
 | `PLEN` | mPrefixLength | `15 00 20 00` |
@@ -5280,11 +5282,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `EID ` | mEntityIds | `02 18 18 00` |
 | `TYPE` | mBlazeObjectType | `0b 00 10 00` |
 
-## (nienazwana tablica @ 0x000141706860)
+## (unnamed table @ 0x000141706860)
 
-`0x000141706860` - 5 pol
+`0x000141706860` - 5 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `COMM` | mComment | `05 20 60 00` |
 | `GRP ` | mGroup | `05 20 18 00` |
@@ -5292,11 +5294,11 @@ Kolejnosc pol jest kolejnoscia z tablicy, czyli kolejnoscia kodowania w TDF. `me
 | `RID ` | mRowId | `15 18 10 00` |
 | `SNET` | mSubNet | `0a 00 38 00` |
 
-## (nienazwana tablica @ 0x000141706920)
+## (unnamed table @ 0x000141706920)
 
-`0x000141706920` - 19 pol
+`0x000141706920` - 19 fields
 
-| tag | pole | meta |
+| tag | field | meta |
 | --- | --- | --- |
 | `ADDR` | mAddress | `09 10 80 00` |
 | `NLMP` | mPingSiteLatencyByAliasMap | `01 18 10 00` |

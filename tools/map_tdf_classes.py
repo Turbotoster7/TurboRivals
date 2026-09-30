@@ -147,6 +147,10 @@ def main() -> int:
     lines = [
         "# TDF classes and their fields (reconstructed from NFS14.exe)",
         "",
+        "> Older heuristic (table boundaries from `lea` instructions): it glues neighbouring "
+        "classes together. The exact boundaries come from `tools/tdf_classes.py` (a record with "
+        "`meta[1] == 0` ends its class) - see docs/protocol.md, section 3.",
+        "",
         f"- Field records: **{len(members):,}**",
         f"- Detected tables (boundaries from `lea` instructions in the code): **{len(boundaries):,}**",
         f"- Named classes: **{len(pairs):,}**",

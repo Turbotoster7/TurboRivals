@@ -1,14 +1,14 @@
-# Zrzut stringow: NFS14.exe
+# String dump: NFS14.exe
 
-- Plik: `D:\SteamLibrary\steamapps\common\Need for Speed(TM) Rivals\NFS14.exe`
-- Rozmiar: 30,449,280 B
-- Znalezionych stringow (>= 4 znakow): 315,292
+- File: `D:\SteamLibrary\steamapps\common\Need for Speed(TM) Rivals\NFS14.exe`
+- Size: 30,449,280 B
+- Strings found (>= 4 characters): 315,292
 
-Offsety sa pozycjami w pliku (nie RVA) - do uzycia w hex edytorze.
+Offsets are file positions (not RVAs) - for use in a hex editor.
 
 ## hosts (11)
 
-_Hostnamy backendu EA - najwazniejszy wynik. Tu szukamy redirectora._
+_EA backend host names - the most important result. This is where we look for the redirector._
 
 ```
 0x016768d0  ascii  http://elephant.online.ea.com/bugsentry
@@ -26,7 +26,7 @@ _Hostnamy backendu EA - najwazniejszy wynik. Tu szukamy redirectora._
 
 ## urls (26)
 
-_Pelne URL-e - endpointy HTTPS do zaslepienia (config, telemetria, QoS)._
+_Full URLs - HTTPS endpoints to stub out (config, telemetry, QoS)._
 
 ```
 0x014e43ed  ascii   jour votre pilote sur http://www.geforce.com/drivers avant de jouer au jeu.
@@ -59,7 +59,7 @@ _Pelne URL-e - endpointy HTTPS do zaslepienia (config, telemetria, QoS)._
 
 ## blaze (511)
 
-_Wszystko co dotyka BlazeSDK - nazwy komponentow, stany polaczenia, bledy._
+_Everything that touches BlazeSDK - component names, connection states, errors._
 
 ```
 0x01522b78  ascii  playerBlazeID
@@ -577,7 +577,7 @@ _Wszystko co dotyka BlazeSDK - nazwy komponentow, stany polaczenia, bledy._
 
 ## dirtysdk (11)
 
-_DirtySDK - warstwa sieciowa EA. Wersja ProtoSSL decyduje o tym, czy klient przyjmie cert zastepczy naszego serwera._
+_DirtySDK - EA's network layer. The ProtoSSL version decides whether the client accepts our server's stand-in certificate._
 
 ```
 0x016534f8  ascii  NetConnection
@@ -595,7 +595,7 @@ _DirtySDK - warstwa sieciowa EA. Wersja ProtoSSL decyduje o tym, czy klient przy
 
 ## components (535)
 
-_Nazwy komponentow i komend Blaze - mapa RPC, ktore musimy obsluzyc._
+_Blaze component and command names - the map of RPCs we have to handle._
 
 ```
 0x00df174b  ascii  xUtIL2
@@ -1137,7 +1137,7 @@ _Nazwy komponentow i komend Blaze - mapa RPC, ktore musimy obsluzyc._
 
 ## auth (206)
 
-_Warstwa logowania - jak klient dostaje token z EA App i co z nim robi._
+_Login layer - how the client gets a token from the EA App and what it does with it._
 
 ```
 0x014078f4  ascii  Origin
@@ -1350,7 +1350,7 @@ _Warstwa logowania - jak klient dostaje token z EA App i co z nim robi._
 
 ## netcode (364)
 
-_Rozgrywka P2P - topologia, NAT, AllDrive. Wazne dla fazy 2 i 5._
+_P2P gameplay - topology, NAT, AllDrive. Important for phases 2 and 5._
 
 ```
 0x003153ef  ascii  O:qOS
@@ -1721,7 +1721,7 @@ _Rozgrywka P2P - topologia, NAT, AllDrive. Wazne dla fazy 2 i 5._
 
 ## versions (25)
 
-_Wersje SDK i buildu - pozwalaja dopasowac nasz emulator do wlasciwej ery Blaze._
+_SDK and build versions - let us match our emulator to the right Blaze era._
 
 ```
 0x00ba5a7d  ascii  SDk},
@@ -1751,9 +1751,9 @@ _Wersje SDK i buildu - pozwalaja dopasowac nasz emulator do wlasciwej ery Blaze.
 0x01d07f59  ascii        <assemblyIdentity type='win32' name='Microsoft.VC90.CRT' version='9.0.21022.8' processorArchitecture='amd64' publicKeyToken='1fc8b3b9a1e18e3b' />
 ```
 
-## kandydaci na tagi TDF (2784)
+## TDF tag candidates (2784)
 
-_4-znakowe stringi [A-Z][A-Z0-9]{3}. Duzo falszywych trafien, ale prawdziwe tagi TDF wygladaja wlasnie tak._
+_4-character strings [A-Z][A-Z0-9]{3}. Lots of false positives, but real TDF tags look exactly like this._
 
 ```
 DEST  x8

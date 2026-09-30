@@ -6,8 +6,9 @@ EA shut the game's online services down on 7 October 2025. Rivals still runs off
 AllDrive — the shared open world for up to six players — died with the servers. This project
 puts a replacement server in its place.
 
-**Status: AllDrive works.** Two players, one shared session, driving together, progress saved —
-over a LAN and over a VPN.
+**Status: AllDrive works.** Up to six players in one shared session, host migration when the host
+leaves, career progress that survives a restart, player names and profile pictures. It works over a
+LAN and over a VPN.
 
 This project ships no game files, assets or executables, and circumvents no copy protection.
 Every player uses their own legally purchased copy; we only provide a server that stands in for
@@ -22,15 +23,16 @@ a service the publisher switched off. [MIT licensed](LICENSE).
 - **Radmin VPN** or Hamachi if you are playing over the internet (not needed on a shared LAN)
 
 Frida, memory dumps and `launch_direct.py` exist purely for protocol analysis. **They are not
-needed to play** — launch the game normally through Steam.
+needed to play**. Start the game the normal way, through the EA App, or let the launcher do it.
 
 ## The launcher
 
 ![The TurboRivals launcher](docs/launcher.png)
 
-`launcher/` is a windowed launcher that does the `hosts` entry, the firewall rules and the
-player names for you, and streams the server log. It is the easy path; the console commands
-below still work and remain the reference.
+`launcher/` is a windowed launcher. It handles the `hosts` entry (including cleaning out old
+ones), the firewall rules, your name and picture, and finding the career save your game loads.
+It also shows who is online and streams the server log. It is the easy path; the console
+commands below still work and remain the reference.
 
 ```powershell
 venv\Scripts\pythonw.exe launcher\app.py      # pythonw = no console window
@@ -52,12 +54,11 @@ Two things come out of `dist\`:
 | | |
 | --- | --- |
 | `TurboRivals\` | 35 MB folder — a local copy; see the warning below before zipping it |
-| `TurboRivalsSetup.exe` | 14 MB installer — Start Menu entry, uninstaller, no UAC prompt |
+| `TurboRivalsSetup-<version>.exe` | 14 MB installer — Start Menu entry, uninstaller, no UAC prompt |
 
 **Hand people the installer, not a zip of the folder.** Every file extracted from a
 downloaded archive inherits Mark-of-the-Web, and .NET then refuses to load
-`pythonnet
-untime\Python.Runtime.dll`, which pywebview needs — the launcher dies with
+`pythonnet\runtime\Python.Runtime.dll`, which pywebview needs — the launcher dies with
 `Failed to resolve Python.Runtime.Loader.Initialize`. Inno Setup writes the files fresh, so
 an installed copy never hits this. A zip works only if the recipient unblocks it first
 (`Get-ChildItem -Recurse <folder> | Unblock-File`).
@@ -66,7 +67,7 @@ The installer is per-user: it lands in `%LOCALAPPDATA%\Programs\TurboRivals` and
 administrator rights, because the launcher asks for them itself when it touches `hosts` or
 the firewall. Uninstalling takes the `hosts` redirect down first — otherwise you would be
 left with an entry that breaks the EA App and no tool to remove it. Your data in
-`%LOCALAPPDATA%\TurboRivals` (config, `pki/`, captures) survives.
+`%LOCALAPPDATA%\TurboRivals` (config, `pki/`, captures, save backups, your picture) survives.
 
 [TurboRivals.spec](TurboRivals.spec) and [installer/TurboRivals.iss](installer/TurboRivals.iss)
 document what goes in and why.
@@ -92,6 +93,27 @@ Everything the program writes goes to `%LOCALAPPDATA%\TurboRivals`, never next t
 so an installed copy and the portable one share the same config, certificate and progress.
 
 ## How to play
+
+### With the launcher
+
+Every player installs the same version and runs the launcher (it asks for administrator rights
+when it needs them).
+
+**Host:** *HOST A SESSION*.
+1. Enter your name and pick a picture.
+2. Choose the address the others reach you on (the Radmin `26.x.x.x` one over a VPN).
+3. Add the firewall rules once.
+4. *START SERVER*, then start the game.
+
+**Everyone else:** *JOIN A SESSION*.
+1. Enter the host's address, your name and a picture.
+2. Check that *YOUR CAREER SAVE* is not orange.
+3. *REDIRECT AND PLAY*.
+
+The launcher fixes up `hosts`, tells the host which save your game loads and what you are called,
+then starts the game. *ONLINE NOW* shows who is in.
+
+The rest of this section is the same thing done by hand from a console.
 
 ### The machine running the server (host)
 
@@ -186,7 +208,14 @@ persona id the EA App gives the game on start. The launcher takes it from the EA
 (`%LOCALAPPDATA%\Electronic Arts\EA Desktop\Logs\EADesktopVerbose.log`) when the id is written
 there in full. The EA App usually masks it as `####`, so the launcher falls back to the save
 files: a save ending in the same five digits as the EA account, or else the only EA save on the
-PC. If none of that works, the id is only a guess and the launcher says so.
+PC. If none of that works, the id is only a guess and *YOUR CAREER SAVE* turns orange. That
+happens when Rivals has never been played on that PC, or when several EA accounts played it
+there. For the first case, start Rivals once through the EA App without TurboRivals, play until
+it saves, close it, then connect. The game then makes its own save, which the launcher finds.
+
+Confirmed on 30.09 on two kinds of accounts. Newer ones share the suffix: user `…74704`, save
+`1006431274704`. Older ones do not: user `1004043460810`, save `1802434674`, found as the only EA
+save. In both cases a changed paint job stuck.
 
 - **the host** — found automatically through the EA App on the server's machine
   (`--local-id <id>` overrides it);
@@ -220,7 +249,7 @@ Two warnings come up on a fresh machine and neither means anything is wrong:
 - **The launcher fails with `Failed to resolve Python.Runtime.Loader.Initialize`.** That
   happens when the program was run out of a folder extracted from a downloaded archive:
   those files carry Mark-of-the-Web and .NET refuses to load them. Install with
-  `TurboRivalsSetup.exe` instead, or unblock the folder first
+  `TurboRivalsSetup-<version>.exe` instead, or unblock the folder first
   (`Get-ChildItem -Recurse <folder> | Unblock-File`).
 
 One more that looks like a network problem and is not: **a joining player's game says it cannot
@@ -244,13 +273,17 @@ for the launcher version, which side hit the problem, how the players are connec
 What helps most is the **server log**, in particular the lines naming a component and a
 command (`Fire2 comp=… cmd=…`): they say exactly how far the client got. A session that
 stops after `Util.preAuth` without an `Authentication.login` almost always means the EA App
-was not running on that machine.
+was not running on that machine. If progress does not stick, include what *YOUR CAREER SAVE*
+showed, and the `[identity]` lines from the host's log.
 
 Read the section above first — the three most common reports are not bugs.
 
 ## What is missing
 
 - **internet play without a VPN** — the game connects players directly and EA's relay is gone
+  (the game has UPnP code of its own, a lead for phase 5)
+- other players' profile pictures in the game: served the same way as your own, not yet
+  confirmed in a shared session
 - a few RPCs still answered with an empty acknowledgement: `UserSessions.lookupUsers`,
   `NFS.getSpecialGuestInfo`, `getInGameRecommendations`, `getAutologPlaylist`
 
@@ -265,8 +298,6 @@ docs/        protocol notes, decision log, raw recon output
 
 Protocol details: [docs/protocol.md](docs/protocol.md).
 Work log, including the reasoning and the dead ends: [docs/decisions.md](docs/decisions.md).
-
-Both documents are currently written in Polish.
 
 ## Recon tooling
 

@@ -47,7 +47,7 @@ CATEGORIES: list[tuple[str, str, str]] = [
         r"(?i)protossl|dirtysock|dirtysdk|netconn|protohttp|protoupnp|protoadvt"
         r"|protossl|protostream|netgame|commudp|protomangle",
         "DirtySDK - EA's network layer. The ProtoSSL version decides whether "
-        "the forged certificate trick will work.",
+        "the client accepts our server's stand-in certificate.",
     ),
     (
         "components",

@@ -1,14 +1,14 @@
-# Metadane TDF wyciagniete z NFS14.exe
+# TDF metadata extracted from NFS14.exe
 
-- Znalezionych par (tag, pole): **4,046**
-- Unikalnych tagow: **1,459**
-- Ciaglych blokow (kandydaci na klasy): **129**
+- (tag, field) pairs found: **4,046**
+- Unique tags: **1,459**
+- Contiguous blocks (class candidates): **129**
 
-Tag to 24-bitowa wartosc rozpakowywana na 4 znaki po 6 bitow (0 = spacja). To dokladnie te tagi, ktore leca po drucie.
+A tag is a 24-bit value unpacked into 4 characters of 6 bits each (0 = space). These are exactly the tags that go over the wire.
 
-## Slownik tag -> pole
+## Dictionary tag -> field
 
-| tag | nazwy pol |
+| tag | field names |
 | --- | --- |
 | `053 ` | mLanguage |
 | `ACC ` | mAccept |
@@ -1470,9 +1470,9 @@ Tag to 24-bitowa wartosc rozpakowywana na 4 znaki po 6 bitow (0 = spacja). To do
 | `XUID` | mXuid |
 | `ZIP ` | mZipCode |
 
-## Bloki w kolejnosci adresow
+## Blocks in address order
 
-### blok 0 @ 0x0001416ac4f8 (7 pol)
+### block 0 @ 0x0001416ac4f8 (7 fields)
 
 ```
 PINF  02 00 10 00  mList
@@ -1484,7 +1484,7 @@ TIME  16 18 70 00  mTimestamp
 USER  0a 00 40 00  mUser
 ```
 
-### blok 1 @ 0x0001416ac600 (3 pol)
+### block 1 @ 0x0001416ac600 (3 fields)
 
 ```
 ACHS  01 00 10 00  mAchievements
@@ -1492,7 +1492,7 @@ TURI  05 00 10 00  mLegalDocUri
 ATOK  05 00 10 00  mAccessToken
 ```
 
-### blok 2 @ 0x0001416ac7a0 (4 pol)
+### block 2 @ 0x0001416ac7a0 (4 fields)
 
 ```
 PNAM  05 00 10 00  mPersonaName
@@ -1501,7 +1501,7 @@ USER  0a 00 10 00  mUser
 ACPT  0f 00 10 00  mAccepted
 ```
 
-### blok 3 @ 0x0001416ac840 (4 pol)
+### block 3 @ 0x0001416ac840 (4 fields)
 
 ```
 ID    05 20 10 00  mId
@@ -1510,7 +1510,7 @@ EAMC  15 18 10 00  mEaMayContact
 PMC   15 00 14 00  mPartnersMayContact
 ```
 
-### blok 5 @ 0x0001416ac928 (5 pol)
+### block 5 @ 0x0001416ac928 (5 fields)
 
 ```
 MAIL  05 20 10 00  mEmail
@@ -1520,7 +1520,7 @@ EPTS  16 18 20 00  mExperience
 RPTS  16 00 18 00  mRewardPoints
 ```
 
-### blok 6 @ 0x0001416acb70 (23 pol)
+### block 6 @ 0x0001416acb70 (23 fields)
 
 ```
 DESC  05 20 48 00  mDesc
@@ -1548,7 +1548,7 @@ TIME  16 00 10 00  mTimeAdded
 UIOP  09 00 10 00  mBlazeUserIdOrPersonaName
 ```
 
-### blok 7 @ 0x0001416acec0 (11 pol)
+### block 7 @ 0x0001416acec0 (11 fields)
 
 ```
 DTOK  05 20 10 00  mXBLToken
@@ -1564,7 +1564,7 @@ LNM   05 20 18 00  mListName
 TYPE  13 00 10 00  mListType
 ```
 
-### blok 8 @ 0x0001416ad240 (18 pol)
+### block 8 @ 0x0001416ad240 (18 fields)
 
 ```
 BUID  18 18 20 00  mBlazeUserId
@@ -1587,7 +1587,7 @@ PROG  0a 18 68 00  mProgress
 USER  0a 00 10 00  mUser
 ```
 
-### blok 9 @ 0x0001416ad480 (13 pol)
+### block 9 @ 0x0001416ad480 (13 fields)
 
 ```
 MAIL  05 20 10 00  mEmail
@@ -1605,7 +1605,7 @@ LBID  0a 18 10 00  mOwnersBlazeIds
 LID   0a 00 68 00  mListIdentification
 ```
 
-### blok 10 @ 0x0001416ad6c0 (97 pol)
+### block 10 @ 0x0001416ad6c0 (97 fields)
 
 ```
 ALST  02 18 10 00  mListInfoVector
@@ -1707,7 +1707,7 @@ PJID  05 20 20 00  mProjectId
 PRID  05 00 10 00  mProductId
 ```
 
-### blok 11 @ 0x0001416ae140 (59 pol)
+### block 11 @ 0x0001416ae140 (59 fields)
 
 ```
 AUXA  0a 18 58 00  mAuxAuth
@@ -1771,7 +1771,7 @@ GNLS  02 00 18 00  mGroupNameList
 NAME  05 00 10 00  mOptInName
 ```
 
-### blok 12 @ 0x0001416ae790 (8 pol)
+### block 12 @ 0x0001416ae790 (8 fields)
 
 ```
 ANON  0f 18 12 00  mIsAnonymous
@@ -1784,7 +1784,7 @@ PASS  05 20 28 00  mPassword
 TCKT  08 00 10 00  mPS3Ticket
 ```
 
-### blok 13 @ 0x0001416ae950 (9 pol)
+### block 13 @ 0x0001416ae950 (9 fields)
 
 ```
 AGUP  0f 18 a0 00  mCanAgeUp
@@ -1798,7 +1798,7 @@ ENTI  0a 18 10 00  mEntitlementInfo
 ISGR  0f 00 c0 00  mIsGranted
 ```
 
-### blok 14 @ 0x0001416aeb20 (6 pol)
+### block 14 @ 0x0001416aeb20 (6 fields)
 
 ```
 PINF  0a 18 18 00  mPersonaInfo
@@ -1809,7 +1809,7 @@ TSUI  05 00 10 00  mTermsOfServiceUri
 TURI  05 00 10 00  mLegalDocUri
 ```
 
-### blok 15 @ 0x0001416b4d78 (6 pol)
+### block 15 @ 0x0001416b4d78 (6 fields)
 
 ```
 CLID  17 18 10 00  mClubId
@@ -1820,7 +1820,7 @@ CLID  17 18 10 00  mClubId
 PSWD  05 00 18 00  mPassword
 ```
 
-### blok 16 @ 0x0001416b4ef0 (17 pol)
+### block 16 @ 0x0001416b4ef0 (17 fields)
 
 ```
 BLIS  18 00 10 00  mBlazeId
@@ -1842,7 +1842,7 @@ CLTG  02 00 20 01  mTagList
 PERM  01 00 10 00  mPermissionsByAdminTypeMap
 ```
 
-### blok 17 @ 0x0001416b50c0 (3 pol)
+### block 17 @ 0x0001416b50c0 (3 fields)
 
 ```
 DATA  08 10 20 00  mBlob
@@ -1850,7 +1850,7 @@ MIME  05 00 10 00  mContentType
 ROWS  02 00 10 00  mSpeedwalls
 ```
 
-### blok 18 @ 0x0001416b5138 (4 pol)
+### block 18 @ 0x0001416b5138 (4 fields)
 
 ```
 SUCC  0e 00 10 00  mMbSuccess
@@ -1859,7 +1859,7 @@ SUCC  0e 00 10 00  mMbSuccess
 CLID  17 00 10 00  mClubId
 ```
 
-### blok 19 @ 0x0001416b5220 (30 pol)
+### block 19 @ 0x0001416b5220 (30 fields)
 
 ```
 IDLT  02 00 10 00  mBlazeIdList
@@ -1894,7 +1894,7 @@ PLID  17 18 b8 00  mPlatformUserID
 STAF  01 00 10 00  mStatsFlt
 ```
 
-### blok 20 @ 0x0001416b5570 (56 pol)
+### block 20 @ 0x0001416b5570 (56 fields)
 
 ```
 CLID  17 00 10 00  mClubId
@@ -1955,7 +1955,7 @@ OCAT  05 20 30 00  mOnlineCategory
 OLBD  05 00 40 00  mOnlineLeaderboard
 ```
 
-### blok 21 @ 0x0001416b5b70 (43 pol)
+### block 21 @ 0x0001416b5b70 (43 fields)
 
 ```
 BNTY  14 18 38 00  mBestBounty
@@ -2003,7 +2003,7 @@ RCRE  0e 18 10 00  mResourceCreated
 TYPE  0a 00 18 00  mAdmin
 ```
 
-### blok 23 @ 0x0001416b6068 (21 pol)
+### block 23 @ 0x0001416b6068 (21 fields)
 
 ```
 BLID  18 00 10 00  mBlazeId
@@ -2029,7 +2029,7 @@ TEXT  05 00 18 00  mText
 BLID  18 00 10 00  mBlazeId
 ```
 
-### blok 24 @ 0x0001416b62e8 (19 pol)
+### block 24 @ 0x0001416b62e8 (19 fields)
 
 ```
 BLID  18 00 10 00  mBlazeId
@@ -2053,7 +2053,7 @@ NAME  05 00 20 00  mClubName
 BLID  18 00 10 00  mBlazeId
 ```
 
-### blok 25 @ 0x0001416b6550 (8 pol)
+### block 25 @ 0x0001416b6550 (8 fields)
 
 ```
 STTS  01 18 18 00  mOverwatchStats
@@ -2066,7 +2066,7 @@ CLID  17 18 10 00  mClubId
 ISHD  0f 00 28 00  mIsHidden
 ```
 
-### blok 26 @ 0x0001416b6640 (5 pol)
+### block 26 @ 0x0001416b6640 (5 fields)
 
 ```
 CLST  02 18 10 00  mClubList
@@ -2076,7 +2076,7 @@ CAT   05 20 20 00  mCategoryName
 CTXT  05 00 10 00  mContext
 ```
 
-### blok 27 @ 0x0001416b66f0 (5 pol)
+### block 27 @ 0x0001416b66f0 (5 fields)
 
 ```
 AUTH  0a 18 30 00  mAuthCredentials
@@ -2086,7 +2086,7 @@ LIST  02 18 10 00  mRecords
 TOTL  15 00 68 00  mTotalCount
 ```
 
-### blok 28 @ 0x0001416b67a8 (9 pol)
+### block 28 @ 0x0001416b67a8 (9 fields)
 
 ```
 PSCM  01 18 10 00  mPosterComparisons
@@ -2100,7 +2100,7 @@ DESC  05 20 30 00  mDescription
 TRST  02 00 40 00  mTrustedSources
 ```
 
-### blok 29 @ 0x0001416b68c8 (22 pol)
+### block 29 @ 0x0001416b68c8 (22 fields)
 
 ```
 BLID  18 00 10 00  mBlazeId
@@ -2127,7 +2127,7 @@ GECO  05 20 20 00  mGeoCountry
 ISSE  0e 00 38 00  mIsSet
 ```
 
-### blok 30 @ 0x0001416b6b50 (14 pol)
+### block 30 @ 0x0001416b6b50 (14 fields)
 
 ```
 AMOA  10 18 1c 01  mWeaponAAmmo
@@ -2146,7 +2146,7 @@ WEPB  10 00 1b 01  mWeaponBId
 CNOU  01 00 10 00  mNumOfUsersByRegion
 ```
 
-### blok 31 @ 0x0001416b6ce0 (76 pol)
+### block 31 @ 0x0001416b6ce0 (76 fields)
 
 ```
 CLID  17 18 10 00  mRivalClubId
@@ -2227,21 +2227,21 @@ IMCS  14 18 28 00  mAwardImgCheckSum
 LUDT  15 00 30 00  mLastUpdateTime
 ```
 
-### blok 32 @ 0x0001416b7490 (2 pol)
+### block 32 @ 0x0001416b7490 (2 fields)
 
 ```
 RILI  02 18 78 00  mRivalList
 SPWA  01 00 10 00  mSpeedWallIDToSpeedWallMap
 ```
 
-### blok 33 @ 0x0001416b74f0 (2 pol)
+### block 33 @ 0x0001416b74f0 (2 fields)
 
 ```
 CLID  17 00 10 00  mClubId
 SUCC  0e 00 10 00  mMbSuccess
 ```
 
-### blok 34 @ 0x0001416b75d0 (37 pol)
+### block 34 @ 0x0001416b75d0 (37 fields)
 
 ```
 LOC   05 20 68 00  mLocation
@@ -2283,7 +2283,7 @@ OFFS  15 00 34 00  mOffset
 SUCC  0e 00 10 00  mMbSuccess
 ```
 
-### blok 36 @ 0x0001416b7ab0 (8 pol)
+### block 36 @ 0x0001416b7ab0 (8 fields)
 
 ```
 BLID  18 18 10 00  mBlazeId
@@ -2296,7 +2296,7 @@ VHID  14 00 1c 00  mVehicleId
 SUCC  0e 00 10 00  mMbSuccess
 ```
 
-### blok 37 @ 0x0001416b7bc0 (4 pol)
+### block 37 @ 0x0001416b7bc0 (4 fields)
 
 ```
 ROAD  15 18 10 00  mRoad
@@ -2305,7 +2305,7 @@ STTS  01 18 18 00  mOverwatchStats
 SUCC  0e 00 10 00  mSuccess
 ```
 
-### blok 38 @ 0x0001416b7c58 (28 pol)
+### block 38 @ 0x0001416b7c58 (28 fields)
 
 ```
 BLIS  02 00 10 00  mBlazeIDs
@@ -2338,14 +2338,14 @@ TNC   15 18 58 01  mNumOfClubs
 TOC   15 00 5c 01  mNumOfOnlineClubs
 ```
 
-### blok 39 @ 0x0001416b7f70 (2 pol)
+### block 39 @ 0x0001416b7f70 (2 fields)
 
 ```
 LIST  02 18 10 00  mRecords
 TOTL  15 00 68 00  mTotalCount
 ```
 
-### blok 40 @ 0x0001416b7fd0 (18 pol)
+### block 40 @ 0x0001416b7fd0 (18 fields)
 
 ```
 NMPA  01 18 28 00  mStringMap
@@ -2368,7 +2368,7 @@ BLIS  18 18 10 00  mBlazeId
 SWIS  15 00 18 00  mSpeedWallId
 ```
 
-### blok 41 @ 0x0001416b81d8 (13 pol)
+### block 41 @ 0x0001416b81d8 (13 fields)
 
 ```
 BLID  18 18 18 00  mUserId
@@ -2386,7 +2386,7 @@ STRP  02 18 e8 00  mStringParamList
 UINP  02 00 68 00  mUint64ParamList
 ```
 
-### blok 42 @ 0x0001416b8348 (14 pol)
+### block 42 @ 0x0001416b8348 (14 fields)
 
 ```
 UID   18 00 10 00  mUserId
@@ -2405,7 +2405,7 @@ LVLI  14 18 10 00  mLevelId
 SPRQ  14 00 14 00  mLevelSpRequired
 ```
 
-### blok 43 @ 0x0001416b84e0 (34 pol)
+### block 43 @ 0x0001416b84e0 (34 fields)
 
 ```
 BLID  18 18 10 00  mBlazeId
@@ -2444,7 +2444,7 @@ MOSL  02 18 d8 01  mMemberOnlineStatusFilter
 RQST  0a 00 10 00  mParams
 ```
 
-### blok 44 @ 0x0001416b88d0 (16 pol)
+### block 44 @ 0x0001416b88d0 (16 fields)
 
 ```
 AUTH  0a 18 30 00  mAuthCredentials
@@ -2465,7 +2465,7 @@ BLID  18 18 10 00  mBlazeId
 ROWS  02 00 18 00  mPlaylist
 ```
 
-### blok 45 @ 0x0001416b8aa8 (16 pol)
+### block 45 @ 0x0001416b8aa8 (16 fields)
 
 ```
 SOVR  14 18 14 00  mSeasonRolloverTime
@@ -2486,7 +2486,7 @@ OPNM  05 20 28 00  mLastOppoName
 RVCN  15 00 a8 00  mRivalCount
 ```
 
-### blok 46 @ 0x0001416b8c70 (4 pol)
+### block 46 @ 0x0001416b8c70 (4 fields)
 
 ```
 CDSC  05 20 38 00  mDescription
@@ -2495,7 +2495,7 @@ CNAM  05 20 18 00  mName
 NUQN  05 00 28 00  mNonUniqueName
 ```
 
-### blok 47 @ 0x0001416b8d18 (11 pol)
+### block 47 @ 0x0001416b8d18 (11 fields)
 
 ```
 BLID  18 18 10 00  mBlazeId
@@ -2511,7 +2511,7 @@ STTS  01 00 18 00  mOverwatchStats
 CIST  02 00 10 00  mClubPetitionsList
 ```
 
-### blok 48 @ 0x0001416b8e70 (18 pol)
+### block 48 @ 0x0001416b8e70 (18 fields)
 
 ```
 BLID  18 18 10 00  mBlazeId
@@ -2534,7 +2534,7 @@ CLID  17 18 10 00  mClubId
 TSTM  15 00 18 00  mOldestTimestamp
 ```
 
-### blok 49 @ 0x0001416b9050 (39 pol)
+### block 49 @ 0x0001416b9050 (39 fields)
 
 ```
 MSSS  01 00 10 00  mStatus
@@ -2578,7 +2578,7 @@ CLID  17 18 10 00  mClubId
 WIPS  05 00 18 00  mWipeSet
 ```
 
-### blok 50 @ 0x0001416b94a0 (19 pol)
+### block 50 @ 0x0001416b94a0 (19 fields)
 
 ```
 CLID  17 18 10 00  mClubId
@@ -2602,7 +2602,7 @@ TIMX  15 18 24 00  mTimeItemExpires
 TYPE  11 00 10 00  mItemType
 ```
 
-### blok 51 @ 0x0001416c39d8 (85 pol)
+### block 51 @ 0x0001416c39d8 (85 fields)
 
 ```
 SID   15 00 10 00  mServerId
@@ -2692,7 +2692,7 @@ RNAM  05 20 10 00  mName
 USET  0c 00 e0 00  mUserSetId
 ```
 
-### blok 52 @ 0x0001416c42e0 (24 pol)
+### block 52 @ 0x0001416c42e0 (24 fields)
 
 ```
 POPA  01 18 60 00  mPopulationAttributes
@@ -2721,7 +2721,7 @@ TIME  14 18 90 00  mTime
 USET  0c 00 98 00  mUserSetId
 ```
 
-### blok 53 @ 0x0001416c45a0 (216 pol)
+### block 53 @ 0x0001416c45a0 (216 fields)
 
 ```
 CDAT  0a 18 a0 00  mClientData
@@ -2942,14 +2942,14 @@ RDAT  0a 18 88 02  mRoomData
 VDAT  0a 00 10 00  mViewData
 ```
 
-### blok 54 @ 0x0001416c5c10 (2 pol)
+### block 54 @ 0x0001416c5c10 (2 fields)
 
 ```
 SCHS  0a 18 18 00  mScheduledSpec
 SOID  15 00 10 00  mScheduledId
 ```
 
-### blok 55 @ 0x0001416c5c70 (32 pol)
+### block 55 @ 0x0001416c5c70 (32 fields)
 
 ```
 AGGR  07 10 c8 00  mAggrFlags
@@ -2986,7 +2986,7 @@ RPRT  07 10 38 00  mInitialReportTypes
 TIID  15 00 24 00  mTitleId
 ```
 
-### blok 56 @ 0x0001416c6058 (8 pol)
+### block 56 @ 0x0001416c6058 (8 fields)
 
 ```
 ERKM  01 00 10 00  mEntityRankMap
@@ -2999,7 +2999,7 @@ RTNM  05 20 48 00  mRootName
 SDES  05 00 28 00  mShortDesc
 ```
 
-### blok 58 @ 0x0001416c61d0 (4 pol)
+### block 58 @ 0x0001416c61d0 (4 fields)
 
 ```
 STRM  02 00 10 00  mVerifyStringResult
@@ -3008,7 +3008,7 @@ ATTR  01 18 18 00  mAttributes
 CTID  17 00 10 00  mCategoryId
 ```
 
-### blok 59 @ 0x0001416c62d0 (3 pol)
+### block 59 @ 0x0001416c62d0 (3 fields)
 
 ```
 SMAP  01 00 10 00  mLocalizedStrings
@@ -3016,7 +3016,7 @@ LBID  14 18 20 00  mBoardId
 NAME  05 00 10 00  mBoardName
 ```
 
-### blok 60 @ 0x0001416c6440 (12 pol)
+### block 60 @ 0x0001416c6440 (12 fields)
 
 ```
 ASRC  05 20 b8 01  mAuthenticationSource
@@ -3033,14 +3033,14 @@ RSRC  05 20 c8 01  mRegistrationSource
 SVER  05 00 10 00  mServerVersion
 ```
 
-### blok 61 @ 0x0001416c66e0 (2 pol)
+### block 61 @ 0x0001416c66e0 (2 fields)
 
 ```
 RMID  17 18 10 00  mRoomId
 USET  0c 00 18 00  mUserSetId
 ```
 
-### blok 62 @ 0x0001416c6770 (10 pol)
+### block 62 @ 0x0001416c6770 (10 fields)
 
 ```
 053   01 00 00 00  mLanguage
@@ -3055,14 +3055,14 @@ PTYP  14 00 20 00  mPeriodType
 CATS  02 00 10 00  mCategories
 ```
 
-### blok 64 @ 0x0001416c6d40 (2 pol)
+### block 64 @ 0x0001416c6d40 (2 fields)
 
 ```
 ATTR  01 18 18 00  mRoomAttributes
 RMID  17 00 10 00  mRoomId
 ```
 
-### blok 65 @ 0x0001416c6e60 (18 pol)
+### block 65 @ 0x0001416c6e60 (18 fields)
 
 ```
 DESC  05 20 28 00  mDescription
@@ -3085,7 +3085,7 @@ UPDT  02 00 28 00  mUpdates
 KSSV  01 00 10 00  mKeyScopeStatsValueMap
 ```
 
-### blok 66 @ 0x0001416c7190 (12 pol)
+### block 66 @ 0x0001416c7190 (12 fields)
 
 ```
 BIDL  02 18 20 00  mRemovedUserList
@@ -3102,7 +3102,7 @@ PSLS  02 18 48 00  mPingSites
 PVAL  02 00 50 01  mPresetSettingsRanges
 ```
 
-### blok 67 @ 0x0001416c7360 (9 pol)
+### block 67 @ 0x0001416c7360 (9 fields)
 
 ```
 CAT   05 20 10 00  mCategory
@@ -3116,7 +3116,7 @@ PTYP  14 00 24 00  mPeriodType
 STRL  02 00 10 00  mStringstoVerify
 ```
 
-### blok 68 @ 0x0001416c7510 (15 pol)
+### block 68 @ 0x0001416c7510 (15 fields)
 
 ```
 ADRS  05 20 10 00  mAddress
@@ -3136,7 +3136,7 @@ STIM  05 20 58 00  mUseServerTime
 SVNM  05 00 a0 00  mTelemetryServiceName
 ```
 
-### blok 69 @ 0x0001416c77b8 (6 pol)
+### block 69 @ 0x0001416c77b8 (6 fields)
 
 ```
 KSVL  01 00 10 00  mKeyScopeValues
@@ -3147,7 +3147,7 @@ GPVS  05 20 18 00  mGameProtocolVersionString
 PID   16 00 10 00  mPurchaseId
 ```
 
-### blok 70 @ 0x0001416c78c0 (30 pol)
+### block 70 @ 0x0001416c78c0 (30 fields)
 
 ```
 EID   1b 18 18 00  mEntityId
@@ -3182,7 +3182,7 @@ KEY   05 20 10 00  mKey
 VAL   12 00 20 00  mValue
 ```
 
-### blok 71 @ 0x0001416d78a8 (48 pol)
+### block 71 @ 0x0001416d78a8 (48 fields)
 
 ```
 GDAT  02 00 10 00  mGameData
@@ -3235,7 +3235,7 @@ QUEU  02 18 50 05  mGameQueue
 REAS  09 00 a8 05  mGameSetupReason
 ```
 
-### blok 72 @ 0x0001416d7db0 (50 pol)
+### block 72 @ 0x0001416d7db0 (50 fields)
 
 ```
 AGN   15 18 14 00  mNumOfActiveGame
@@ -3290,7 +3290,7 @@ ID    18 00 10 00  mBlazeId
 NOMM  15 00 10 00  mNumOfMatchmakingSessions
 ```
 
-### blok 73 @ 0x0001416d82d0 (4 pol)
+### block 73 @ 0x0001416d82d0 (4 fields)
 
 ```
 LAHE  05 20 20 00  mLastAuthError
@@ -3299,7 +3299,7 @@ GID   17 18 10 00  mGameId
 HOST  18 00 18 00  mNewHostPlayer
 ```
 
-### blok 74 @ 0x0001416d8370 (17 pol)
+### block 74 @ 0x0001416d8370 (17 fields)
 
 ```
 CRIT  01 18 18 00  mEntryCriteriaMap
@@ -3321,7 +3321,7 @@ TSZE  13 00 12 00  mTeamSize
 MLST  02 00 10 00  mMachineIdList
 ```
 
-### blok 75 @ 0x0001416d8690 (4 pol)
+### block 75 @ 0x0001416d8690 (4 fields)
 
 ```
 BANM  02 00 10 00  mBannedMembers
@@ -3330,7 +3330,7 @@ GID   17 18 10 00  mGameId
 PIDL  02 00 18 00  mPlayerIdList
 ```
 
-### blok 76 @ 0x0001416d8770 (77 pol)
+### block 76 @ 0x0001416d8770 (77 fields)
 
 ```
 TMAX  13 18 10 00  mMaxTeamSizeAccepted
@@ -3412,7 +3412,7 @@ NTID  13 18 18 00  mNewTeamId
 TIDX  13 00 1a 00  mTeamIndex
 ```
 
-### blok 77 @ 0x0001416d9010 (40 pol)
+### block 77 @ 0x0001416d9010 (40 fields)
 
 ```
 SID   02 00 10 00  mUsersessionidList
@@ -3457,7 +3457,7 @@ GID   17 18 10 00  mGameId
 GRID  17 00 18 00  mGameReportingId
 ```
 
-### blok 78 @ 0x0001416d9480 (28 pol)
+### block 78 @ 0x0001416d9480 (28 fields)
 
 ```
 GMID  17 18 10 00  mGameId
@@ -3490,7 +3490,7 @@ IRES  0f 00 18 00  mReserved
 GID   17 00 10 00  mGameId
 ```
 
-### blok 79 @ 0x0001416d9820 (13 pol)
+### block 79 @ 0x0001416d9820 (13 fields)
 
 ```
 NQOS  0a 00 10 00  mNetworkQosData
@@ -3508,7 +3508,7 @@ ST    05 00 40 00  mStateRegion
 GID   17 00 10 00  mGameId
 ```
 
-### blok 80 @ 0x0001416d99e0 (11 pol)
+### block 80 @ 0x0001416d99e0 (11 fields)
 
 ```
 CRIT  01 18 10 00  mRoleCriteriaMap
@@ -3524,7 +3524,7 @@ PPSR  0a 18 68 00  mPingSiteRule
 RLST  02 00 10 00  mPredefinedRules
 ```
 
-### blok 81 @ 0x0001416d9b48 (4 pol)
+### block 81 @ 0x0001416d9b48 (4 fields)
 
 ```
 THLD  05 00 10 00  mMinFitThresholdName
@@ -3533,7 +3533,7 @@ PIDL  02 00 50 00  mPersistedGameIdList
 GID   17 00 10 00  mGameId
 ```
 
-### blok 82 @ 0x0001416d9c30 (13 pol)
+### block 82 @ 0x0001416d9c30 (13 fields)
 
 ```
 GID   17 00 10 00  mGameId
@@ -3551,7 +3551,7 @@ ID    18 18 10 00  mBlazeId
 OPT   0f 00 18 00  mOptIn
 ```
 
-### blok 83 @ 0x0001416d9e80 (9 pol)
+### block 83 @ 0x0001416d9e80 (9 fields)
 
 ```
 COID  05 00 10 00  mCorrelationId
@@ -3565,7 +3565,7 @@ SCID  05 20 18 00  mScid
 STMN  05 00 28 00  mExternalSessionTemplateName
 ```
 
-### blok 84 @ 0x0001416d9ff0 (11 pol)
+### block 84 @ 0x0001416d9ff0 (11 fields)
 
 ```
 DONE  11 18 18 00  mIsFinalUpdate
@@ -3581,7 +3581,7 @@ XNNC  08 10 18 00  mXnetNonce
 XSES  08 00 30 00  mXnetSession
 ```
 
-### blok 85 @ 0x0001416da168 (24 pol)
+### block 85 @ 0x0001416da168 (24 fields)
 
 ```
 ATTR  07 10 18 00  mGameSettings
@@ -3610,7 +3610,7 @@ NAME  05 20 10 00  mRuleName
 VALU  02 00 20 00  mMatchedValues
 ```
 
-### blok 86 @ 0x0001416da480 (12 pol)
+### block 86 @ 0x0001416da480 (12 fields)
 
 ```
 CAP   02 18 18 00  mSlotCapacities
@@ -3627,14 +3627,14 @@ HPID  18 18 10 00  mPlayerId
 HSLT  11 00 18 00  mSlotId
 ```
 
-### blok 87 @ 0x0001416da5f0 (2 pol)
+### block 87 @ 0x0001416da5f0 (2 fields)
 
 ```
 MODS  15 18 10 00  mMods
 THLD  05 00 18 00  mMinFitThresholdName
 ```
 
-### blok 88 @ 0x0001416da658 (3 pol)
+### block 88 @ 0x0001416da658 (3 fields)
 
 ```
 CPCM  01 00 10 00  mConnectedPlayerCounts
@@ -3642,7 +3642,7 @@ GID   17 18 10 00  mGameId
 PID   18 00 18 00  mPlayerId
 ```
 
-### blok 89 @ 0x0001416ecc78 (48 pol)
+### block 89 @ 0x0001416ecc78 (48 fields)
 
 ```
 MAP   14 18 10 00  mMapId
@@ -3695,14 +3695,14 @@ LOC   15 18 18 00  mAccountLocale
 RMR   15 00 14 00  mLeavingReason
 ```
 
-### blok 90 @ 0x0001416ed178 (2 pol)
+### block 90 @ 0x0001416ed178 (2 fields)
 
 ```
 PMAX  13 18 12 00  mMaxTotalPlayerSlotsAccepted
 PMIN  13 00 10 00  mMinTotalPlayerSlotsAccepted
 ```
 
-### blok 91 @ 0x0001416ed1d8 (159 pol)
+### block 91 @ 0x0001416ed1d8 (159 fields)
 
 ```
 SUBS  05 00 10 00  mSearchString
@@ -3866,14 +3866,14 @@ RATG  14 18 3c 00  mRating
 TIME  15 00 10 00  mReplayTimes
 ```
 
-### blok 92 @ 0x0001416f52a0 (2 pol)
+### block 92 @ 0x0001416f52a0 (2 fields)
 
 ```
 ERR   0a 00 10 00  mError
 LKRS  02 00 10 00  mContentInfoList
 ```
 
-### blok 93 @ 0x0001416f5308 (97 pol)
+### block 93 @ 0x0001416f5308 (97 fields)
 
 ```
 ENAB  0e 00 10 00  mEnableKillswitch
@@ -3975,7 +3975,7 @@ PID   16 00 10 00  mPurchaseId
 INFO  0a 00 10 00  mContentInfo
 ```
 
-### blok 94 @ 0x0001416f5de0 (8 pol)
+### block 94 @ 0x0001416f5de0 (8 fields)
 
 ```
 PEID  16 18 10 00  mPersonaId
@@ -3988,7 +3988,7 @@ GPID  0c 10 18 00  mGroupId
 PGID  17 00 10 00  mPlaygroupId
 ```
 
-### blok 95 @ 0x0001416f5ef0 (73 pol)
+### block 95 @ 0x0001416f5ef0 (73 fields)
 
 ```
 NAME  05 20 10 00  mName
@@ -4066,7 +4066,7 @@ SPRT  13 00 38 00  mSrcPort
 BLID  18 00 10 00  mBlazeId
 ```
 
-### blok 96 @ 0x0001416f67a0 (34 pol)
+### block 96 @ 0x0001416f67a0 (34 fields)
 
 ```
 PID   16 18 10 00  mPackId
@@ -4105,7 +4105,7 @@ EXPD  05 20 50 00  mExpandResults
 FILT  0a 00 60 00  mFilter
 ```
 
-### blok 97 @ 0x0001416f6b50 (102 pol)
+### block 97 @ 0x0001416f6b50 (102 fields)
 
 ```
 AMAP  02 18 30 03  mAddressRemaps
@@ -4212,7 +4212,7 @@ TGID  17 00 10 00  mTagId
 MSLT  02 00 10 00  mMessages
 ```
 
-### blok 98 @ 0x0001416f76a0 (15 pol)
+### block 98 @ 0x0001416f76a0 (15 fields)
 
 ```
 FLAG  07 10 10 00  mFlags
@@ -4232,7 +4232,7 @@ GTAG  05 20 18 00  mGamertag
 XUID  17 00 10 00  mXuid
 ```
 
-### blok 99 @ 0x0001416f7830 (55 pol)
+### block 99 @ 0x0001416f7830 (55 fields)
 
 ```
 CCAT  05 20 18 00  mContentCategory
@@ -4292,14 +4292,14 @@ BODY  0a 18 18 00  mEntitlementInfo
 PID   17 00 10 00  mPid
 ```
 
-### blok 101 @ 0x0001416f7e00 (2 pol)
+### block 101 @ 0x0001416f7e00 (2 fields)
 
 ```
 MGID  17 18 10 00  mMessageId
 MIDS  02 00 18 00  mMessageIds
 ```
 
-### blok 102 @ 0x0001416f7e88 (23 pol)
+### block 102 @ 0x0001416f7e88 (23 fields)
 
 ```
 LIST  02 00 10 00  mCategorySummaries
@@ -4327,7 +4327,7 @@ PGID  17 00 10 00  mPlaygroupId
 OTYP  05 00 10 00  mOptin
 ```
 
-### blok 103 @ 0x0001416f80d8 (5 pol)
+### block 103 @ 0x0001416f80d8 (5 fields)
 
 ```
 EURI  05 00 10 00  mEntitlementUri
@@ -4337,7 +4337,7 @@ JOIN  0f 18 e0 01  mJoinIfExists
 PGRP  0a 00 10 00  mPlaygroupInfo
 ```
 
-### blok 104 @ 0x0001416f8180 (6 pol)
+### block 104 @ 0x0001416f8180 (6 fields)
 
 ```
 MIDS  02 00 10 00  mMessageIds
@@ -4348,7 +4348,7 @@ MNAP  01 18 20 00  mVariableValueMap
 MTPL  05 00 10 00  mPurpose
 ```
 
-### blok 105 @ 0x0001416f8270 (13 pol)
+### block 105 @ 0x0001416f8270 (13 fields)
 
 ```
 AUTH  0a 00 10 00  mAuthCredentials
@@ -4366,7 +4366,7 @@ XNNC  08 10 18 00  mXnetNonce
 XSES  08 00 30 00  mXnetSession
 ```
 
-### blok 106 @ 0x0001416f83e0 (14 pol)
+### block 106 @ 0x0001416f83e0 (14 fields)
 
 ```
 PGID  17 18 10 00  mId
@@ -4385,7 +4385,7 @@ PCAT  05 20 18 00  mProfileInfoCategory
 PID   17 00 10 00  mPid
 ```
 
-### blok 107 @ 0x0001416f8580 (22 pol)
+### block 107 @ 0x0001416f8580 (22 fields)
 
 ```
 HOST  05 20 10 00  mHostname
@@ -4412,7 +4412,7 @@ SID   15 18 10 00  mServiceId
 SITE  05 00 18 00  mSiteName
 ```
 
-### blok 108 @ 0x0001416fcc58 (71 pol)
+### block 108 @ 0x0001416fcc58 (71 fields)
 
 ```
 REPS  01 00 10 00  mLicenseReports
@@ -4488,7 +4488,7 @@ ILST  02 00 10 00  mItemKeyList
 PAD   0e 00 10 00  mPad
 ```
 
-### blok 109 @ 0x0001416fd3a0 (94 pol)
+### block 109 @ 0x0001416fd3a0 (94 fields)
 
 ```
 AIDX  13 18 30 00  mIndex
@@ -4587,7 +4587,7 @@ SCOR  14 18 14 00  mScore
 VALD  0e 00 19 00  mValid
 ```
 
-### blok 110 @ 0x0001416fdd60 (5 pol)
+### block 110 @ 0x0001416fdd60 (5 fields)
 
 ```
 COLS  02 18 90 00  mColumnKeyList
@@ -4597,7 +4597,7 @@ MGRR  15 18 30 00  mMaxGameReport
 QNAM  05 00 10 00  mName
 ```
 
-### blok 111 @ 0x0001416fde18 (28 pol)
+### block 111 @ 0x0001416fde18 (28 fields)
 
 ```
 VALU  02 00 10 00  mValues
@@ -4630,7 +4630,7 @@ MONY  15 18 18 00  mMoney
 TALV  15 00 14 00  mLongestTimeAlive
 ```
 
-### blok 112 @ 0x0001416ffae0 (106 pol)
+### block 112 @ 0x0001416ffae0 (106 fields)
 
 ```
 LEAG  1b 00 10 00  mLeagueId
@@ -4741,7 +4741,7 @@ REBS  15 18 20 00  mRebs
 TIME  15 00 14 00  mTime
 ```
 
-### blok 114 @ 0x000141705ce0 (30 pol)
+### block 114 @ 0x000141705ce0 (30 fields)
 
 ```
 FCRT  05 00 10 00  mFailedCriteria
@@ -4776,7 +4776,7 @@ TCTE  0f 00 10 00  mIsFree
 CSTR  05 00 10 00  mCode
 ```
 
-### blok 115 @ 0x000141706090 (31 pol)
+### block 115 @ 0x000141706090 (31 fields)
 
 ```
 MACI  17 18 28 00  mMachineId
@@ -4812,7 +4812,7 @@ RID   15 18 10 00  mRowId
 SNET  0a 00 38 00  mSubNet
 ```
 
-### blok 116 @ 0x000141706430 (22 pol)
+### block 116 @ 0x000141706430 (22 fields)
 
 ```
 MACI  17 18 30 00  mMachineId
@@ -4839,7 +4839,7 @@ SITE  05 20 18 00  mSiteName
 SVID  15 00 10 00  mSid
 ```
 
-### blok 117 @ 0x0001417066c8 (21 pol)
+### block 117 @ 0x0001417066c8 (21 fields)
 
 ```
 IP    05 20 10 00  mIp
@@ -4865,7 +4865,7 @@ RID   15 18 10 00  mRowId
 SNET  0a 00 38 00  mSubNet
 ```
 
-### blok 118 @ 0x000141706920 (3 pol)
+### block 118 @ 0x000141706920 (3 fields)
 
 ```
 ADDR  09 10 80 00  mAddress
@@ -4873,7 +4873,7 @@ NLMP  01 18 10 00  mPingSiteLatencyByAliasMap
 NQOS  0a 00 60 00  mQosData
 ```
 
-### blok 119 @ 0x0001417069c0 (4 pol)
+### block 119 @ 0x0001417069c0 (4 fields)
 
 ```
 CLNM  05 20 10 00  mCatalogName
@@ -4882,7 +4882,7 @@ NAME  05 20 20 00  mEntityName
 TYPE  05 00 10 00  mEntityTypeName
 ```
 
-### blok 120 @ 0x000141706aa0 (12 pol)
+### block 120 @ 0x000141706aa0 (12 fields)
 
 ```
 NAME  05 00 10 00  mEntityName
@@ -4899,7 +4899,7 @@ OWNR  05 20 20 00  mOwner
 SNET  0a 00 30 00  mSubNet
 ```
 
-### blok 121 @ 0x000141a2a740 (149 pol)
+### block 121 @ 0x000141a2a740 (149 fields)
 
 ```
 DPID  16 18 10 00  mDeviceProfileId
@@ -5053,7 +5053,7 @@ CURT  10 18 b0 00  mTc
 DESC  05 20 80 00  mDesc
 ```
 
-### blok 122 @ 0x000141a2b8d8 (6 pol)
+### block 122 @ 0x000141a2b8d8 (6 fields)
 
 ```
 HOWT  05 20 90 00  mHowto
@@ -5064,7 +5064,7 @@ NEXT  02 18 b8 00  mTn
 RPTS  16 18 48 00  mRp
 ```
 
-### blok 123 @ 0x000141a2b9d0 (3 pol)
+### block 123 @ 0x000141a2b9d0 (3 fields)
 
 ```
 TOTT  10 18 b1 00  mTt
@@ -5072,7 +5072,7 @@ XPAC  0a 18 10 01  mXpack
 XPTS  16 00 50 00  mXp
 ```
 
-### blok 124 @ 0x000141a2bae0 (436 pol)
+### block 124 @ 0x000141a2bae0 (436 fields)
 
 ```
 RPTS  16 18 60 00  mRp
@@ -5513,7 +5513,7 @@ VALU  00 00 00 00  mIntValue
 VALU  00 00 00 00  mStringValue
 ```
 
-### blok 125 @ 0x000141a2ef78 (309 pol)
+### block 125 @ 0x000141a2ef78 (309 fields)
 
 ```
 SDR   04 00 10 00  mDisconnectReason
@@ -5827,7 +5827,7 @@ VOIP  04 20 e8 01  mVoipTopology
 VSTR  05 00 30 00  mGameProtocolVersionString
 ```
 
-### blok 126 @ 0x000141a30ff0 (3 pol)
+### block 126 @ 0x000141a30ff0 (3 fields)
 
 ```
 THLD  05 20 10 00  mMinFitThresholdName
@@ -5835,7 +5835,7 @@ VALU  04 00 20 00  mDesiredVirtualGameValue
 REPR  04 00 10 00  mReputationRequirement
 ```
 
-### blok 127 @ 0x000141a31090 (251 pol)
+### block 127 @ 0x000141a31090 (251 fields)
 
 ```
 GURL  05 20 30 00  mGetURL
@@ -6091,7 +6091,7 @@ RTYP  04 20 20 00  mReturnType
 UID   18 00 10 00  mUserId
 ```
 
-### blok 128 @ 0x000141a32c10 (25 pol)
+### block 128 @ 0x000141a32c10 (25 fields)
 
 ```
 RSN   04 00 10 00  mReason

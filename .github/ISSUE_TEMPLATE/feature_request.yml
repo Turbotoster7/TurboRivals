@@ -7,8 +7,8 @@ body:
     attributes:
       label: What should it do
       description: >
-        Worth knowing what is already on the roadmap: host migration, sessions for three
-        or more players, and internet play without a VPN are known gaps, not oversights.
+        Worth knowing what is already on the roadmap: internet play without a VPN is a known
+        gap, not an oversight. Host migration and sessions of up to six players already work.
     validations:
       required: true
 
