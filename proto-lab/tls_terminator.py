@@ -36,6 +36,7 @@ import datetime as dt
 import base64
 import hashlib
 import hmac
+import json
 import os
 import re
 import socket
@@ -44,6 +45,8 @@ import subprocess
 import sys
 import threading
 import time
+import unicodedata
+import urllib.parse
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -51,6 +54,7 @@ from tcp_proxy import hexdump, parse_records  # noqa: E402  (reused reporting)
 import blaze  # noqa: E402  (Fire2 + TDF: request decoding and reply building)
 import player_store  # noqa: E402  (progress saving from GameReporting reports)
 import lobby  # noqa: E402  (player sessions and games - multiplayer)
+import ea_identity  # noqa: E402  (which EA save id a player must log in under)
 
 # --- protocol constants ---
 VER_TLS11 = 0x0302
@@ -654,6 +658,150 @@ def _qos_body(req: bytes, args, peer=None) -> bytes:
             f"<reqsecret>1</reqsecret></qos>").encode()
 
 
+IDENTIFY_PATH = "/turborivals/identify"
+
+
+NAME_MAX = 32                   # a nickname from a guest's launcher is cut to this
+NAME_FOLD = str.maketrans("ŁłØøĐđßÆæŒœ", "LlOoDdsAaOo")   # letters NFKD does not decompose
+
+
+def _clean_name(name: str) -> str:
+    """A nickname as the other players will see it: printable ASCII, like every EA nickname -
+    accents are folded (Ł -> L, é -> e), anything else dropped - trimmed to NAME_MAX. Also keeps
+    the log printable on a console codepage."""
+    folded = unicodedata.normalize("NFKD", name.translate(NAME_FOLD))
+    return "".join(ch for ch in folded if " " <= ch <= "~").strip()[:NAME_MAX].strip()
+
+
+def _identify(req: bytes, args, peer) -> tuple[bytes, bytes] | None:
+    """GET /turborivals/identify?id=<save id>&user=<EA App user>&saves=<id,id,...>&src=<how the
+    id was found>&name=<nickname> - a guest's launcher (launcher/commands.identify_to_host)
+    reporting, before it starts the game, the id of the save that game loads and the name the
+    player wants. Registered for the address it comes from (lobby.register), so the login from
+    there gets that uid and name; user also vouches for an id whose suffix differs from the
+    token's. saves and src are only logged: with no access to the guest's machine they are how
+    to tell whether its launcher picked the right save. Rides on the QoS HTTP port, which the
+    host already opens. Returns (status, body), or None for another path."""
+    try:
+        target = req.split(b" ", 2)[1].decode("ascii")
+    except (IndexError, UnicodeDecodeError):
+        return None
+    url = urllib.parse.urlsplit(target)
+    if url.path != IDENTIFY_PATH:
+        return None
+    query = urllib.parse.parse_qs(url.query)
+    uid, user, saves, src, name = (query.get(k, [""])[0]
+                                   for k in ("id", "user", "saves", "src", "name"))
+    name = _clean_name(name)
+    print(f"\n  [identity] {peer[0]} launcher: name {name or '-'}, save id {uid or '-'} "
+          f"({src or 'source not sent'}), EA App user {user or '-'}, saves {saves or '-'}")
+    if not uid.isdigit() or ea_identity.is_synthetic(int(uid)):
+        print(f"  [identity] WARNING {peer[0]}: no usable save id - that player gets a synthetic "
+              f"uid and its progress will not survive a restart")
+        if name:
+            _lobby(args).names[peer[0]] = name    # the name still counts
+        return b"400 Bad Request", b"no usable save id"
+    _lobby(args).register(peer[0], int(uid), name=name,
+                          user=int(user) if user.isdigit() else 0)
+    return b"200 OK", b"ok"
+
+
+LAUNCHER_PREFIX = "/turborivals/"
+AVATAR_MAX = 64 * 1024              # a launcher sends a 128 px PNG, well under this
+HTTP_HEAD_MAX = 8192
+PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
+JPEG_MAGIC = b"\xff\xd8\xff"
+
+
+def _read_request(conn: socket.socket, limit: int = AVATAR_MAX) -> tuple[bytes, bytes | None]:
+    """(head, body) of one HTTP request. The head is read up to the blank line - the game's QoS
+    GETs arrive in one piece, so that costs them nothing - and the body per Content-Length, up
+    to `limit`. body is None when the request announces more than that."""
+    data = b""
+    while b"\r\n\r\n" not in data and len(data) < HTTP_HEAD_MAX:
+        chunk = conn.recv(4096)
+        if not chunk:
+            break
+        data += chunk
+    head, _, body = data.partition(b"\r\n\r\n")
+    length = 0
+    for line in head.split(b"\r\n")[1:]:
+        name, _, value = line.partition(b":")
+        if name.strip().lower() == b"content-length" and value.strip().isdigit():
+            length = int(value.strip())
+    if length > limit:
+        return head, None
+    while len(body) < length:
+        chunk = conn.recv(min(65536, length - len(body)))
+        if not chunk:
+            break
+        body += chunk
+    return head, body[:length]
+
+
+def _avatar_path(args, uid: int) -> Path:
+    return _data_root(args) / "avatars" / f"{uid}.png"
+
+
+def _launcher_request(head: bytes, body: bytes | None, args,
+                      peer) -> tuple[bytes, bytes, bytes] | None:
+    """Requests from a launcher, on the QoS HTTP port (which every player already reaches):
+    (status, content type, body), or None for anything else - that is the game's QoS.
+
+      GET  /turborivals/identify         save id and name before the game starts (_identify)
+      POST /turborivals/avatar           the sender's own picture, at most AVATAR_MAX: a PNG for
+                                         the launchers, a JPEG for the game. Whose it is comes
+                                         from the sender's ADDRESS (Lobby.uid_for), so nobody can
+                                         replace someone else's
+      GET  /turborivals/players          who is logged in right now (ONLINE NOW), JSON
+      GET  /turborivals/avatar/<uid>     that player's picture
+    """
+    try:
+        method, target = head.split(b" ", 2)[:2]
+        path = urllib.parse.urlsplit(target.decode("ascii")).path
+    except (ValueError, UnicodeDecodeError):
+        return None
+    if not path.startswith(LAUNCHER_PREFIX):
+        return None
+    text = b"text/plain"
+    if path == IDENTIFY_PATH:
+        status, reply = _identify(head, args, peer)
+        return status, text, reply
+    if path == LAUNCHER_PREFIX + "avatar" and method == b"POST":
+        # PNG for the launchers, JPEG for the game (ByteVault Pictures, _bytevault_record)
+        kind = ".png" if body and body.startswith(PNG_MAGIC) else \
+               ".jpg" if body and body.startswith(JPEG_MAGIC) else ""
+        if body is None or len(body) > AVATAR_MAX or not kind:
+            return b"400 Bad Request", text, b"a PNG or JPEG of at most 64 KB"
+        uid = _lobby(args).uid_for(peer[0])
+        if not uid:
+            return b"409 Conflict", text, b"unknown player - connect first"
+        target_file = _avatar_path(args, uid).with_suffix(kind)
+        try:
+            target_file.parent.mkdir(parents=True, exist_ok=True)
+            tmp = target_file.with_suffix(".tmp")
+            tmp.write_bytes(body)
+            os.replace(tmp, target_file)
+        except OSError as e:
+            return b"500 Internal Server Error", text, str(e).encode(errors="replace")
+        print(f"  [avatar] {peer[0]}: picture of uid {uid} saved ({kind[1:]}, {len(body)} B)")
+        return b"200 OK", text, b"ok"
+    if path == LAUNCHER_PREFIX + "players":
+        players = []
+        for p in _lobby(args).online():
+            f = _avatar_path(args, p["uid"])
+            # the picture's version: launchers re-download it only when this changes
+            players.append({**p, "avatar": f.stat().st_mtime_ns // 1_000_000 if f.exists() else 0})
+        return b"200 OK", b"application/json", json.dumps(players).encode()
+    if path.startswith(LAUNCHER_PREFIX + "avatar/"):
+        uid = path.rsplit("/", 1)[-1]
+        f = _avatar_path(args, int(uid)) if uid.isdigit() else None
+        if f is None or not f.exists():
+            return b"404 Not Found", text, b"no picture"
+        return b"200 OK", b"image/png", f.read_bytes()
+    return b"404 Not Found", text, b"unknown launcher request"
+
+
 def _qos_probe_reply(data: bytes, peer, args) -> bytes:
     """Reply to a QoS UDP probe. A bare echo is NOT ENOUGH, and the two kinds of
     probes need DIFFERENT replies.
@@ -747,9 +895,17 @@ def _dispatch_blaze(fr, args, sess):
     if fr.component == 9 and fr.command == 2:           # Util.ping
         return blaze.build_ping_response(fr.seq, msg_type=args.reply_msgtype)
     if fr.component == 1 and fr.command == 152:         # Authentication.login (Origin)
-        # Per-player identity from players.json (lobby.py): assigned once on the first login.
-        sess.outbox += _lobby(args).login(sess)
-        print(f"  [player] {sess.ip} -> {sess.persona} (uid {sess.uid})")
+        # Per-player identity from players.json (lobby.py). The uid must be the id of the save
+        # the game loads; the Origin token's account suffix confirms a claimed id is this
+        # player's own.
+        suffix = ea_identity.token_suffix(_req_fields(fr).get("AUTH"))
+        sess.outbox += _lobby(args).login(sess, suffix)
+        print(f"  [player] {sess.ip} -> {sess.persona} (uid {sess.uid}, {sess.id_source}, "
+              f"{sess.id_check})")
+        if sess.id_source == lobby.SYNTHETIC:
+            print(f"  [identity] WARNING {sess.ip}: EA save id unknown - this player's progress "
+                  f"goes to {sess.uid}.sav, which the game never loads. Connect with the "
+                  f"launcher (JOIN A SESSION) or pass --player-id {sess.ip}=<id>")
         return blaze.build_login_response(fr.seq, sess.uid, sess.persona,
                                           msg_type=args.reply_msgtype)
     if fr.component == 9 and fr.command == 8:           # Util.postAuth
@@ -966,16 +1122,33 @@ DEFAULT_GAME_NAME = "Player"         # when the request carries no GNAM (game na
 _LOBBY: dict = {}
 
 
+def _data_root(args) -> Path:
+    """Where players.json, the saved progress and the players' pictures live."""
+    return Path(getattr(args, "data_dir", None) or player_store.DATA_DIR)
+
+
 def _lobby(args) -> lobby.Lobby:
     """Shared registry of players and games (one per process). players.json sits next to the saved progress."""
     with _STORE_LOCK:
         if "lobby" not in _LOBBY:
-            root = Path(getattr(args, "data_dir", None) or player_store.DATA_DIR)
+            root = _data_root(args)
             forced = dict(p.split("=", 1) for p in (getattr(args, "player", None) or []) if "=" in p)
+            player_ids = {ip: int(uid) for ip, uid in (
+                p.split("=", 1) for p in (getattr(args, "player_id", None) or []) if "=" in p)}
+            local_id, source = getattr(args, "local_id", 0), "--local-id"
+            if not local_id:
+                # The save this machine's game loads, found through its EA App (ea_identity.py)
+                found = ea_identity.resolve()
+                local_id = found["id"] or 0
+                source = f"local-auto, {found['source']}" if local_id else "local-auto"
+                print(f"[identity] local player: EA App user {found['user'] or '-'}, saves "
+                      f"{', '.join(map(str, found['saves'])) or '-'} -> uid "
+                      f"{local_id or 'unknown, keeping the stored one'}"
+                      f"{' (' + found['source'] + ')' if local_id else ''}")
             _LOBBY["lobby"] = lobby.Lobby(
                 root / "players.json", forced,
                 player_state_notify=getattr(args, "player_state_notify", True),
-                local_id=getattr(args, "local_id", 0),
+                local_id=local_id, local_id_source=source, player_ids=player_ids,
                 local_persona=getattr(args, "local_persona", ""),
                 host_migration=getattr(args, "host_migration", True),
                 migration_player_removed=getattr(args, "migration_player_removed", True),
@@ -1297,10 +1470,99 @@ def _raw_ip_pair(payload: bytes) -> tuple[int, int, int, int, int]:
     return exip, export, inip, inport, maci
 
 
-def _bytevault_reply(method: str, path: str, body: bytes, args) -> tuple[str, str, bytes]:
+BYTEVAULT_RECORD_RE = re.compile(
+    r"^/1\.0/contexts/([^/?]+)/categories/([^/?]+)/records/([^/?]+)")
+PICTURES_CATEGORY = "Pictures"
+_SAFE_PART_RE = re.compile(r"[^A-Za-z0-9_.-]")
+
+
+def _sniff(data: bytes) -> str:
+    """What a blob looks like, by its first bytes - for the log."""
+    for magic, name in ((b"\xff\xd8\xff", "JPEG"), (PNG_MAGIC, "PNG"), (b"DDS ", "DDS"),
+                        (b"{", "JSON"), (b"[", "JSON")):
+        if data.startswith(magic):
+            return name
+    return "unknown"
+
+
+def _bytevault_file(args, ctx: str, cat: str, name: str) -> Path:
+    """Where a record the game wrote is kept. The parts come off the network, so anything but
+    [A-Za-z0-9_.-] is replaced - no way out of the folder."""
+    ctx, cat, name = (_SAFE_PART_RE.sub("_", p).lstrip(".") or "_" for p in (ctx, cat, name))
+    return _data_root(args) / "bytevault" / ctx / cat / f"{name}.body"
+
+
+def _bytevault_record(method: str, path: str, body: bytes, args,
+                      headers: dict) -> tuple[str, str, bytes] | None:
+    """A single record (.../categories/<cat>/records/<name>), or None for anything else.
+
+    Profile pictures: the game asks for GET .../categories/Pictures/records/<uid> for every
+    player it shows (log-29/log-32, 15.09), and it had always got "{}". What it expects back is
+    NOT known yet (the JSON keys are not in the binary; the record classes are Record {DELT INFO
+    LOAD} @0x141a2c8e0 and payload {DATA blob, MIME} @0x1416b50c0, and the game links libjpeg).
+    So this is the research stage:
+      - every WRITE the game makes is kept as is (<data_dir>/bytevault/...) and logged in full -
+        setting a profile picture in the game shows the exact upload format;
+      - a GET gets back what the game itself wrote there, else the launcher's picture
+        (avatars/<uid>.jpg) in the --bytevault-pictures shape: raw JPEG, a JSON guess, or off.
+    Every Pictures answer is logged: one GET per player = accepted, a loop = rejected."""
+    m = BYTEVAULT_RECORD_RE.match(path)
+    if not m:
+        return None
+    ctx, cat, name = (urllib.parse.unquote(p) for p in m.groups())
+    stored = _bytevault_file(args, ctx, cat, name)
+    if method in ("PUT", "POST", "PATCH"):
+        kind = _sniff(body)
+        print(f"  [bytevault] WRITE {cat}/{name} ({ctx}): {len(body)} B, looks like {kind}, "
+              f"Content-Type {headers.get('content-type', '-')}")
+        print(hexdump(body, 512))
+        try:
+            stored.parent.mkdir(parents=True, exist_ok=True)
+            stored.write_bytes(body)
+            stored.with_suffix(".meta.json").write_text(json.dumps(
+                {"method": method, "path": path, "headers": headers, "size": len(body),
+                 "kind": kind}, indent=1), encoding="utf-8")
+            print(f"  [bytevault] kept in {stored}")
+        except OSError as e:
+            print(f"  [bytevault] could not keep it: {e}")
+        return None                          # the reply itself stays as before
+    if method != "GET" or cat != PICTURES_CATEGORY:
+        return None
+    if stored.exists():
+        try:
+            meta = json.loads(stored.with_suffix(".meta.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            meta = {}
+        data = stored.read_bytes()
+        ctype = meta.get("headers", {}).get("content-type") or "application/octet-stream"
+        print(f"  [bytevault] Pictures/{name} -> what the game wrote ({len(data)} B, {ctype})")
+        return "200 OK", ctype, data
+    mode = getattr(args, "bytevault_pictures", "raw")
+    jpg = _avatar_path(args, int(name)).with_suffix(".jpg") if name.isdigit() else None
+    if mode == "off" or jpg is None or not jpg.exists():
+        print(f"  [bytevault] Pictures/{name} -> none ({'off' if mode == 'off' else 'no picture'})")
+        return None
+    data = jpg.read_bytes()
+    if mode == "json":
+        doc = {"info": {"recordName": name, "context": ctx, "categoryName": cat},
+               "payload": {"contentType": "image/jpeg",
+                           "blob": base64.b64encode(data).decode("ascii")}}
+        out = json.dumps(doc).encode()
+        print(f"  [bytevault] Pictures/{name} -> launcher picture as JSON ({len(out)} B)")
+        return "200 OK", "application/json", out
+    print(f"  [bytevault] Pictures/{name} -> launcher picture, raw JPEG ({len(data)} B)")
+    return "200 OK", "image/jpeg", data
+
+
+def _bytevault_reply(method: str, path: str, body: bytes, args,
+                     headers: dict | None = None) -> tuple[str, str, bytes]:
     """ByteVault (REST) reply. Record list layout: candidate {LIST mRecords, TOTL
     mTotalCount} (@0x1416b6748). The JSON keys are NOT stored in the binary - we assume the field
-    names without the m prefix; --bytevault-format heat sends the same TDF in binary."""
+    names without the m prefix; --bytevault-format heat sends the same TDF in binary. Single
+    records (profile pictures) go through _bytevault_record first."""
+    record = _bytevault_record(method, path, body, args, headers or {})
+    if record is not None:
+        return record
     fmt = getattr(args, "bytevault_format", "json")
     listing = "/recordinfo" in path or path.split("?")[0].rstrip("/").endswith("/records")
     if fmt == "heat":
@@ -1341,7 +1603,7 @@ def _serve_http(w, buf: bytearray, args) -> None:
             print(f"      {ln}")
         if body:
             print(f"      BODY ({len(body)} B): {body[:300]!r}")
-        status, ctype, payload = _bytevault_reply(method, path, body, args)
+        status, ctype, payload = _bytevault_reply(method, path, body, args, headers)
         resp = (f"HTTP/1.1 {status}\r\nContent-Type: {ctype}\r\n"
                 f"Content-Length: {len(payload)}\r\n\r\n").encode() + payload
         w.send_record(RT_APPDATA, resp)
@@ -1552,15 +1814,26 @@ def main() -> int:
                     help="ByteVault reply format (REST over HTTPS on the Blaze port): json "
                          "(keys = field names without the 'm', unconfirmed) or heat (the same "
                          "TDF in binary)")
+    ap.add_argument("--bytevault-pictures", choices=("raw", "json", "off"), default="raw",
+                    help="how a player's launcher picture answers the game's GET "
+                         ".../categories/Pictures/records/<uid>: raw JPEG bytes, a JSON guess "
+                         "{info, payload{contentType, blob}} or off (the old empty reply). What "
+                         "the game itself wrote to a record always wins. Research - see "
+                         "_bytevault_record")
     ap.add_argument("--public-ip", default=None, metavar="IP",
                     help="this machine's address as seen from another machine (multiplayer). "
                          "Defaults to the detected LAN address. QoS reports it to the local "
                          "player as the external address so others can connect; 127.0.0.1 = "
                          "old behaviour")
     ap.add_argument("--local-id", type=int, default=0, metavar="UID",
-                    help="uid of the player at the server; by default assigned once at first "
-                         "login and stored in players.json. Pass it to adopt progress saved "
-                         "earlier under a specific id (stats/<uid>.json)")
+                    help="uid of the player at the server. It must be the id of the career save "
+                         "the game loads (Documents\\Ghost Games\\...\\settings\\<id>.sav), or "
+                         "progress is written to a file the game never reads. By default found "
+                         "through this machine's EA App (proto-lab/ea_identity.py)")
+    ap.add_argument("--player-id", action="append", default=[], metavar="IP=UID",
+                    help="EA save id of the player at an address (repeatable) - for a guest "
+                         "without the launcher, whose launcher would otherwise report it. Checked "
+                         "against the account suffix in the player's login token")
     ap.add_argument("--local-persona", default="", metavar="NAME",
                     help="name of the player at the server; stored in players.json, so it is "
                          "only needed once")
@@ -1731,7 +2004,16 @@ def main() -> int:
                 return
             try:
                 conn.settimeout(5)
-                req = conn.recv(4096)
+                req, req_body = _read_request(conn)
+                reply = _launcher_request(req, req_body, args, peer)
+                if reply is not None:                 # a launcher, not the game
+                    status, ctype, body = reply
+                    conn.sendall(b"HTTP/1.1 " + status + b"\r\n"
+                                 b"Content-Type: " + ctype + b"\r\n"
+                                 b"Connection: close\r\n"
+                                 b"Content-Length: " + str(len(body)).encode() +
+                                 b"\r\n\r\n" + body)
+                    continue
                 print(f"\n  [QoS HTTP] from {peer[0]}:{peer[1]}, {len(req)} B")
                 try:
                     print("    " + req.decode("latin1").replace("\r\n", "\n    ").strip())
@@ -1746,6 +2028,10 @@ def main() -> int:
                              b"\r\n\r\n" + body)
             except OSError:
                 pass
+            except Exception as e:                    # noqa: BLE001
+                # This one thread also answers the game's QoS - a bad launcher request must not
+                # end it.
+                print(f"  [http] {peer[0]}: request failed: {e!r}")
             finally:
                 try:
                     conn.close()
@@ -1759,6 +2045,7 @@ def main() -> int:
             threading.Thread(target=serve_qos, args=(args.qos_port + i,),
                              daemon=True).start()
         threading.Thread(target=serve_qos_http, args=(args.qos_port,), daemon=True).start()
+    _lobby(args)                  # now, not on the first login: the local identity goes in the log up front
     print(f"handing the game this Blaze address: {args.redirect_ip}:{args.blaze_port}. "
           f"Ctrl+C to stop.")
     print("progress saving: " + ("OFF (--no-store)" if args.no_store

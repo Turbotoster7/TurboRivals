@@ -381,9 +381,41 @@ body {
 
 .player-list { list-style: none; display: flex; flex-direction: column; gap: 6px; }
 .player-list:empty::after {
-    content: '> list empty - the server cannot learn EA names, enter them by hand';
+    content: '> optional - players with the launcher name themselves; list only those without it';
     font-family: var(--font-mono); font-size: 0.72rem; color: var(--muted);
 }
+
+/* --- PICTURE AND ONLINE NOW --- */
+.name-row { display: flex; align-items: center; gap: 8px; }
+.name-row .tech-input { flex: 1; }
+.avatar-pick {
+    width: 38px; height: 38px; flex: none; padding: 0; overflow: hidden;
+    background: rgba(0, 240, 255, 0.08); border: 1px solid var(--primary);
+    color: var(--primary); font-family: var(--font-mono); font-size: 0.75rem;
+    cursor: pointer; transition: 0.2s;
+}
+.avatar-pick:hover { box-shadow: 0 0 12px rgba(0, 240, 255, 0.45); }
+.brand-icon-box { overflow: hidden; }
+.avatar-pick img, .brand-icon-box img, .online-avatar img {
+    width: 100%; height: 100%; object-fit: cover; display: block;
+}
+.online-now { margin-top: 12px; }
+.online-list { list-style: none; display: flex; flex-direction: column; gap: 5px; }
+.online-list:empty::after {
+    content: '> ' attr(data-empty);
+    font-family: var(--font-mono); font-size: 0.72rem; color: var(--muted);
+}
+.online-row {
+    display: flex; align-items: center; gap: 10px;
+    background: #0f182e; border: 1px solid #1f3a6e; padding: 4px 10px;
+}
+.online-avatar {
+    width: 28px; height: 28px; flex: none; overflow: hidden;
+    border: 1px solid #1f3a6e; display: flex; align-items: center; justify-content: center;
+    font-family: var(--font-mono); font-size: 0.7rem; color: var(--muted);
+}
+.online-name { font-weight: 600; letter-spacing: 1px; flex: 1; }
+.online-tag { font-family: var(--font-mono); font-size: 0.66rem; color: var(--accent); }
 .player-row {
     display: flex; align-items: center; gap: 10px;
     background: #0f182e; border: 1px solid #1f3a6e;

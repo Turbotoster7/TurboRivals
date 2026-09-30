@@ -69,6 +69,8 @@ a = Analysis(
     hiddenimports=[
         # the server and everything it imports by bare name
         'tls_terminator', 'blaze', 'lobby', 'player_store', 'tcp_proxy',
+        # career save id detection, shared by the server and commands.py
+        'ea_identity',
         # certificate generation, called in-process by commands.make_cert
         'make_stub_cert',
         # the hosts file switcher, imported by commands.py

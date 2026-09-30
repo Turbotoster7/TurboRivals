@@ -125,6 +125,8 @@ The only step is a `hosts` entry pointing at the server (PowerShell as Administr
 
 ```powershell
 $h = "$env:SystemRoot\System32\drivers\etc\hosts"
+# drop any older entry first - with two lines the first one wins, not the newest
+(Get-Content $h) | Where-Object { $_ -notmatch 'gosredirector\.ea\.com' } | Set-Content $h -Encoding ASCII
 Add-Content -Path $h -Value "<SERVER_ADDRESS>`tgosredirector.ea.com" -Encoding ASCII
 ipconfig /flushdns
 ```
@@ -148,12 +150,54 @@ game by itself.
 ### Player names
 
 The server has no way to learn your EA name: at login the client sends nothing but an opaque
-Origin token, which only EA's own service could resolve. So names are supplied by hand:
+Origin token, which only EA's own service could resolve. So every player names themselves in
+their own launcher, in *YOUR NAME*. The field starts out with your EA nickname when the EA App
+has it. A joining player's launcher sends the name to the host on *REDIRECT AND PLAY*, and the
+server keeps it with that player's career save id, so it stays the same over LAN or a VPN and
+across restarts.
+
+Next to the name is your picture. Click the square and pick any photo. The launcher shrinks it to
+a small PNG and sends it to the host's server, and every launcher in the session shows who is
+logged in under *ONLINE NOW*, with pictures. The host keeps them in `avatars\` next to
+`players.json`. The game shows the picture too. It asks the server for each player's profile
+picture (ByteVault `GET .../categories/Pictures/records/<id>`), and the server answers with the
+launcher's 256 px JPEG as raw bytes (`Content-Type: image/jpeg`). Confirmed on 30.09 with the
+player's own picture. A picture set before 1.0.6 has no JPEG copy, so pick it once more.
+
+The host's player list (`--player <address>=<name>`) is only for someone joining without the
+launcher, and it goes by address, so it has to be the address the host actually sees them
+connect from. From the console:
 
 ```
---local-persona "YourName"              name of the player at the server (stored permanently)
---player 26.0.0.2=FriendName      name for an address (pass on every start)
+--local-persona "YourName"        name of the player at the server (stored permanently)
+--player 26.0.0.2=FriendName      name for an address, for a player without the launcher
 ```
+
+### Career saves
+
+Rivals keeps your career on your own PC, in
+`Documents\Ghost Games\Need for Speed(TM) Rivals\settings\<id>.sav`. The game loads your
+account's own save from the EA era, but it writes to the file named after the id the server
+gives it at login. If the two ids differ, every change (a new paint job, an unlocked car) goes
+to a file the game never reads, and it is gone after a restart.
+
+So the server logs every player in under the id of the save their game loads. That id is the
+persona id the EA App gives the game on start. The launcher takes it from the EA App's log
+(`%LOCALAPPDATA%\Electronic Arts\EA Desktop\Logs\EADesktopVerbose.log`) when the id is written
+there in full. The EA App usually masks it as `####`, so the launcher falls back to the save
+files: a save ending in the same five digits as the EA account, or else the only EA save on the
+PC. If none of that works, the id is only a guess and the launcher says so.
+
+- **the host** — found automatically through the EA App on the server's machine
+  (`--local-id <id>` overrides it);
+- **everyone else** — their launcher sends it to the host on *REDIRECT AND PLAY* (the client
+  panel shows it as *YOUR CAREER SAVE*). Without the launcher, the host passes
+  `--player-id <their address>=<id>`.
+
+The server checks each id against the login token, so nobody can load someone else's save.
+The launcher backs the save folder up once a day before a session, to
+`%LOCALAPPDATA%\TurboRivals\save-backups` (last 5 kept). To see which id this PC would use,
+run `python proto-lab/ea_identity.py`.
 
 ## What works
 
@@ -174,6 +218,18 @@ Two warnings come up on a fresh machine and neither means anything is wrong:
   those files carry Mark-of-the-Web and .NET refuses to load them. Install with
   `TurboRivalsSetup.exe` instead, or unblock the folder first
   (`Get-ChildItem -Recurse <folder> | Unblock-File`).
+
+One more that looks like a network problem and is not: **a joining player's game says it cannot
+connect and the host's log shows nothing from that machine.** Check `hosts` on the joining machine
+for a second `gosredirector.ea.com` line, one written by hand or by an older setup:
+
+```powershell
+Select-String gosredirector "$env:SystemRoot\System32\drivers\etc\hosts"
+```
+
+Windows returns the first matching line, so a stale `127.0.0.1` above the launcher's block sends
+the game back to its own machine. The launcher flags such a line on the HOSTS row and removes it
+on *TURN ON* and *REDIRECT AND PLAY*.
 
 ## Reporting a problem
 

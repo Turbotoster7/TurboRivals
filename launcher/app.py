@@ -30,9 +30,11 @@ if "--run-server" in sys.argv:
         # block-buffered by default, and a frozen exe cannot be handed -u, so
         # the server's output would sit in a few-kilobyte buffer while the
         # session is in progress - exactly when it needs reading.
+        # UTF-8 because that is how ServerProcess reads the pipe; left at the console
+        # codepage, one character outside it (a player's name) raised in print().
         for stream in (sys.stdout, sys.stderr):
             try:
-                stream.reconfigure(line_buffering=True)
+                stream.reconfigure(line_buffering=True, encoding="utf-8", errors="replace")
             except (AttributeError, ValueError):
                 pass                             # windowed build with no stdio
 
@@ -116,6 +118,8 @@ class Api:
             "addresses": commands.local_addresses(),
             "suggested_ip": commands.suggested_public_ip(),
             "max_guests": commands.MAX_GUESTS,
+            "save": commands.save_identity(),
+            "avatar": commands.load_avatar(),
             "config": config,
         }
 
@@ -140,6 +144,9 @@ class Api:
     def hosts_off(self) -> dict:
         return commands.hosts_off()
 
+    def resolved_redirector(self) -> list:
+        return commands.resolved_redirector()
+
     def firewall_rules(self, mode: str) -> dict:
         return commands.firewall_rules(mode)
 
@@ -148,6 +155,25 @@ class Api:
 
     def launch_game(self) -> dict:
         return commands.launch_game()
+
+    def identify(self, server_ip: str, name: str = "") -> dict:
+        """Before a guest's game starts: back its saves up, then tell the host which one the
+        game loads and the player's name - see commands.identify_to_host."""
+        backup = commands.backup_saves()
+        result = commands.identify_to_host(server_ip, name)
+        result["backup"] = backup
+        return result
+
+    # --- picture and ONLINE NOW -------------------------------------------
+
+    def save_avatar(self, png_url: str, jpg_url: str = "") -> dict:
+        return commands.save_avatar(png_url, jpg_url)
+
+    def upload_avatar(self, server_ip: str) -> dict:
+        return commands.upload_avatar(server_ip)
+
+    def fetch_players(self, server_ip: str) -> dict:
+        return commands.fetch_players(server_ip)
 
     # --- players ----------------------------------------------------------
 
@@ -168,6 +194,8 @@ class Api:
     # --- server -----------------------------------------------------------
 
     def start_server(self, local_name: str, public_ip: str, entitlements: str) -> dict:
+        # The server picks the host's save id by itself (ea_identity) - back the saves up first.
+        commands.backup_saves()
         try:
             command = commands.build_command(
                 local_name, self._game.get_list_players(), public_ip, entitlements)

@@ -10,6 +10,7 @@ without a console.
 
 from __future__ import annotations
 
+import base64
 import datetime as dt
 import json
 import os
@@ -19,6 +20,9 @@ import socket
 import subprocess
 import sys
 import threading
+import urllib.error
+import urllib.parse
+import urllib.request
 from collections import deque
 from pathlib import Path
 
@@ -58,6 +62,9 @@ def _load_sibling(name: str, folder: str):
 # the console share EXACTLY the same marker block - otherwise one would wipe
 # the other's entries.
 hosts_switch = _load_sibling("hosts_switch", "tools")
+
+# Which career save this machine's game loads - the server uses the same module for the host.
+ea_identity = _load_sibling("ea_identity", "proto-lab")
 
 HOSTS = hosts_switch.HOSTS
 BEGIN, END = hosts_switch.BEGIN, hosts_switch.END
@@ -142,12 +149,17 @@ def flush_dns() -> bool:
 
 
 def hosts_status() -> dict:
-    """What the launcher wrote into hosts: whether the block is on, and where it points."""
+    """What the launcher wrote into hosts: whether the block is on, and where it points.
+
+    effective_ip is where the game actually goes - the FIRST line mapping the
+    redirector, which is not the block when an older line (foreign) sits above it.
+    """
     entries, inside = [], False
     try:
         lines = hosts_switch.read_hosts()
     except OSError as e:
-        return {"active": False, "ip": None, "entries": [], "error": str(e)}
+        return {"active": False, "ip": None, "entries": [], "foreign": [],
+                "effective_ip": None, "error": str(e)}
 
     for line in lines:
         stripped = line.strip()
@@ -166,43 +178,70 @@ def hosts_status() -> dict:
         if len(parts) >= 2 and parts[1] == REDIRECTOR:
             ip = parts[0]
             break
-    return {"active": bool(entries), "ip": ip, "entries": entries, "error": None}
+    return {"active": bool(entries), "ip": ip, "entries": entries,
+            "foreign": hosts_switch.foreign_redirects(lines, REDIRECTOR),
+            "effective_ip": hosts_switch.effective_address(lines, REDIRECTOR), "error": None}
+
+
+def _hosts_backup() -> Path:
+    backup = HOSTS.with_suffix(f".turborivals-{dt.datetime.now():%Y%m%d-%H%M%S}.bak")
+    shutil.copy2(HOSTS, backup)
+    return backup
 
 
 def hosts_on(ip: str) -> dict:
-    """Points gosredirector.ea.com at the given address (backup first, then flush DNS)."""
+    """Points gosredirector.ea.com at the given address (backup first, then flush DNS).
+
+    Also drops any older line for the same names outside the block (removed) -
+    left in place, it would come first and win (hosts_switch.strip_redirects).
+    """
     if not is_admin():
         return {"ok": False, "error": "administrator rights required"}
     if not ip:
         return {"ok": False, "error": "no server address given"}
 
     try:
-        lines = hosts_switch.strip_block(hosts_switch.read_hosts())
-        backup = HOSTS.with_suffix(f".turborivals-{dt.datetime.now():%Y%m%d-%H%M%S}.bak")
-        shutil.copy2(HOSTS, backup)
+        lines, removed = hosts_switch.strip_redirects(hosts_switch.read_hosts())
+        backup = _hosts_backup()
         block = [BEGIN, f"{ip}\t{REDIRECTOR}", END]
         HOSTS.write_text("\n".join(lines + block) + "\n", encoding="utf-8")
     except OSError as e:
         return {"ok": False, "error": f"writing hosts failed: {e}"}
 
     flush_dns()
-    return {"ok": True, "backup": str(backup), "ip": ip}
+    return {"ok": True, "backup": str(backup), "ip": ip, "removed": removed}
 
 
 def hosts_off() -> dict:
-    """Removes the launcher's block. A leftover entry breaks the EA App and other EA games."""
+    """Removes the redirect - the launcher's block and any older line for the same
+    names. A leftover entry breaks the EA App and other EA games."""
     if not is_admin():
         return {"ok": False, "error": "administrator rights required"}
+    backup = None
     try:
         lines = hosts_switch.read_hosts()
-        cleaned = hosts_switch.strip_block(lines)
-        if len(cleaned) != len(lines):
+        cleaned, removed = hosts_switch.strip_redirects(lines)
+        if cleaned != lines:
+            if removed:                 # a line we did not write - keep a copy
+                backup = str(_hosts_backup())
             HOSTS.write_text("\n".join(cleaned) + "\n", encoding="utf-8")
     except OSError as e:
         return {"ok": False, "error": f"writing hosts failed: {e}"}
 
     flush_dns()
-    return {"ok": True}
+    return {"ok": True, "removed": removed, "backup": backup}
+
+
+def resolved_redirector() -> list[str]:
+    """The addresses Windows gives the game for gosredirector.ea.com, in the order
+    it gives them - the game takes the first. Reading the file tells what should
+    happen; this is what does. Empty when the name does not resolve."""
+    flush_dns()
+    try:
+        infos = socket.getaddrinfo(REDIRECTOR, 42127, socket.AF_INET, socket.SOCK_STREAM)
+    except OSError:
+        return []
+    return list(dict.fromkeys(info[4][0] for info in infos))
 
 
 # =======================================================================================
@@ -466,11 +505,14 @@ class ServerProcess:
         if not cert_exists():
             return {"ok": False, "error": "no certificate - generate one first"}
 
+        # The same encoding on both ends of the pipe - for a server run from source; the
+        # frozen one sets it itself (app.py --run-server).
+        env = {**os.environ, "PYTHONIOENCODING": "utf-8:replace"}
         try:
             self.proc = subprocess.Popen(
                 command, cwd=str(ROOT), stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT, text=True, encoding="utf-8",
-                errors="replace", bufsize=1, creationflags=NO_WINDOW)
+                errors="replace", bufsize=1, creationflags=NO_WINDOW, env=env)
         except OSError as e:
             self.proc = None
             return {"ok": False, "error": f"could not start the server: {e}"}
@@ -610,6 +652,205 @@ def launch_game() -> dict:
     except OSError as e:
         return {"ok": False, "error": f"could not launch the game: {e}"}
     return {"ok": True, "via": "Steam - no EA App found, online may not work"}
+
+
+# =======================================================================================
+#                               CAREER SAVE
+# =======================================================================================
+
+# The game logs in under whatever uid the server hands it and names its save file after it, but
+# loads the account's own EA-era save. So the server has to know that save's id, and for a guest
+# only the guest's machine does (proto-lab/ea_identity.py).
+
+IDENTIFY_PORT = 17502           # the host's QoS HTTP port (tls_terminator --qos-port), already open
+SAVE_BACKUP_DIR = Path(os.environ.get("LOCALAPPDATA") or Path.home()) / "TurboRivals" / "save-backups"
+SAVE_BACKUPS_KEPT = 5
+
+
+def save_identity() -> dict:
+    """This machine's EA App user, its career saves, the one the game loads and how we know it
+    (source), and the EA nickname (persona) when the EA App's log has it."""
+    return ea_identity.resolve()
+
+
+def backup_saves() -> dict:
+    """Copies the game's settings folder (career saves + profile) once a day, before the
+    first session - a wrong uid means the game writes a save, so a copy should exist before
+    anything here changes which one. Keeps the last SAVE_BACKUPS_KEPT."""
+    source = ea_identity.saves_dir()
+    if not source.is_dir():
+        return {"ok": False, "error": f"no save folder at {source}"}
+    today = f"{dt.datetime.now():%Y%m%d}"
+    try:
+        SAVE_BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+        done = sorted(p for p in SAVE_BACKUP_DIR.iterdir() if p.is_dir())
+        if any(p.name.startswith(today) for p in done):
+            return {"ok": True, "note": "already backed up today"}
+        target = SAVE_BACKUP_DIR / f"{dt.datetime.now():%Y%m%d-%H%M%S}"
+        shutil.copytree(source, target)
+        for old in (done + [target])[:-SAVE_BACKUPS_KEPT]:
+            shutil.rmtree(old, ignore_errors=True)
+    except OSError as e:
+        return {"ok": False, "error": f"save backup failed: {e}"}
+    return {"ok": True, "path": str(target)}
+
+
+def _unreachable(server_ip: str, error: Exception) -> str:
+    """Why the host did not answer, in terms of what to check. A refusal means the
+    machine is there and only the server is not; silence means the machines do not
+    see each other at all."""
+    reason = getattr(error, "reason", error)
+    if isinstance(reason, ConnectionRefusedError):
+        return f"{server_ip} is reachable, but no TurboRivals server runs there"
+    if isinstance(reason, TimeoutError):
+        return (f"no answer from {server_ip} - wrong address, the machines do not see each "
+                f"other (VPN not connected, different network) or the host's firewall")
+    return f"the host's server did not answer ({reason})"
+
+
+def identify_to_host(server_ip: str, name: str = "") -> dict:
+    """Tells the host's server which save this machine's game loads and the name this player
+    goes by, before the game starts (tls_terminator._identify). Not fatal when it fails: the game
+    still runs, only its progress will not stick and the host's list names the player."""
+    ident = save_identity()
+    if not ident["id"]:
+        return {"ok": False, **ident,
+                "error": "no EA App account found - the host cannot save your progress"}
+    query = urllib.parse.urlencode({"id": ident["id"], "user": ident["user"] or "",
+                                    "saves": ",".join(map(str, ident["saves"])),
+                                    "src": ident["source"], "name": name.strip()})
+    url = f"http://{server_ip}:{IDENTIFY_PORT}/turborivals/identify?{query}"
+    # No proxy: a system-wide one would receive a request meant for a LAN or VPN address.
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    try:
+        with opener.open(url, timeout=3) as reply:
+            body = reply.read(64)
+    except urllib.error.HTTPError as e:
+        return {"ok": False, **ident, "error": f"the host refused the save id: {e.read().decode(errors='replace')}"}
+    except (urllib.error.URLError, OSError) as e:
+        return {"ok": False, **ident, "error": _unreachable(server_ip, e)}
+    if body.strip() != b"ok":
+        # A server from before 30.09 answers every path on this port with QoS XML
+        return {"ok": False, **ident, "error": "the host's server is too old to take a save id"}
+    return {"ok": True, **ident}
+
+
+# =======================================================================================
+#                               PICTURE AND ONLINE NOW
+# =======================================================================================
+
+# Each player's picture lives on its own machine (AVATAR_PATH) and goes to the host's server,
+# which keeps one per player and hands them to every launcher in the session
+# (tls_terminator._launcher_request). The UI scales and crops it before it ever gets here, into
+# two files: a small PNG for the launchers and a JPEG for the game, which asks the server for
+# profile pictures through ByteVault and links libjpeg (tls_terminator._bytevault_record).
+
+# Next to the save backups, not DATA_DIR: run from the repo, that is the repository itself.
+AVATAR_PATH = Path(os.environ.get("LOCALAPPDATA") or Path.home()) / "TurboRivals" / "avatar.png"
+AVATAR_JPG_PATH = AVATAR_PATH.with_suffix(".jpg")
+AVATAR_MAX = 64 * 1024              # same limit as the server
+PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
+JPEG_MAGIC = b"\xff\xd8\xff"
+_avatar_cache: dict[tuple[str, int, int], str] = {}     # (server, uid, version) -> data URL
+
+
+def _opener():
+    # No proxy: a system-wide one would receive a request meant for a LAN or VPN address.
+    return urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+
+def _data_url(png: bytes) -> str:
+    return "data:image/png;base64," + base64.b64encode(png).decode("ascii")
+
+
+def _decode_data_url(data_url: str, magic: bytes) -> bytes | None:
+    try:
+        blob = base64.b64decode(data_url.split(",", 1)[1], validate=True)
+    except (IndexError, ValueError):
+        return None
+    return blob if blob.startswith(magic) and len(blob) <= AVATAR_MAX else None
+
+
+def save_avatar(png_url: str, jpg_url: str = "") -> dict:
+    """Stores this player's picture - PNG and JPEG data URLs from the UI, at most 64 KB each."""
+    png = _decode_data_url(png_url, PNG_MAGIC)
+    jpg = _decode_data_url(jpg_url, JPEG_MAGIC) if jpg_url else b""
+    if png is None or jpg is None:
+        return {"ok": False, "error": "the picture must fit in 64 KB - try a simpler one"}
+    try:
+        AVATAR_PATH.parent.mkdir(parents=True, exist_ok=True)
+        AVATAR_PATH.write_bytes(png)
+        if jpg:
+            AVATAR_JPG_PATH.write_bytes(jpg)
+        else:
+            AVATAR_JPG_PATH.unlink(missing_ok=True)     # never an old JPEG next to a new PNG
+    except OSError as e:
+        return {"ok": False, "error": f"could not save the picture: {e}"}
+    return {"ok": True, "avatar": _data_url(png)}
+
+
+def load_avatar() -> str:
+    """This player's picture as a data URL, "" when none is set."""
+    try:
+        return _data_url(AVATAR_PATH.read_bytes())
+    except OSError:
+        return ""
+
+
+def upload_avatar(server_ip: str) -> dict:
+    """Sends this player's picture to the server at server_ip. The server files it under whoever
+    it knows at this machine's address, so a guest sends it after identify, and the host once its
+    own server runs. Both files: the PNG for the launchers, the JPEG (when there is one) for the
+    game."""
+    files = [(p, t) for p, t in ((AVATAR_PATH, "image/png"), (AVATAR_JPG_PATH, "image/jpeg"))
+             if p.exists()]
+    if not files:
+        return {"ok": True, "note": "no picture set"}
+    for path, ctype in files:
+        try:
+            data = path.read_bytes()
+        except OSError:
+            continue
+        request = urllib.request.Request(
+            f"http://{server_ip}:{IDENTIFY_PORT}/turborivals/avatar", data=data, method="POST",
+            headers={"Content-Type": ctype})
+        try:
+            with _opener().open(request, timeout=5) as reply:
+                reply.read(64)
+        except urllib.error.HTTPError as e:
+            return {"ok": False, "error": f"the host refused the picture: {e.read().decode(errors='replace')}"}
+        except (urllib.error.URLError, OSError) as e:
+            return {"ok": False, "error": _unreachable(server_ip, e)}
+    return {"ok": True}
+
+
+def fetch_players(server_ip: str) -> dict:
+    """Who is logged in to the server at server_ip, each with its picture as a data URL (or "").
+    Pictures are cached by the version the server reports, so a poll every few seconds only
+    downloads one when it changed."""
+    base = f"http://{server_ip}:{IDENTIFY_PORT}/turborivals"
+    try:
+        with _opener().open(f"{base}/players", timeout=3) as reply:
+            players = json.loads(reply.read(256 * 1024))
+    except (urllib.error.URLError, OSError, ValueError) as e:
+        return {"ok": False, "players": [], "error": _unreachable(server_ip, e)}
+    out = []
+    for p in players if isinstance(players, list) else []:
+        uid, version = int(p.get("uid", 0)), int(p.get("avatar", 0))
+        picture = ""
+        if version:
+            key = (server_ip, uid, version)
+            if key not in _avatar_cache:
+                try:
+                    with _opener().open(f"{base}/avatar/{uid}", timeout=3) as reply:
+                        png = reply.read(AVATAR_MAX + 1)
+                    _avatar_cache[key] = _data_url(png) if png.startswith(PNG_MAGIC) else ""
+                except (urllib.error.URLError, OSError):
+                    _avatar_cache[key] = ""
+            picture = _avatar_cache[key]
+        out.append({"uid": uid, "name": str(p.get("name", "")), "local": bool(p.get("local")),
+                    "avatar": picture})
+    return {"ok": True, "players": out}
 
 
 # =======================================================================================

@@ -20,6 +20,11 @@ const state = {
     maxGuests: 5,
     addresses: [],
     eaApp: false,
+    save: { id: null, user: null, saves: [] },   // commands.save_identity()
+    avatar: '',            // this player's picture, a PNG data URL
+    online: null,          // ONLINE NOW: commands.fetch_players(), null = nothing to ask
+    onlineNote: '',
+    joinedIp: '',          // the server this launcher connected a guest to
 };
 
 /* --- bridge ----------------------------------------------------------
@@ -210,10 +215,16 @@ function render() {
     $('#checkCert').style.display = state.mode === 'host' ? '' : 'none';
 
     const hostsOn = state.hosts.active;
+    /* A line for the same name outside our block comes first in the file and the
+       game follows it, whatever the block says (hosts_switch.strip_redirects). */
+    const foreign = state.hosts.foreign || [];
     const hostsTarget = state.mode === 'host' ? '127.0.0.1 (this machine)' : 'the host';
-    setCheck('#checkHosts', hostsOn,
-        hostsOn ? `gosredirector.ea.com -> ${state.hosts.ip || '?'}`
-                : `the game still looks for EA servers - will point at ${hostsTarget}`);
+    setCheck('#checkHosts', hostsOn && !foreign.length,
+        foreign.length
+            ? `old entry outside the launcher: "${foreign[0]}" - the game goes to `
+              + `${state.hosts.effective_ip || '?'}; TURN ON replaces it`
+            : hostsOn ? `gosredirector.ea.com -> ${state.hosts.ip || '?'}`
+                      : `the game still looks for EA servers - will point at ${hostsTarget}`);
     const btnHosts = $('#btnHosts');
     if (!btnHosts.dataset.pending) {
         btnHosts.textContent = hostsOn ? 'TURN OFF' : 'TURN ON';
@@ -227,9 +238,10 @@ function render() {
     /* Count only the checks that actually apply: the certificate is the host's
        business alone. Folding it in as "cert || client" used to hand the
        joining player a free point and print 3/3 next to a red EA APP row. */
+    const hostsOk = hostsOn && !foreign.length;
     const checks = state.mode === 'host'
-        ? [state.admin, state.eaApp, state.cert, hostsOn]
-        : [state.admin, state.eaApp, hostsOn];
+        ? [state.admin, state.eaApp, state.cert, hostsOk]
+        : [state.admin, state.eaApp, hostsOk];
     const ready = checks.filter(Boolean).length;
     $('#checkSummary').textContent = state.known
         ? `${ready}/${checks.length} OK` : '--';
@@ -258,6 +270,9 @@ function render() {
 
     /* players */
     renderPlayers();
+    renderSave();
+    renderAvatar();
+    renderOnline();
     renderAddressChips();
     renderIpHint();
     renderCommandPreview();
@@ -288,6 +303,171 @@ function renderPlayers() {
     });
     $('#slotsTag').textContent = `${state.players.length}/${state.maxGuests} SLOTS`;
     $('#btnAddPlayer').disabled = state.players.length >= state.maxGuests;
+}
+
+/* The game loads its career from this save, and the host's server has to log it in under the
+   same id - otherwise progress goes to a file the game never reads (proto-lab/ea_identity.py). */
+function renderSave() {
+    const { id, user, source } = state.save;
+    /* The EA App's profile or the save files name the save the game loads; the last resort,
+       the account's user id, is a guess (ea_identity.resolve). */
+    const guessed = source === 'EA App user id (guess)';
+    const hint = $('#saveHint');
+    $('#saveId').value = !state.known ? '--' : (id ? String(id) : 'not found');
+    hint.classList.toggle('alert', state.known && (!id || guessed));
+    hint.textContent = !state.known ? ' '
+        : !id ? 'No EA App account found on this PC - the host cannot save your progress.'
+        : !guessed ? `Found (${source}) - sent to the host on connect, so your progress sticks. EA App account ${user}.`
+        : 'Guessed - no save of this EA account found, your progress may not stick. Start the game '
+          + 'once through the EA App, close it, then connect again.';
+}
+
+/* =======================================================================
+   PICTURE AND ONLINE NOW
+   The picture is kept on this machine and sent to the host's server, which hands every
+   launcher in the session the list of who is logged in, with pictures (commands.py).
+   ======================================================================= */
+/* Two copies: a small PNG for the launchers, a JPEG for the game (the server answers its ByteVault
+   profile picture requests with it - the game links libjpeg). The first size, or quality, that
+   fits the server's limit wins. */
+const AVATAR_PNG = { type: 'image/png', sizes: [128, 96, 64], qualities: [undefined] };
+const AVATAR_JPEG = { type: 'image/jpeg', sizes: [256, 192, 128], qualities: [0.85, 0.7, 0.55] };
+const AVATAR_MAX = 64 * 1024;
+
+function avatarImg(src) {
+    const img = document.createElement('img');
+    img.src = src;
+    img.alt = '';
+    return img;
+}
+
+function renderAvatar() {
+    $$('[data-avatar-pick]').forEach((button) => button.replaceChildren(
+        state.avatar ? avatarImg(state.avatar) : document.createTextNode('+')));
+    $('#brandIcon').replaceChildren(
+        state.avatar ? avatarImg(state.avatar) : document.createTextNode('TR'));
+}
+
+function loadImage(file) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onerror = () => reject(new Error('could not read the file'));
+        reader.onload = () => {
+            const img = new Image();
+            img.onerror = () => reject(new Error('not an image the launcher can read'));
+            img.onload = () => resolve(img);
+            img.src = reader.result;
+        };
+        reader.readAsDataURL(file);
+    });
+}
+
+/* Scaled and centre-cropped here, so nothing but a small square picture ever leaves this machine
+   - whatever size or format the photo was. */
+function squareImage(img, format) {
+    const side = Math.min(img.width, img.height);
+    for (const size of format.sizes) {
+        for (const quality of format.qualities) {
+            const canvas = document.createElement('canvas');
+            canvas.width = canvas.height = size;
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = '#000';             // JPEG has no transparency
+            ctx.fillRect(0, 0, size, size);
+            ctx.drawImage(img, (img.width - side) / 2, (img.height - side) / 2, side, side,
+                          0, 0, size, size);
+            const url = canvas.toDataURL(format.type, quality);
+            if ((url.length - url.indexOf(',') - 1) * 3 / 4 <= AVATAR_MAX) return url;
+        }
+    }
+    throw new Error('the picture is too detailed - try another one');
+}
+
+async function pickAvatar(file) {
+    if (!file) return;
+    let png;
+    let jpg;
+    try {
+        const img = await loadImage(file);
+        png = squareImage(img, AVATAR_PNG);
+        jpg = squareImage(img, AVATAR_JPEG);
+    } catch (e) {
+        return toast(e.message, 'bad');
+    }
+    const result = await callApi('save_avatar', png, jpg);
+    if (!result.ok) return toast(result.error, 'bad');
+    state.avatar = result.avatar;
+    renderAvatar();
+    toast('picture set', 'good');
+    const target = onlineTarget();
+    if (target) sendAvatar(target);
+}
+
+/* The server files a picture under whoever it knows at the sender's address: the host once its
+   own server listens (hence the retries), a guest after identify. */
+async function sendAvatar(ip, attempts = 1) {
+    if (!state.avatar) return;
+    for (let i = 0; i < attempts; i++) {
+        const result = await callApi('upload_avatar', ip);
+        if (result.ok) return;
+        if (i === attempts - 1) return toast(`picture not sent: ${result.error}`, 'warn');
+        await new Promise((done) => setTimeout(done, 1000));
+    }
+}
+
+/* Whose server to ask: our own while it runs, or the one this launcher connected to. */
+function onlineTarget() {
+    if (state.mode === 'host') return state.serverRunning ? '127.0.0.1' : '';
+    return state.joinedIp;
+}
+
+function renderOnline() {
+    $$('.online-list').forEach((list) => {
+        list.dataset.empty = state.known ? state.onlineNote : '';
+        list.replaceChildren(...(state.online || []).map((p) => {
+            const row = document.createElement('li');
+            row.className = 'online-row';
+            const pic = document.createElement('span');
+            pic.className = 'online-avatar';
+            if (p.avatar) pic.append(avatarImg(p.avatar));
+            else pic.textContent = (p.name || '?').slice(0, 2).toUpperCase();
+            const name = document.createElement('span');
+            name.className = 'online-name';
+            name.textContent = p.name || `#${p.uid}`;
+            row.append(pic, name);
+            /* "local" is the server's own player, i.e. the host. */
+            const you = state.mode === 'host' ? p.local : p.uid === state.save.id;
+            const tags = [p.local ? 'HOST' : '', you ? 'YOU' : ''].filter(Boolean).join(' · ');
+            if (tags) {
+                const tag = document.createElement('span');
+                tag.className = 'online-tag';
+                tag.textContent = tags;
+                row.append(tag);
+            }
+            return row;
+        }));
+    });
+}
+
+let onlineBusy = false;
+
+async function pollOnline() {
+    if (onlineBusy) return;
+    const target = onlineTarget();
+    if (!target) {
+        state.online = null;
+        state.onlineNote = state.mode === 'host' ? 'start the server to see who is in'
+                                                 : 'connect to see who is in';
+        return renderOnline();
+    }
+    onlineBusy = true;
+    try {
+        const result = await callApi('fetch_players', target);
+        state.online = result.players;
+        state.onlineNote = result.ok ? 'nobody logged in yet' : 'the server does not answer';
+    } finally {
+        onlineBusy = false;
+    }
+    renderOnline();
 }
 
 /* One chip per detected adapter. Which address is right depends on how the
@@ -369,12 +549,21 @@ async function refreshState() {
     state.maxGuests = fresh.max_guests;
     state.addresses = fresh.addresses;
     state.eaApp = fresh.ea_app;
+    state.save = fresh.save;
+    state.avatar = fresh.avatar || '';
     $('#appVersion').textContent = fresh.version ? '· v' + fresh.version : '';
     state.players = await callApi('get_players');
 
     const config = fresh.config;
     state.mode = config.mode || 'host';
-    $('#persona').value = config.local_persona || '';
+    /* No name yet: offer the EA nickname the EA App last gave the game (ea_identity.ea_profile). */
+    const name = config.local_persona || (fresh.save && fresh.save.persona) || '';
+    $('#persona').value = name;
+    $('#guestName').value = name;
+    if (fresh.save && fresh.save.persona) {
+        $('#persona').placeholder = fresh.save.persona;
+        $('#guestName').placeholder = fresh.save.persona;
+    }
     $('#publicIp').value = config.public_ip || fresh.suggested_ip || '';
     $('#serverIp').value = config.server_ip || '';
 
@@ -428,17 +617,26 @@ async function toggleHosts() {
        your own name (lobby.py LOCAL_IPS). */
     const ip = state.mode === 'host' ? '127.0.0.1' : $('#serverIp').value.trim();
 
-    if (state.hosts.active) {
+    /* With an old line outside the block, "on" is not really on - TURN ON
+       (hosts_on) is what takes that line out. */
+    if (state.hosts.active && !(state.hosts.foreign || []).length) {
         const result = await callApi('hosts_off');
         if (!result.ok) return toast(result.error, 'bad');
+        toastRemoved(result);
         toast('hosts restored, DNS cache flushed', 'good');
     } else {
         if (!ip) return toast('enter the server address', 'bad');
         const result = await callApi('hosts_on', ip);
         if (!result.ok) return toast(result.error, 'bad');
+        toastRemoved(result);
         toast(`gosredirector.ea.com -> ${ip}`, 'good');
     }
     state.hosts = await callApi('hosts_status');
+}
+
+function toastRemoved(result) {
+    (result.removed || []).forEach((line) =>
+        toast(`removed an old hosts entry: ${line}`, 'warn'));
 }
 
 async function addFirewall() {
@@ -474,19 +672,45 @@ async function toggleServer() {
     appendLog([`--- start: ${result.command.join(' ')} ---`]);
     toast(`server up (PID ${result.pid})`, 'good');
     persist();
+    sendAvatar('127.0.0.1', 10);        // the server takes a moment to listen
 }
 
 async function connectAsClient() {
     const ip = $('#serverIp').value.trim();
     if (!ip) return toast('enter the server address from the host', 'bad');
+    /* The server cannot learn it anywhere else - the game never sends its EA nickname. */
+    const name = $('#guestName').value.trim();
+    if (!name) return toast('enter your name - the other players see you under it', 'warn');
 
-    if (!state.hosts.active || state.hosts.ip !== ip) {
-        if (state.hosts.active) await callApi('hosts_off');
+    if (!state.hosts.active || state.hosts.ip !== ip || (state.hosts.foreign || []).length) {
         const result = await callApi('hosts_on', ip);
         if (!result.ok) return toast(result.error, 'bad');
+        toastRemoved(result);
         state.hosts = await callApi('hosts_status');
     }
     persist();
+
+    /* The launcher talks to the host by address, the game by name - so the
+       launcher reaching the host proves nothing about the game. Ask Windows what
+       the game will get. */
+    const resolved = await callApi('resolved_redirector');
+    if (resolved[0] !== ip) {
+        return toast(`the game would go to ${resolved[0] || 'nowhere'}, not to ${ip} - `
+                     + 'another gosredirector.ea.com entry in hosts wins; game not started', 'bad');
+    }
+
+    /* Before the game starts: its first login has to find the id already registered. A failure
+       is not fatal - the game still runs, only its progress will not stick. */
+    const ident = await callApi('identify', ip, name);
+    state.save = { id: ident.id, user: ident.user, saves: ident.saves,
+                   source: ident.source, persona: ident.persona };
+    toast(ident.ok ? `career save ${ident.id} and name ${name} sent to the host`
+                   : `${ident.error} - progress may not be saved`,
+          ident.ok ? 'good' : 'warn');
+    state.joinedIp = ip;
+    if (ident.ok) sendAvatar(ip);       // filed under the id identify just registered
+    pollOnline();
+
     const launched = await callApi('launch_game');
     toast(launched.ok ? `redirect active - launching via ${launched.via}`
                       : launched.error,
@@ -545,10 +769,29 @@ function bind() {
     ['#persona', '#publicIp', '#serverIp'].forEach((sel) => {
         $(sel).oninput = () => { renderAddressChips(); renderIpHint(); renderCommandPreview(); persist(); };
     });
+    /* One name per machine: hosting or joining, it is the same player. The host field is what
+       persist() reads, so the guest field writes through to it. */
+    $('#guestName').oninput = () => {
+        $('#persona').value = $('#guestName').value;
+        $('#persona').oninput();
+    };
+    const syncHostName = $('#persona').oninput;
+    $('#persona').oninput = () => { $('#guestName').value = $('#persona').value; syncHostName(); };
+
+    $$('[data-avatar-pick]').forEach((button) => { button.onclick = () => $('#avatarFile').click(); });
+    $('#avatarFile').onchange = (e) => {
+        pickAvatar(e.target.files[0]);
+        e.target.value = '';            // the same file picked again still fires
+    };
 }
+
+const ONLINE_POLL_MS = 3000;
 
 /* Bind and paint immediately - the bridge catches up on its own. */
 runLoader();
 bind();
 render();
-whenReady.then(refreshState);
+whenReady.then(refreshState).then(() => {
+    pollOnline();
+    setInterval(pollOnline, ONLINE_POLL_MS);
+});

@@ -4,8 +4,14 @@
 It modifies a system file, so it:
   - requires administrator rights,
   - makes a backup before the first change,
-  - keeps its entries in a marked block, so that `off` removes exactly what
-    we added and nothing else.
+  - keeps its entries in a marked block.
+
+Both `on` and `off` also take out any OTHER line that maps the same names -
+typically one added by hand (the old readme told players to append one). Such
+a line wins over the block: Windows hands back every matching address in file
+order and the game takes the first, so a stale `127.0.0.1 gosredirector.ea.com`
+above the block sends a joining player's game to itself while the host's log
+stays silent.
 
 IMPORTANT: always run `off` once the session is over. A leftover entry breaks
 the EA App and other EA games.
@@ -75,6 +81,48 @@ def strip_block(lines: list[str]) -> list[str]:
     return out
 
 
+def _mapped_names(line: str) -> tuple[str, list[str]] | None:
+    """(address, names) of an active hosts line, None for a comment or a blank."""
+    fields = line.split("#", 1)[0].split()
+    if len(fields) < 2:
+        return None
+    return fields[0], fields[1:]
+
+
+def strip_redirects(lines: list[str],
+                    names: list[str] | None = None) -> tuple[list[str], list[str]]:
+    """strip_block, plus every line outside the block that maps one of `names`
+    (default PRIMARY + EXTRA). A line mapping other names as well keeps those.
+    Returns (lines, the removed foreign lines as they were)."""
+    wanted = {n.lower() for n in (names or PRIMARY + EXTRA)}
+    out, removed = [], []
+    for line in strip_block(lines):
+        mapped = _mapped_names(line)
+        if mapped is None or not wanted & {n.lower() for n in mapped[1]}:
+            out.append(line)
+            continue
+        removed.append(line.strip())
+        address, hostnames = mapped
+        keep = [n for n in hostnames if n.lower() not in wanted]
+        if keep:
+            out.append("\t".join([address] + keep))
+    return out, removed
+
+
+def foreign_redirects(lines: list[str], name: str) -> list[str]:
+    """Lines outside the block that map `name`."""
+    return strip_redirects(lines, [name])[1]
+
+
+def effective_address(lines: list[str], name: str) -> str | None:
+    """The address the first line mapping `name` gives - what the game connects to."""
+    for line in lines:
+        mapped = _mapped_names(line)
+        if mapped and name.lower() in (n.lower() for n in mapped[1]):
+            return mapped[0]
+    return None
+
+
 def cmd_status(_args) -> int:
     lines = read_hosts()
     inside = False
@@ -93,7 +141,14 @@ def cmd_status(_args) -> int:
         for f in found:
             print(f"  {f}")
     else:
-        print("TurboRivals block absent - hosts is clean")
+        print("TurboRivals block absent")
+    foreign = strip_redirects(lines)[1]
+    if foreign:
+        print(f"\nWARNING - {len(foreign)} other line(s) redirect the same names; the first "
+              f"match wins, so these may override the block (`on`/`off` removes them):")
+        for f in foreign:
+            print(f"  {f}")
+    print(f"\n{PRIMARY[0]} -> {effective_address(lines, PRIMARY[0]) or 'real DNS'}")
     return 0
 
 
@@ -103,7 +158,7 @@ def cmd_on(args) -> int:
         return 1
 
     names = PRIMARY + (EXTRA if args.all else [])
-    lines = strip_block(read_hosts())
+    lines, removed = strip_redirects(read_hosts())
 
     backup = HOSTS.with_suffix(f".turborivals-{dt.datetime.now():%Y%m%d-%H%M%S}.bak")
     shutil.copy2(HOSTS, backup)
@@ -112,6 +167,8 @@ def cmd_on(args) -> int:
     HOSTS.write_text("\n".join(lines + block) + "\n", encoding="utf-8")
 
     print(f"backup: {backup}")
+    for line in removed:
+        print(f"removed an old entry outside the block: {line}")
     print(f"redirected {len(names)} hosts to {args.ip}:")
     for n in names:
         print(f"  {n}")
@@ -124,12 +181,18 @@ def cmd_off(_args) -> int:
         print("administrator rights required", file=sys.stderr)
         return 1
     lines = read_hosts()
-    cleaned = strip_block(lines)
-    if len(cleaned) == len(lines):
+    cleaned, removed = strip_redirects(lines)
+    if cleaned == lines:
         print("nothing to remove")
         return 0
+    if removed:
+        backup = HOSTS.with_suffix(f".turborivals-{dt.datetime.now():%Y%m%d-%H%M%S}.bak")
+        shutil.copy2(HOSTS, backup)
+        print(f"backup: {backup}")
     HOSTS.write_text("\n".join(cleaned) + "\n", encoding="utf-8")
-    print("TurboRivals block removed - hosts restored")
+    for line in removed:
+        print(f"removed an old entry outside the block: {line}")
+    print("TurboRivals redirect removed - hosts restored")
     return 0
 
 

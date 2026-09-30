@@ -10,22 +10,28 @@ and the record number in the MAC), and notifications to player B are sent by pla
 
 Operations that change game state return a list of (session, frame) - the terminator sends them.
 
-Identity: key = the Blaze client's IP address. Every player - local just like remote - gets a
-permanent uid assigned once and stored in players.json, and a temporary name until the server
-learns the real EA nickname from the GNAM field (createGame/startMatchmaking); from the next login
-on, the nickname is already in the login. Local and remote uids come from disjoint pools, so they
-never collide.
+Identity: every player gets a permanent uid stored in players.json, and a name. The game never
+tells the server its EA nickname (GNAM only echoes the name our login gave it), so the name comes
+from the player's own launcher (register - it offers the EA nickname from the EA App's log), else
+from the host's --player IP=NICK list, else a Player_<octet> placeholder.
 
-The real BlazeId from the EA App is NOT needed for anything - the client accepts whatever
-originLogin tells it. Run-40 confirmed this: a remote player went through a whole session and saved
-progress under a fully synthetic uid. Up to and including run-40 the local uid was the author's
-hardcoded account, so everyone who started the server became that account and wrote progress
-under someone else's id.
+The uid is NOT arbitrary. The client accepts whatever originLogin tells it, but the game names its
+career save after that uid while loading the account's EA-era save on start - so under any other
+uid progress goes into a file the game never reads (ea_identity.py; confirmed 30.09). The uid
+must be that save's id: for the player at the server it comes from --local-id or this machine's
+EA App (ea_identity.profile_id), for a remote player from its launcher (register) or --player-id,
+checked against the account suffix in the login token. Such a player is stored under "ea:<id>",
+so it stays one player whichever address it connects from (LAN, Radmin).
+
+Only when that id is unknown does a player fall back to the old scheme: a uid from a synthetic
+pool keyed by IP address (local and remote pools are disjoint). Progress then lasts only as long
+as one session.
 """
 from __future__ import annotations
 
 import json
 import os
+import shutil
 import socket
 import threading
 import zlib
@@ -35,6 +41,8 @@ import blaze
 
 LOCAL_IPS = {"127.0.0.1", "::1"}
 LOCAL_KEY = "local"                  # key of the local player in players.json (instead of an IP address)
+EA_KEY = "ea:"                       # key prefix of a remote player known by its EA save id
+SYNTHETIC = "synthetic pool"         # id source of a player whose EA save id is unknown
 LOCAL_UID_BASE = 1_000_000_000_000   # uid pool for the player at the server machine
 REMOTE_UID_BASE = 1_100_000_000_000  # uid pool for players from other addresses
 DEFAULT_ADDR = (0x7F000001, 3659, 0x7F000001, 3659, 0)   # exip, export, inip, inport, maci
@@ -47,6 +55,9 @@ class Session:
         self.ip = ip
         self.uid = 0
         self.persona = ""
+        self.key = ""                    # players.json key: LOCAL_KEY, "ea:<id>" or the IP address
+        self.id_source = ""              # where the uid came from, for the log
+        self.id_check = ""               # uid vs the login token's account suffix, for the log
         self.persona_id = 0              # EA persona id (BUID from listUserEntitlements2)
         self.addr = DEFAULT_ADDR         # network address reported by the client
         self.games: set[int] = set()
@@ -107,6 +118,8 @@ class Lobby:
                  forced: dict[str, str] | None = None,
                  player_state_notify: bool = True,
                  local_id: int = 0, local_persona: str = "",
+                 local_id_source: str = "--local-id",
+                 player_ids: dict[str, int] | None = None,
                  host_migration: bool = True,
                  migration_player_removed: bool = True,
                  migration_type: int = 2, platform_host_init: bool = True,
@@ -127,8 +140,15 @@ class Lobby:
         # follows NotifyHostMigrationStart
         self.migration_player_removed = migration_player_removed
         self.migrations_started: list[int] = []          # gids, collected by the terminator
-        self.local_id = int(local_id or 0)               # --local-id: overrides the generated uid
+        self.local_id = int(local_id or 0)               # --local-id or local-auto: overrides the generated uid
+        self.local_id_source = local_id_source
         self.local_persona = str(local_persona or "")    # --local-persona: overrides the nickname from GNAM
+        # ip -> (EA save id, source): from a guest's launcher (register) or --player-id IP=ID
+        self.registered: dict[str, tuple[int, str]] = {
+            ip: (int(uid), "--player-id") for ip, uid in (player_ids or {}).items()}
+        self.registered_user: dict[str, int] = {}        # ip -> EA App user id its launcher reported
+        self.names: dict[str, str] = {}                  # ip -> nickname its launcher reported
+        self._key_ip: dict[str, str] = {}                # players.json key -> address of its last login
         self.lock = threading.RLock()
         self.sessions: dict[int, Session] = {}
         self.games: dict[int, Game] = {}
@@ -155,17 +175,136 @@ class Lobby:
         except OSError as e:
             print(f"  [lobby] could not write {self.players_file}: {e}")
 
-    def _identity(self, ip: str) -> tuple[int, str]:
-        """Uid and nickname for an address. Assigned once and stored in players.json, so a
-        player's progress always lands under the same id. The local player lives under the
-        LOCAL_KEY key, because its address (127.0.0.1) tells nothing apart."""
+    def register(self, ip: str, uid: int, source: str = "launcher", name: str = "",
+                 user: int = 0) -> None:
+        """The EA save id (and nickname, EA App user id) a player's launcher reported before
+        starting the game. Used on that address's next login, once the token confirms the id
+        (_identity); the nickname then goes into players.json under the player's id."""
+        with self.lock:
+            self.registered[ip] = (int(uid), source)
+            if user:
+                self.registered_user[ip] = int(user)
+            if name:
+                self.names[ip] = name
+
+    def _adopt_stats(self, old: int, new: int) -> None:
+        """A player moving to a new uid keeps its speed wall results: stats/<old>.json is copied
+        once, unless the new uid already has results of its own."""
+        if not self.players_file or not old or old == new:
+            return
+        stats = self.players_file.parent / "stats"
+        src, dst = stats / f"{old}.json", stats / f"{new}.json"
+        if src.exists() and not dst.exists():
+            try:
+                shutil.copy2(src, dst)
+                print(f"  [identity] results copied: stats/{old}.json -> stats/{new}.json")
+            except OSError as e:
+                print(f"  [identity] could not copy stats/{old}.json: {e}")
+
+    def _ea_key(self, ip: str, suffix: str) -> tuple[str, str]:
+        """players.json key of a remote player known by its EA save id, and where that id came
+        from - or ("", "") when it is unknown or fails the check.
+
+        Candidates: the id registered for this address (launcher, --player-id), then the only
+        known "ea:" player whose id carries the token's account suffix - that one needs no
+        launcher, so a server restart or a switch from LAN to Radmin keeps the player. Every
+        candidate must carry the suffix - or, for a registered id, the EA App user id reported
+        with it must, since the launcher read the pair from the EA App's own profile: better the
+        old synthetic uid than someone else's save. With no suffix to check, a registered id is
+        still taken, unless another address is logged in under it."""
+        candidates = []
+        if ip in self.registered:
+            candidates.append(self.registered[ip])
+        if suffix:
+            # by the id itself, or by the EA App user id stored with it (an older account's
+            # persona id does not share the suffix - _vouched)
+            known = [int(k[len(EA_KEY):]) for k, e in self.players.items()
+                     if k.startswith(EA_KEY)
+                     and (k.endswith(suffix) or str(e.get("user", "")).endswith(suffix))]
+            if len(known) == 1:
+                candidates.append((known[0], "token suffix"))
+        for uid, source in candidates:
+            vouched = self._vouched(ip, uid, source, suffix)
+            if suffix and not str(uid).endswith(suffix) and not vouched:
+                print(f"  [identity] WARNING {ip}: id {uid} ({source}) is not this account's "
+                      f"(token ...{suffix}) - ignored, falling back to the address's uid")
+                continue
+            live = self.sessions.get(uid)
+            if not suffix and live is not None and live.alive and live.ip != ip:
+                print(f"  [identity] WARNING {ip}: id {uid} ({source}) is already logged in from "
+                      f"{live.ip} - ignored, falling back to the address's uid")
+                continue
+            key = f"{EA_KEY}{uid}"
+            if key not in self.players:
+                old = self.players.get(ip, {})
+                self.players[key] = {
+                    "uid": uid, "persona": old.get("persona") or f"Player_{ip.rsplit('.', 1)[-1]}"}
+                self._save_players()
+                print(f"  [identity] {ip}: uid {old.get('uid', '-')} -> {uid} ({source})")
+                self._adopt_stats(int(old.get("uid", 0)), uid)
+            if vouched:
+                self._settle_user(key, uid, self.registered_user.get(ip, 0))
+            return key, source
+        return "", ""
+
+    def _vouched(self, ip: str, uid: int, source: str, suffix: str) -> bool:
+        """Whether the EA App user id paired with `uid` carries the token's suffix: reported by
+        this address's launcher along with that id, or stored with it in players.json."""
+        if not suffix:
+            return False
+        if (uid, source) == self.registered.get(ip):
+            user = self.registered_user.get(ip, "")
+        else:
+            user = self.players.get(f"{EA_KEY}{uid}", {}).get("user", "")
+        return str(user).endswith(suffix)
+
+    def _settle_user(self, key: str, uid: int, user: int) -> None:
+        """Stores the EA App user id with the player (found by the token suffix from then on, even
+        without its launcher), and folds in an entry made earlier under that user id itself - a
+        launcher before 1.0.4 sent it when it could not find the save (guest, 30.09): its name
+        and results move over, the stale entry goes."""
+        entry = self.players[key]
+        if user and entry.get("user") != user:
+            entry["user"] = user
+            self._save_players()
+        stale = f"{EA_KEY}{user}"
+        if not user or user == uid or stale not in self.players:
+            return
+        gone = self.players.pop(stale)
+        if gone.get("persona") and str(entry.get("persona", "")).startswith("Player_"):
+            entry["persona"] = gone["persona"]
+        self._adopt_stats(int(gone.get("uid", 0)), uid)
+        self._save_players()
+        print(f"  [identity] {stale} was a guess of this player's save id - merged into {key}")
+
+    def _identity(self, ip: str, suffix: str = "") -> tuple[str, str]:
+        """players.json key for a login from an address, and where its uid came from; creates
+        the entry on the first login. The local player lives under LOCAL_KEY, because its
+        address (127.0.0.1) tells nothing apart; a remote player under "ea:<id>" when its EA
+        save id is known (_ea_key), otherwise under its address."""
         local = ip in LOCAL_IPS
-        key = LOCAL_KEY if local else ip
+        if local:
+            key = LOCAL_KEY
+            source = (self.local_id_source if self.local_id else
+                      "players.json" if key in self.players else SYNTHETIC)
+        else:
+            key, source = self._ea_key(ip, suffix)
+            if not key:
+                key, source = ip, SYNTHETIC
         entry = self.players.get(key)
         if local and entry and self.local_persona and entry.get("persona") != self.local_persona:
             # --local-persona overrides the stored nickname, not only when creating a new entry:
             # otherwise a once-stored "Player" would stay forever and the flag would look broken.
             entry["persona"] = self.local_persona
+            self._save_players()
+        if local and entry and self.local_id and int(entry.get("uid", 0)) != self.local_id:
+            # Same for the local id: the game names its save file after this uid, so an id that
+            # only applied to a brand-new entry could never move an existing player onto the
+            # save the game actually loads.
+            print(f"  [identity] local: {entry.get('uid')} -> {self.local_id} "
+                  f"({self.local_id_source})")
+            self._adopt_stats(int(entry.get("uid", 0)), self.local_id)
+            entry["uid"] = self.local_id
             self._save_players()
         if not entry:
             used = {e.get("uid") for e in self.players.values()}
@@ -184,13 +323,32 @@ class Lobby:
             self.players[key] = entry
             self._save_players()
             print(f"  [lobby] new player {key}: uid {uid}, progress in stats/{uid}.json")
-        return int(entry["uid"]), self.forced.get(ip) or str(entry["persona"])
+        return key, source
 
-    def login(self, sess: Session) -> list:
-        """Assigns an identity to the session. When the same player already had a connection
-        (re-login), the old one leaves its games - returns notifications for the other players."""
+    def login(self, sess: Session, suffix: str = "") -> list:
+        """Assigns an identity to the session. `suffix` = the account suffix from the login
+        token (ea_identity.token_suffix), "" if unknown. When the same player already had a
+        connection (re-login), the old one leaves its games - returns notifications for the
+        other players."""
         with self.lock:
-            sess.uid, sess.persona = self._identity(sess.ip)
+            sess.key, sess.id_source = self._identity(sess.ip, suffix)
+            entry = self.players[sess.key]
+            sess.uid = int(entry["uid"])
+            # The nickname a player typed into its own launcher, then the host's --player list
+            # (guests without the launcher), then the stored one. The first is stored under the
+            # player's key, so it survives a new address and a server restart.
+            reported = self.names.get(sess.ip, "")
+            if reported and entry.get("persona") != reported:
+                entry["persona"] = reported
+                self._save_players()
+            sess.persona = reported or self.forced.get(sess.ip) or str(entry["persona"])
+            self._key_ip[sess.key] = sess.ip
+            # A mismatch on a remote player never gets this far (_ea_key falls back); on the local
+            # player it is only reported - the operator's own flag or EA App decides there.
+            sess.id_check = ("suffix unknown" if not suffix else
+                             f"token ...{suffix}" if sess.id_source == SYNTHETIC else
+                             "suffix OK" if str(sess.uid).endswith(suffix) else
+                             f"suffix MISMATCH (token ...{suffix})")
             old = self.sessions.get(sess.uid)
             out = []
             if old is not None and old is not sess:
@@ -214,13 +372,33 @@ class Lobby:
         originLogin)."""
         name = (name or "").strip()
         with self.lock:
-            if not name or sess.ip in self.forced or name == sess.persona:
+            if (not name or sess.ip in self.names or sess.ip in self.forced
+                    or name == sess.persona):
                 return False
             sess.persona = name
-            key = LOCAL_KEY if sess.is_local else sess.ip
-            self.players[key] = {"uid": sess.uid, "persona": name}
+            key = sess.key or (LOCAL_KEY if sess.is_local else sess.ip)
+            self.players.setdefault(key, {}).update(uid=sess.uid, persona=name)
             self._save_players()
             return True
+
+    def online(self) -> list[dict]:
+        """Players logged in right now, for the launchers' ONLINE NOW list (roster() is one
+        game's players)."""
+        with self.lock:
+            return [{"uid": s.uid, "name": s.persona, "local": s.is_local}
+                    for s in self.sessions.values() if s.alive]
+
+    def uid_for(self, ip: str) -> int:
+        """The uid of the player at an address - who a launcher's request speaks for: the live
+        session from there, else the id its launcher registered, else (local) the id the local
+        player logs in under. 0 when unknown."""
+        with self.lock:
+            for s in self.sessions.values():
+                if s.alive and s.ip == ip:
+                    return s.uid
+            if ip in LOCAL_IPS:
+                return self.local_id or int(self.players.get(LOCAL_KEY, {}).get("uid", 0))
+            return self.registered.get(ip, (0, ""))[0]
 
     def persona_of(self, uid: int) -> str:
         with self.lock:
@@ -229,10 +407,11 @@ class Lobby:
                 return s.persona
             for key, e in self.players.items():
                 if e.get("uid") == uid:
-                    # --player IP=NAME wins here too: after a disconnect the session is gone, and
-                    # the migration log used to name the old host by its stored placeholder.
-                    forced = self.forced.get("127.0.0.1" if key == LOCAL_KEY else key)
-                    return forced or str(e.get("persona", uid))
+                    # Same order as login(): after a disconnect the session is gone, and the
+                    # migration log used to name the old host by its stored placeholder.
+                    ip = self._key_ip.get(key) or ("127.0.0.1" if key == LOCAL_KEY else key)
+                    return (self.names.get(ip) or self.forced.get(ip)
+                            or str(e.get("persona", uid)))
             return str(uid)
 
     # ------------------------------------------------------------ games
