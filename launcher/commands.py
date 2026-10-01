@@ -47,6 +47,11 @@ else:
     PKI_DIR = ROOT / "proto-lab" / "pki"
     CAPTURE_DIR = ROOT / "docs" / "recon" / "capture"
 
+# Every server run as a file. The window keeps the last 1500 lines only, so a session copied out
+# of it starts somewhere in the middle - without the logins (01.10).
+LOG_DIR = DATA_DIR / "logs"
+LOG_KEEP = 20
+
 
 def _load_sibling(name: str, folder: str):
     """Imports a module that is a plain file in the repo but a bundled module
@@ -183,10 +188,19 @@ def hosts_status() -> dict:
             "effective_ip": hosts_switch.effective_address(lines, REDIRECTOR), "error": None}
 
 
-def _hosts_backup() -> Path:
-    backup = HOSTS.with_suffix(f".turborivals-{dt.datetime.now():%Y%m%d-%H%M%S}.bak")
-    shutil.copy2(HOSTS, backup)
-    return backup
+def _hosts_backup() -> Path | None:
+    """None when there is no hosts file yet - nothing to keep."""
+    return hosts_switch.backup_hosts(HOSTS)
+
+
+NOT_ADMIN = "administrator rights required - click ELEVATE, the launcher restarts as administrator"
+
+
+def _hosts_refused(ip: str) -> str:
+    """Windows refused the write although we are administrator: something guards the file."""
+    return (f"Windows refused to change {HOSTS} - an antivirus or a 'hosts protection' setting "
+            f"guards it. Allow TurboRivals there, or add this line to that file by hand (Notepad "
+            f"as administrator): {ip}  {REDIRECTOR}")
 
 
 def hosts_on(ip: str) -> dict:
@@ -194,9 +208,11 @@ def hosts_on(ip: str) -> dict:
 
     Also drops any older line for the same names outside the block (removed) -
     left in place, it would come first and win (hosts_switch.strip_redirects).
+    A missing hosts file is created: some Windows installs have none, only hosts.ics,
+    which name resolution never reads (01.10).
     """
     if not is_admin():
-        return {"ok": False, "error": "administrator rights required"}
+        return {"ok": False, "error": NOT_ADMIN}
     if not ip:
         return {"ok": False, "error": "no server address given"}
 
@@ -204,27 +220,36 @@ def hosts_on(ip: str) -> dict:
         lines, removed = hosts_switch.strip_redirects(hosts_switch.read_hosts())
         backup = _hosts_backup()
         block = [BEGIN, f"{ip}\t{REDIRECTOR}", END]
-        HOSTS.write_text("\n".join(lines + block) + "\n", encoding="utf-8")
+        hosts_switch.write_hosts(lines + block)
+    except PermissionError:
+        return {"ok": False, "error": _hosts_refused(ip)}
     except OSError as e:
         return {"ok": False, "error": f"writing hosts failed: {e}"}
 
     flush_dns()
-    return {"ok": True, "backup": str(backup), "ip": ip, "removed": removed}
+    return {"ok": True, "backup": str(backup) if backup else None, "ip": ip, "removed": removed}
 
 
 def hosts_off() -> dict:
     """Removes the redirect - the launcher's block and any older line for the same
-    names. A leftover entry breaks the EA App and other EA games."""
-    if not is_admin():
-        return {"ok": False, "error": "administrator rights required"}
+    names. A leftover entry breaks the EA App and other EA games.
+
+    Nothing to remove is a success even without administrator rights - the per-user
+    uninstaller runs unelevated and should not warn about a redirect that is not there."""
     backup = None
     try:
         lines = hosts_switch.read_hosts()
         cleaned, removed = hosts_switch.strip_redirects(lines)
+        if cleaned != lines and not is_admin():
+            return {"ok": False, "error": NOT_ADMIN}
         if cleaned != lines:
             if removed:                 # a line we did not write - keep a copy
                 backup = str(_hosts_backup())
-            HOSTS.write_text("\n".join(cleaned) + "\n", encoding="utf-8")
+            hosts_switch.write_hosts(cleaned)
+    except PermissionError:
+        return {"ok": False, "error": f"Windows refused to change {HOSTS} - an antivirus or a "
+                                      f"'hosts protection' setting guards it; remove the "
+                                      f"{REDIRECTOR} line from it by hand"}
     except OSError as e:
         return {"ok": False, "error": f"writing hosts failed: {e}"}
 
@@ -248,24 +273,82 @@ def resolved_redirector() -> list[str]:
 #                               FIREWALL
 # =======================================================================================
 
-def firewall_rules(mode: str) -> dict:
-    """Adds the inbound rules for 'host' or 'client' mode (idempotent)."""
+def firewall_commands(mode: str, local_ip: str = "",
+                      own: list[str] | None = None) -> list[tuple[str, str, list[str]]]:
+    """(rule name, label for the UI, netsh add command) for each inbound rule of 'host' or
+    'client' mode.
+
+    A host that picked its address gets rules for that address only (localip): the server
+    is then reachable on the VPN or LAN the players share, not on every network the PC is
+    on, such as public Wi-Fi. An address this PC does not have is ignored, since a rule for
+    it would block everything. `own` is this PC's addresses, from local_addresses() by default.
+    """
+    scope = []
+    if mode == "host" and local_ip:
+        if own is None:
+            own = [a["ip"] for a in local_addresses()]
+        if local_ip in own:
+            scope = [f"localip={local_ip}"]
+    return [(name, f"{name} ({proto} {ports})" + (f" on {local_ip}" if scope else ""),
+             ["netsh", "advfirewall", "firewall", "add", "rule", f"name={name}",
+              "dir=in", "action=allow", f"protocol={proto}", f"localport={ports}"] + scope)
+            for name, proto, ports in FIREWALL_RULES.get(mode, [])]
+
+
+def _delete_rule(name: str) -> None:
+    subprocess.run(["netsh", "advfirewall", "firewall", "delete", "rule", f"name={name}"],
+                   capture_output=True, creationflags=NO_WINDOW)
+
+
+def firewall_rules(mode: str, local_ip: str = "") -> dict:
+    """Adds the inbound rules for 'host' or 'client' mode (idempotent: the old rule of each
+    name goes first, so switching address or mode never leaves a wider rule behind)."""
     if not is_admin():
         return {"ok": False, "error": "administrator rights required"}
 
     added = []
-    for name, proto, ports in FIREWALL_RULES.get(mode, []):
-        subprocess.run(["netsh", "advfirewall", "firewall", "delete", "rule",
-                        f"name={name}"],
-                       capture_output=True, creationflags=NO_WINDOW)
-        result = subprocess.run(
-            ["netsh", "advfirewall", "firewall", "add", "rule", f"name={name}",
-             "dir=in", "action=allow", f"protocol={proto}", f"localport={ports}"],
-            capture_output=True, text=True, creationflags=NO_WINDOW)
+    for name, label, command in firewall_commands(mode, local_ip):
+        _delete_rule(name)
+        result = subprocess.run(command, capture_output=True, text=True,
+                                creationflags=NO_WINDOW)
         if result.returncode != 0:
             return {"ok": False, "error": f"rule {name}: {(result.stdout or '').strip()}"}
-        added.append(f"{name} ({proto} {ports})")
+        added.append(label)
     return {"ok": True, "rules": added}
+
+
+def _rule_exists(name: str) -> bool:
+    """Reading rules needs no administrator rights; netsh exits 1 on "No rules match"."""
+    return subprocess.run(["netsh", "advfirewall", "firewall", "show", "rule", f"name={name}"],
+                          capture_output=True, creationflags=NO_WINDOW).returncode == 0
+
+
+def _rule_names() -> list[str]:
+    return sorted({name for rules in FIREWALL_RULES.values() for name, _proto, _ports in rules})
+
+
+def firewall_status() -> dict:
+    """For the pre-flight row: per mode, whether all its rules are in place, and whether any
+    launcher rule is. Says nothing about which address a host rule is scoped to - netsh prints
+    that in the system language."""
+    present = {name for name in _rule_names() if _rule_exists(name)}
+    status = {mode: all(name in present for name, _proto, _ports in rules)
+              for mode, rules in FIREWALL_RULES.items()}
+    status["any"] = bool(present)
+    return status
+
+
+def firewall_off() -> dict:
+    """Removes every rule the launcher adds, in either mode - for the uninstaller and the
+    REMOVE button. Like hosts_off, no rules to remove is a success without administrator rights."""
+    present = [name for name in _rule_names() if _rule_exists(name)]
+    if not present:
+        return {"ok": True, "removed": []}
+    if not is_admin():
+        return {"ok": False, "error": "administrator rights required"}
+    for name in present:
+        _delete_rule(name)
+    return {"ok": True, "removed": present}
 
 
 # =======================================================================================
@@ -434,6 +517,10 @@ def build_command(local_name: str, players: list[tuple[str, str]], public_ip: st
                 "--cert", str(PKI_DIR / "server.der"),
                 "--key", str(PKI_DIR / "server.key"),
                 "--out", str(CAPTURE_DIR)]
+    if FROZEN:
+        # Raw frames are for development: they hold the EA auth code from every login and
+        # would only pile up on a player's disk. Run from source, the server keeps them.
+        command.append("--no-capture")
     if public_ip:
         command += ["--public-ip", public_ip]
     if local_name:
@@ -442,7 +529,59 @@ def build_command(local_name: str, players: list[tuple[str, str]], public_ip: st
         command += ["--player", f"{ip}={nick}"]
     if extra:
         command += extra
+    # A/B switches without a new build: "server_args" in config.json, appended last so they
+    # override the launcher's own choices (e.g. ["--session-bps", "100000"]).
+    server_args = load_config().get("server_args") or []
+    if isinstance(server_args, list):
+        command += [str(a) for a in server_args]
     return command
+
+
+def _open_server_log(command: list[str]):
+    """A new LOG_DIR/server-<time>.log for this run, the oldest dropped beyond LOG_KEEP. None when
+    the folder cannot be written - the log file must never stop the server."""
+    try:
+        LOG_DIR.mkdir(parents=True, exist_ok=True)
+        old = sorted(LOG_DIR.glob("server-*.log"))
+        for path in old[:max(0, len(old) - (LOG_KEEP - 1))]:
+            try:
+                path.unlink()
+            except OSError:
+                pass
+        now = dt.datetime.now()
+        path = LOG_DIR / f"server-{now:%Y%m%d-%H%M%S}.log"
+        log = path.open("w", encoding="utf-8", errors="replace", buffering=1)
+        log.write(f"# TurboRivals {APP_VERSION}, server started {now:%Y-%m-%d %H:%M:%S}\n"
+                  f"# {subprocess.list2cmdline(command)}\n")
+        return log
+    except OSError:
+        return None
+
+
+def open_logs() -> dict:
+    """Opens LOG_DIR in Explorer - the file to send with a bug report is the newest one."""
+    try:
+        LOG_DIR.mkdir(parents=True, exist_ok=True)
+        os.startfile(str(LOG_DIR))
+    except OSError as e:
+        return {"ok": False, "error": f"could not open {LOG_DIR}: {e}"}
+    return {"ok": True, "path": str(LOG_DIR)}
+
+
+def purge_captures() -> int:
+    """Deletes the raw frames an installed launcher before 1.0.7 left behind (it never passed
+    --no-capture). Only when frozen: run from source, CAPTURE_DIR is the developer's own
+    docs/recon/capture. Returns how many files went."""
+    if not FROZEN:
+        return 0
+    removed = 0
+    for path in CAPTURE_DIR.glob("blaze-*.bin"):
+        try:
+            path.unlink()
+            removed += 1
+        except OSError:
+            pass
+    return removed
 
 
 def cert_exists() -> bool:
@@ -489,6 +628,8 @@ class ServerProcess:
         self.flusher: threading.Thread | None = None
         self.command: list[str] = []
         self.started_at: float | None = None
+        self.log_path: Path | None = None             # this run's file in LOG_DIR
+        self._stopping = False                         # stop() asked for the exit
 
         self._lines: deque[str] = deque()
         self._lock = threading.Lock()
@@ -520,6 +661,9 @@ class ServerProcess:
         self.command = command
         self.started_at = dt.datetime.now().timestamp()
         proc = self.proc
+        log = _open_server_log(command)
+        self.log_path = Path(log.name) if log else None
+        self._stopping = False
 
         self._lines.clear()
         self._dropped = 0
@@ -527,7 +671,13 @@ class ServerProcess:
         self._finished.clear()
 
         def pump():
+            nonlocal log
             for line in proc.stdout:
+                if log:
+                    try:
+                        log.write(line if line.endswith("\n") else line + "\n")
+                    except (OSError, ValueError):
+                        log = None
                 with self._lock:
                     self._lines.append(line.rstrip("\n"))
                     # A burst must never turn into unbounded memory. Losing the
@@ -536,6 +686,15 @@ class ServerProcess:
                         self._lines.popleft()
                         self._dropped += 1
             self._exit_code = proc.wait()
+            if log:
+                try:
+                    # Windows ends a terminated process with code 1 - say when that was STOP.
+                    log.write(f"# server stopped by the launcher (code {self._exit_code})\n"
+                              if self._stopping else
+                              f"# server exited with code {self._exit_code}\n")
+                    log.close()
+                except (OSError, ValueError):
+                    pass
             self._finished.set()
 
         def flush_once():
@@ -561,12 +720,14 @@ class ServerProcess:
         self.reader.start()
         self.flusher = threading.Thread(target=flush_loop, daemon=True)
         self.flusher.start()
-        return {"ok": True, "pid": proc.pid, "command": command}
+        return {"ok": True, "pid": proc.pid, "command": command,
+                "log": str(self.log_path) if self.log_path else None}
 
     def stop(self) -> dict:
         if not self.is_running():
             return {"ok": True, "note": "the server was not running"}
         proc = self.proc
+        self._stopping = True
         proc.terminate()
         try:
             proc.wait(timeout=5)
@@ -824,6 +985,31 @@ def upload_avatar(server_ip: str) -> dict:
     return {"ok": True}
 
 
+def clear_avatar(server_ip: str = "") -> dict:
+    """Removes this player's picture: both local files, so it is not sent again, and - when
+    connected - the copies on the host's server (DELETE /turborivals/avatar, whose picture again
+    follows from this machine's address). The other launchers drop it on their next poll."""
+    for path in (AVATAR_PATH, AVATAR_JPG_PATH):
+        try:
+            path.unlink(missing_ok=True)
+        except OSError as e:
+            return {"ok": False, "local": False, "error": f"could not remove {path.name}: {e}"}
+    if not server_ip:
+        return {"ok": True, "local": True}
+    request = urllib.request.Request(
+        f"http://{server_ip}:{IDENTIFY_PORT}/turborivals/avatar", method="DELETE")
+    try:
+        with _opener().open(request, timeout=5) as reply:
+            reply.read(64)
+    except urllib.error.HTTPError as e:
+        return {"ok": False, "local": True, "error": f"removed here, but the host kept it: "
+                                                     f"{e.read().decode(errors='replace')}"}
+    except (urllib.error.URLError, OSError) as e:
+        return {"ok": False, "local": True,
+                "error": f"removed here, but {_unreachable(server_ip, e)}"}
+    return {"ok": True, "local": True}
+
+
 def fetch_players(server_ip: str) -> dict:
     """Who is logged in to the server at server_ip, each with its picture as a data URL (or "").
     Pictures are cached by the version the server reports, so a poll every few seconds only
@@ -864,6 +1050,7 @@ DEFAULT_CONFIG = {
     "server_ip": "",
     "entitlements": "online",
     "players": [],
+    "server_args": [],      # extra server flags for A/B tests; edited by hand, never by the UI
 }
 
 
@@ -877,7 +1064,9 @@ def load_config() -> dict:
 
 
 def save_config(config: dict) -> dict:
-    merged = dict(DEFAULT_CONFIG)
+    # On top of what is on disk, not the defaults: the UI sends only its own fields, and a
+    # hand-written "server_args" must survive it.
+    merged = load_config()
     merged.update({k: v for k, v in config.items() if k in DEFAULT_CONFIG})
     try:
         CONFIG_PATH.write_text(json.dumps(merged, indent=2, ensure_ascii=False),

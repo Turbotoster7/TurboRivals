@@ -299,6 +299,13 @@ def f_ip_pair(tag: str, ip: str = "127.0.0.1", port: int = 3659, *,
     return f_union(tag, NETADDR_IPPAIR, pair)
 
 
+# Bandwidth (bit/s, both ways) every player is shown to the others with: QDAT in the session data
+# and NQOS of the game. Up to 1.0.8 it was 100 kbit/s, while the games themselves measure
+# 5.12/100 Mbit/s (NQOS in updateNetworkInfo). Experiment (01.10): whether a "slow" player is why
+# name tags show only up close. tls_terminator --session-bps sets it; 100000 = the old value.
+SESSION_BPS = 10_000_000
+
+
 def f_extended_data(tag: str = "DATA", *, ip: str = "127.0.0.1", port: int = 3659,
                     ping_site: str = "ams", country: str = "PL",
                     latencies: list[int] | None = None,
@@ -327,9 +334,9 @@ def f_extended_data(tag: str = "DATA", *, ip: str = "127.0.0.1", port: int = 365
         f_int("HWFG", 0),                         # mHardwareFlags
         f_list_int("PSLM", latencies),            # mLatencyList
         f_struct("QDAT", [                        # mQosData - QoS test result
-            f_int("DBPS", 100000),                # downstream bit/s
+            f_int("DBPS", SESSION_BPS),           # downstream bit/s
             f_int("NATT", 0),                     # NAT type: OPEN
-            f_int("UBPS", 100000),                # upstream bit/s
+            f_int("UBPS", SESSION_BPS),           # upstream bit/s
         ]),
         f_int("UATT", 0),                         # mUserInfoAttribute
         f_list_empty("ULST", T_OBJID),            # mBlazeObjectIdList
@@ -661,6 +668,21 @@ def reseq(frame: bytes, seq: int) -> bytes:
     return frame[:10] + struct.pack(">H", seq & 0xFFFF) + frame[12:]
 
 
+def f_user_identification(tag: str, user_id: int, persona: str) -> Field:
+    """UserIdentification (@0x1416d78c0, tags ascending): AID mAccountId, ALOC mAccountLocale
+    (~enUS), EXID mExternalId, ID mBlazeId, NAME mName, ORIG mOriginPersonaId, PIDI mPidId.
+    EXBB (mExternalBlob) is left out - missing field = default value."""
+    return f_struct(tag, [
+        f_int("AID", user_id),
+        f_int("ALOC", 1701729619),
+        f_int("EXID", 0),
+        f_int("ID", user_id),
+        f_str("NAME", persona),
+        f_int("ORIG", user_id),
+        f_int("PIDI", 0),
+    ])
+
+
 def build_useradded_notify(user_id: int, persona: str,
                            session_key: str | None = None, *, component: int = 0x7802,
                            command: int = 2, seq: int = 0,
@@ -703,15 +725,7 @@ def build_useradded_notify(user_id: int, persona: str,
             f_int("XREF", 0),
         ])
     else:
-        user = f_struct("USER", [            # UserIdentification (tags ascending)
-            f_int("AID", user_id),           # mAccountId
-            f_int("ALOC", 1701729619),       # mAccountLocale (~enUS)
-            f_int("EXID", 0),                # mExternalId
-            f_int("ID", user_id),            # mBlazeId - MUST == BUID from login
-            f_str("NAME", persona),          # mName
-            f_int("ORIG", user_id),          # mOriginPersonaId
-            f_int("PIDI", 0),                # mPidId
-        ])
+        user = f_user_identification("USER", user_id, persona)  # ID MUST == BUID from login
     data = f_extended_data("DATA", addr=addr) if rich_data else f_struct("DATA", [])
     payload = encode_tdf([data, user])       # DATA < USER
     return build_notification(component, command, payload, seq=seq, msg_type=msg_type)
@@ -731,6 +745,31 @@ def build_usersession_update(user_id: int, *, component: int = 0x7802,
         f_int("USID", user_id),
     ])
     return build_notification(component, command, payload, seq=seq, msg_type=msg_type)
+
+
+# UserDataFlags in UserData.FLGS: SUBSCRIBED (1) | ONLINE (2). ASSUMED from the standard BlazeSDK
+# enum - the binary's {name, value} table for it has not been found.
+USER_DATA_FLAGS_ONLINE = 3
+
+
+def build_lookup_users_response(seq: int, users: list[dict], *,
+                                msg_type: int = MSG_REPLY) -> bytes:
+    """UserSessions.lookupUsers (0x7802/13) -> UserDataResponse @0x1416d96a8 {ULST mUserDataList},
+    one UserData @0x1416da330 {EDAT mExtendedData, FLGS mStatusFlags, USER mUserInfo} per user
+    found. users = [{id, persona, addr}]; `id` is the BlazeId the game asked for (it may be an
+    alias of the player's uid), addr the player's IP pair or None. The request is
+    {LTYP mLookupType, ULST mUserIdentificationList} @0x141a2ef98, LTYP 0 = BLAZE_ID.
+
+    The game asks this when a car in its world carries an id no Blaze user has - before 1.0.4 the
+    host's PersonaId while the host was logged in under its EA App user id (log-40). An empty
+    answer left that car an ordinary racer: icon and name only up close."""
+    payload = encode_tdf([f_list_struct("ULST", [
+        [f_extended_data("EDAT", addr=u.get("addr")),
+         f_int("FLGS", USER_DATA_FLAGS_ONLINE),
+         f_user_identification("USER", int(u["id"]), str(u["persona"]))]
+        for u in users])])
+    return Fire2(component=0x7802, command=13, payload=payload, error=0, seq=seq,
+                 msg_type=msg_type).encode()
 
 
 def f_objid(tag: str, component: int, obj_type: int, obj_id: int) -> Field:
@@ -1026,7 +1065,8 @@ def build_notify_game_setup(game_id: int, host_id: int, players: list[dict], *, 
         f_int("IGNO", 0),
         f_map_str("MATR", {}),
         f_int("MCAP", max_players),
-        f_struct("NQOS", [f_int("DBPS", 100000), f_int("NATT", 0), f_int("UBPS", 100000)]),
+        f_struct("NQOS", [f_int("DBPS", SESSION_BPS), f_int("NATT", 0),
+                          f_int("UBPS", SESSION_BPS)]),
         f_int("NRES", 0),
         f_int("NTOP", network_topology),
         # OGHI is mGameCreatorId (ReplicatedGameData @0x141a2f590), not the current host. Same
@@ -1420,16 +1460,27 @@ def f_map_float(tag: str, items: dict[str, float]) -> Field:
     return Field(tag, T_MAP, body)
 
 
+# UserRelationType for BlazeUser.URTY. The names come from the binary in this order: NOT_SET,
+# LOCAL_PLAYER, FIRSTPARTY_FRIEND, RECENTLY_PLAYED, GEO_LOCATION, MUTUAL, SPECIAL_GUEST,
+# SPECIAL_GUEST_DEVELOPER. The VALUES are ASSUMED to follow that order: the {name, value} table
+# is built in memory at run time and is not in NFS14.exe (no pointers to the names, 01.10).
+RELATION_NOT_SET, RELATION_LOCAL_PLAYER, RELATION_FRIEND, RELATION_RECENTLY_PLAYED = 0, 1, 2, 3
+
+
 def build_in_game_speed_walls_response(seq: int, walls: list[tuple[int, list[dict]]], *,
+                                       local_id: int = 0, rival_relation: int = RELATION_FRIEND,
                                        msg_type: int = MSG_REPLY) -> bytes:
     """walls = [(speed wall id, [row, ...])], row = {blaze_id, persona, int, float, str}.
     A speed wall without stored data goes out with an empty row list - the game gets an answer for
-    every id it asked about."""
+    every id it asked about. The asker's own row (local_id = BLID of the request) is LOCAL_PLAYER,
+    everyone else's rival_relation: up to 1.0.11 every row was NOT_SET, and the walls showed no one
+    to beat, though the rows were there."""
     items = []
     for swid, rows in walls:
         row_structs = [[
             f_struct("BLUS", [f_int("BLIS", r["blaze_id"]), f_str("PENA", r.get("persona", "")),
-                              f_int("URTY", 0)]),
+                              f_int("URTY", RELATION_LOCAL_PLAYER if r["blaze_id"] == local_id
+                                    else rival_relation)]),
             f_map_float("STAF", r.get("float", {})),
             f_map_int("STAI", r.get("int", {})),
             f_map_str("STAS", r.get("str", {})),

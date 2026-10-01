@@ -474,6 +474,47 @@ it, without guessing:
 The same technique (`getCommandName` + jump table) works for every component - cheaper than
 guessing numbers from other games' emulators.
 
+### resumeSession (0x23) - back after a dropped connection
+
+`ResumeSessionRequest {SKEY mSessionKey}` (@`0x1416ae9e0`/@`0x1416d7c50`). A game whose Blaze
+connection dropped (the server restarted, the PC slept) reconnects **straight to the Blaze
+port** and sends the key from its login reply (`KEY = "1_<uid>_sess"`; 23 B on 01.10). Since
+1.0.12 `Lobby.resume` gives the session that uid back, under these conditions:
+- the player must be known here: the local player from 127.0.0.1, `ea:<uid>`, or an address
+  entry with that uid;
+- nobody may be logged in under that uid from another address;
+- the player's old, possibly half-open connection leaves its games.
+
+The reply is empty (success) and the login notifications follow (2, 1, 8). A key that cannot be
+resumed gets `error = 1` (ERR_SYSTEM, ASSUMED: the value of
+`USER_ERR_RESUMABLE_SESSION_NOT_FOUND` is unknown), so the game logs in from scratch. Up to
+1.0.11 it got an empty acknowledgement, pinged once and closed the connection.
+
+### lookupUsers (0xD) - which player owns a car
+
+A game names every car in its world by the owner's **PersonaId** (from the EA App, section 13)
+and looks for the Blaze user with that BlazeId. When none exists, it asks `lookupUsers`:
+`{LTYP mLookupType, ULST mUserIdentificationList}` @`0x141a2ef98`, `LTYP 0 = BLAZE_ID` (enum
+names `BLAZE_ID PERSONA_NAME EXTERNAL_ID ACCOUNT_ID ORIGIN_PERSONA_ID`). The reply is
+`UserDataResponse` @`0x1416d96a8 {ULST}` of `UserData` @`0x1416da330 {EDAT mExtendedData, FLGS
+mStatusFlags, USER mUserInfo}`; `FLGS = 3` (SUBSCRIBED|ONLINE) is the standard BlazeSDK value,
+not read from this binary.
+
+Left unanswered, the car stays an **ordinary racer**: icon and name only up close. On 16.09
+(log-40) the guest asked about `1006431274704`, the host's PersonaId, while the host was logged
+in under its EA App user id `1012917074704`. There were 126 such queries from 13 to 16.09 and none
+in the 30.09 sessions, where every uid was already the PersonaId. `Lobby.resolve` answers with
+the id that was asked. It checks, in order:
+
+1. a live uid;
+2. an alias learned earlier;
+3. a player whose `listUserEntitlements2` BUID is that id;
+4. a stored player;
+5. the only other player in a shared game whose uid is unconfirmed (synthetic, or a launcher
+   guess). Each player owns one such id.
+
+`--no-lookup-users` restores the empty acknowledgement.
+
 ---
 
 ## 10. The EA activation gate (ActivationUI) and the launch environment
@@ -600,8 +641,11 @@ PUBLIC_SPECTATOR 2, PRIVATE_SPECTATOR 3). The first LAN test (log-29) had `SID=C
 players and both games reported `STAT=0` - nobody saw anybody.
 
 A game "to be found" = attribute `gameMembershipRequirements=Public`, host connected, state
-`PRE_GAME`/`IN_GAME`, gid outside `CRIT.AGAM.GIDL`, a free seat. No such game -> a new game with
-the requester as host (`RSLT=SUCCESS_CREATED_GAME`).
+`PRE_GAME`/`IN_GAME`, a free seat. Games in `CRIT.AGAM.GIDL` come last. A game that dropped out
+of a session puts that session's gid there: on 01.10 the request of a laptop back from sleep
+grew by exactly 11 B, `[0x10000001]`. Since 1.0.12.1 such a game is still taken when it is the
+only joinable one; `--strict-avoid` skips it as before. No such game -> a new game with the
+requester as host (`RSLT=SUCCESS_CREATED_GAME`).
 
 ### Private session - `resetDedicatedServer` (4/25)
 
@@ -747,6 +791,13 @@ The `bytevaultHostname/Port/Secure` keys in CONF (preAuth) point ByteVault at ou
 13.3.1.2.1 (Windows)`, `X-USER-ID: 0`, `X-USER-TYPE: USER_TYPE_INVALID` (no token from
 getAuthToken). Path templates from the binary: `contexts/{context}/categories`,
 `.../{categoryName}`, `.../recordinfo`, `.../records/{recordName}`.
+
+**Record size.** A reply goes out in TLS records of at most 16,384 B of plaintext
+(`Wire.send_record`, `MAX_FRAGMENT`). Up to 1.0.9 the whole HTTP reply went into one record.
+Pictures of 8-15 KB worked that way; a player's detailed photo (game JPEG up to 64 KB) went over
+the TLS limit, and players reported a drop a few seconds after joining a session (01.10). The
+launcher now keeps the game's JPEG within 16 KB as well. A Pictures GET serves only the
+launcher's JPEG; what the game itself writes is kept but no longer served back.
 
 | Request | Reply |
 |---|---|

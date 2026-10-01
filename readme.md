@@ -67,9 +67,11 @@ an installed copy never hits this. A zip works only if the recipient unblocks it
 
 The installer is per-user: it lands in `%LOCALAPPDATA%\Programs\TurboRivals` and needs no
 administrator rights, because the launcher asks for them itself when it touches `hosts` or
-the firewall. Uninstalling takes the `hosts` redirect down first — otherwise you would be
-left with an entry that breaks the EA App and no tool to remove it. Your data in
-`%LOCALAPPDATA%\TurboRivals` (config, `pki/`, captures, save backups, your picture) survives.
+the firewall. Uninstalling takes the `hosts` redirect and the firewall rules down first —
+otherwise you would be left with an entry that breaks the EA App and no tool to remove it.
+Your data in `%LOCALAPPDATA%\TurboRivals` (config, `pki/`, save backups, your picture) survives.
+The installed launcher does not save raw server frames (`--no-capture`): they include the EA
+auth code from every login. It also deletes any that a version before 1.0.7 left in `capture\`.
 
 [TurboRivals.spec](TurboRivals.spec) and [installer/TurboRivals.iss](installer/TurboRivals.iss)
 document what goes in and why.
@@ -84,7 +86,8 @@ Two more things make this work, and both matter if you change the code:
 - **The exe runs the server by re-invoking itself.** Frozen, `sys.executable` is the launcher,
   not a Python interpreter, so `commands.build_command` emits `TurboRivals.exe --run-server …`
   and `app.py` dispatches on that flag before it imports the GUI. `--make-cert` and
-  `--hosts-off` do the same for the certificate and for the uninstaller, which is also how the
+  `--cleanup` (`hosts` + firewall; `--hosts-off` for `hosts` only) do the same for the
+  certificate and for the uninstaller, which is also how the
   packaged build gets tested without driving the UI. The server mode switches its output to
   line buffering, or the log panel would sit empty while a session runs.
 - **Nothing needs `openssl` any more.** `make_stub_cert.py` builds the certificate with
@@ -104,7 +107,9 @@ when it needs them).
 **Host:** *HOST A SESSION*.
 1. Enter your name and pick a picture.
 2. Choose the address the others reach you on (the Radmin `26.x.x.x` one over a VPN).
-3. Add the firewall rules once.
+3. Add the firewall rules. They open the ports on the chosen address only, not on every
+   network the PC is on, so after you switch to another address press *REMOVE* and *ADD*
+   again. *REMOVE* also closes the ports when you are done playing.
 4. *START SERVER*, then start the game.
 
 **Everyone else:** *JOIN A SESSION*.
@@ -135,6 +140,42 @@ Radmin address (`26.x.x.x`), **not** your LAN address. Get this wrong and the se
 players an address they cannot see, which is the single most common way to break a session.
 Without the flag the server guesses from the default route.
 
+Other server flags worth knowing:
+
+- `--bind-ip 127.0.0.1,<ADDRESS>` listens on those addresses only (default: all). Keep
+  `127.0.0.1` in the list on the host. Its own game must connect from there to stay the local
+  player whose save the server detects.
+- `--no-capture` stops saving raw frames to `docs/recon/capture`. Run from source the server
+  keeps them for debugging; they include the EA auth code from the login, so never share them.
+- `--handshake-timeout <s>` (default 10) closes connections that never finish the TLS handshake.
+- `--session-bps <bit/s>` (default 10,000,000) is the bandwidth every player is shown to the
+  others with. Up to 1.0.8 it was 100 kbit/s; `--session-bps 100000` brings that back. It is an
+  experiment: does a "slow" player explain name tags that show only up close?
+
+- `--speedwall-relation <n>` (default 2) is how the other players' speed wall results are
+  marked for you: 2 = friend, 3 = recently played, 0 = not set (up to 1.0.11). Your own row is
+  always "local player". The numbers are taken from the order of the names in the game, not
+  read from a table, so `3` is the switch to try when a wall shows no rival.
+- `--no-resume` turns off taking a dropped session back (see below).
+
+**A dropped connection.** If the host's server restarts or a PC sleeps, the game comes back by
+itself with the session key of its login (`resumeSession`). Since 1.0.12 the server takes it
+back, and you see `[player] ... resumeSession` in the log. Then use *Search for session* to
+meet up again. Up to 1.0.11 the game got an empty answer, gave up, and needed a restart. A game
+that dropped out also asks matchmaking to avoid the game it was in. Since 1.0.12.1 the server
+still puts you back into that game when it is the only one around (`--strict-avoid` turns that
+off). Before that, the player ended up alone in a new session.
+
+**Speed walls** show the other players' results when they drove the same camera, zone or jump.
+The log lists who drove what (`[speed wall] ...: you 45.9 AverageSpeed, Friend 50.1 ...`). The
+original Autolog compared you with your platform friends, and the game still takes those from
+the EA App. If a wall shows nobody, add each other as friends in the EA App. A cop's career
+has no results on the racers' speed cameras.
+
+The launcher passes extra flags from `"server_args"` in its `config.json`
+(`%LOCALAPPDATA%\TurboRivals\config.json`). Edit it while the launcher is closed, for example
+`"server_args": ["--session-bps", "100000"]`, and remove the entry after the test.
+
 Firewall rules (once, as Administrator):
 
 ```powershell
@@ -143,9 +184,18 @@ netsh advfirewall firewall add rule name="TurboRivals QoS" dir=in action=allow p
 netsh advfirewall firewall add rule name="NFS Rivals P2P" dir=in action=allow protocol=UDP localport=3659
 ```
 
+Adding `localip=<YOUR_ADDRESS>` to each rule limits it to that adapter, which is what the
+launcher does.
+
 ### Everyone else
 
-The only step is a `hosts` entry pointing at the server (PowerShell as Administrator):
+The only step is a `hosts` entry pointing at the server: **the host's address** (its Radmin,
+ZeroTier or LAN address), never `127.0.0.1`. That one is only for the host's own machine; on
+yours it sends the game back to itself. The file is `C:\Windows\System32\drivers\etc\hosts`,
+named exactly `hosts` with no extension. `hosts.ics` next to it is never read for names. Some
+Windows installs have no `hosts` file at all. The launcher creates it (since 1.0.11), or save
+one from Notepad run as administrator ("Save as type: All files"). From a console, PowerShell
+as Administrator:
 
 ```powershell
 $h = "$env:SystemRoot\System32\drivers\etc\hosts"
@@ -187,6 +237,15 @@ logged in under *ONLINE NOW*, with pictures. The host keeps them in `avatars\` n
 picture (ByteVault `GET .../categories/Pictures/records/<id>`), and the server answers with the
 launcher's 256 px JPEG as raw bytes (`Content-Type: image/jpeg`). Confirmed on 30.09 with the
 player's own picture. A picture set before 1.0.6 has no JPEG copy, so pick it once more.
+
+Up to 1.0.9, a detailed photo could get a player dropped a few seconds after joining a session.
+The game's copy could be up to 64 KB, and the server sent it as a single TLS record, above the
+16 KB that TLS allows. Since 1.0.10 the server splits it, and the launcher keeps the game's
+copy within 16 KB. **If that happened to you, pick your picture once more.** If a picture
+does not get through ("picture not sent"), the launcher sends it again whenever *ONLINE NOW*
+shows you without one. The host's log names the reason (`[avatar] ... refused`). Right-click
+the picture to remove it, here and on the host. Uninstalling asks whether to remove the
+pictures, settings and logs too. Your career saves and their backups stay.
 
 The host's player list (`--player <address>=<name>`) is only for someone joining without the
 launcher, and it goes by address, so it has to be the address the host actually sees them
@@ -266,13 +325,24 @@ Windows returns the first matching line, so a stale `127.0.0.1` above the launch
 the game back to its own machine. The launcher flags such a line on the HOSTS row and removes it
 on *TURN ON* and *REDIRECT AND PLAY*.
 
+**Another player looks like an ordinary racer: icon and name only up close.** The game ties
+every car to a player by the owner's EA career save id. A player logged in under some other id
+(no launcher, or an orange *YOUR CAREER SAVE*) leaves the other games unable to match their car.
+That was the "names disappear after a session change" bug of 1.0.0. Since 1.0.8 the server
+answers the game's question about such a car (`[lookup]` in the server log). A
+`[lookup] WARNING` names a player whose save id is wrong; fix that player's save in their
+launcher.
+
 ## Reporting a problem
 
 [Open an issue](https://github.com/Turbotoster7/TurboRivals/issues/new/choose). The form asks
 for the launcher version, which side hit the problem, how the players are connected, and the
 `PRE-FLIGHT CHECK` panel — a screenshot of the window covers most of that at once.
 
-What helps most is the **server log**, in particular the lines naming a component and a
+What helps most is the **server log**. Since 1.0.9 every server run is saved whole, one file
+per run, in `%LOCALAPPDATA%\TurboRivals\logs` (the last 20). *LOGS* above the log panel opens
+that folder, so attach the newest file. The window itself keeps only the last 1500 lines. Look
+in particular at the lines naming a component and a
 command (`Fire2 comp=… cmd=…`): they say exactly how far the client got. A session that
 stops after `Util.preAuth` without an `Authentication.login` almost always means the EA App
 was not running on that machine. If progress does not stick, include what *YOUR CAREER SAVE*
@@ -295,7 +365,16 @@ Read the section above first — the three most common reports are not bugs.
 launcher/     the windowed launcher (pywebview UI + the system plumbing)
 tools/       recon tooling (binary analysis, hosts switcher)
 proto-lab/   the server and the protocol decoders
+tests/       offline tests: matchmaking, the server on loopback, hosts file, firewall rules,
+             the launcher's server command line
 docs/        protocol notes, decision log, raw recon output
+```
+
+The tests need only `cryptography` and never touch the real `hosts` file, the firewall or the
+game. GitHub Actions runs them on every push:
+
+```powershell
+python -m unittest discover -s tests -v
 ```
 
 Protocol details: [docs/protocol.md](docs/protocol.md).

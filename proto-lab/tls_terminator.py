@@ -36,6 +36,7 @@ import datetime as dt
 import base64
 import hashlib
 import hmac
+import ipaddress
 import json
 import os
 import re
@@ -63,6 +64,7 @@ RT_CCS, RT_ALERT, RT_HANDSHAKE, RT_APPDATA = 20, 21, 22, 23
 HS_CLIENT_HELLO, HS_SERVER_HELLO, HS_CERTIFICATE = 1, 2, 11
 HS_SERVER_HELLO_DONE, HS_CLIENT_KEY_EXCHANGE, HS_FINISHED = 14, 16, 20
 MAC_LEN = 20            # HMAC-SHA1
+MAX_FRAGMENT = 16384    # TLS: at most 2^14 B of plaintext per record (RFC 4346 6.2.1)
 RC4_KEY_LEN = 16        # RC4_128
 
 
@@ -232,20 +234,27 @@ class Wire:
             raise ValueError("record shorter than the MAC")
         body, mac = plain[:-MAC_LEN], plain[-MAC_LEN:]
         want = self._mac(self.rx_mac, self.rx_seq, rtype, ver, body)
-        if mac != want:
-            print(f"    [!] bad record MAC (seq {self.rx_seq}) - "
-                  f"continuing, this is diagnostics")
+        # Rejected, not just logged: the game's MAC has matched in every session so far (400 of
+        # 400 handshakes in the run logs), so a mismatch means a broken or forged stream.
+        if not hmac.compare_digest(mac, want):
+            raise ValueError(f"bad record MAC (seq {self.rx_seq})")
         self.rx_seq += 1
         return body
 
     def send_record(self, rtype: int, body: bytes) -> None:
+        """Sends body in as many records as it takes: TLS caps a record's plaintext at 2^14 B.
+        Up to 1.0.9 everything went out as ONE record, and a profile picture over 16 KB
+        (ByteVault, _serve_http) broke the game's connection a few seconds into a session."""
         ver = self.record_version
-        if self.tx is not None:
-            mac = self._mac(self.tx_mac, self.tx_seq, rtype, ver, body)
-            body = self.tx.crypt(body + mac)
-            self.tx_seq += 1
-        head = struct.pack(">BHH", rtype, ver, len(body))
-        self.sock.sendall(head + body)
+        out = b""
+        for start in range(0, max(len(body), 1), MAX_FRAGMENT):
+            frag = body[start:start + MAX_FRAGMENT]
+            if self.tx is not None:
+                mac = self._mac(self.tx_mac, self.tx_seq, rtype, ver, frag)
+                frag = self.tx.crypt(frag + mac)
+                self.tx_seq += 1
+            out += struct.pack(">BHH", rtype, ver, len(frag)) + frag
+        self.sock.sendall(out)
 
     @staticmethod
     def _mac(key: bytes, seq: int, rtype: int, ver: int, body: bytes) -> bytes:
@@ -325,9 +334,13 @@ def handle(conn: socket.socket, addr, args, out_dir: Path,
     print(f"\n=== [{tag}] client {addr[0]}:{addr[1]} -> our port {local_port} "
           f"({role}) ===")
 
+    # Until the handshake is done: a connection that opens and then says nothing would otherwise
+    # hold this thread forever. The session timeouts replace it below.
+    conn.settimeout(args.handshake_timeout)
     w = Wire(conn)
     sess = None                                       # Blaze session (lobby.py) - after the handshake
     transcript = b""                                  # handshake messages (with headers)
+    bytevault = False                                 # this connection turned out to be ByteVault HTTP
     try:
         # 1. ClientHello
         rtype, ver, ch = w.recv_record()
@@ -386,7 +399,9 @@ def handle(conn: socket.socket, addr, args, out_dir: Path,
             return
         want = finished_verify(master, b"client finished", transcript)
         got = fin[4:16]
-        print(f"  client Finished: verify_data {'OK' if got == want else 'MISMATCH'}")
+        if not hmac.compare_digest(got, want):
+            raise ValueError("client Finished: verify_data MISMATCH")
+        print("  client Finished: verify_data OK")
         transcript += fin                             # for the server Finished
 
         # 8. ChangeCipherSpec + server Finished
@@ -405,12 +420,15 @@ def handle(conn: socket.socket, addr, args, out_dir: Path,
             _drain_alert(rtype, app)
             return
 
-        out_dir.mkdir(parents=True, exist_ok=True)
+        if not args.no_capture:
+            out_dir.mkdir(parents=True, exist_ok=True)
 
         # ByteVault connects to THE SAME port, but speaks HTTP (REST), not Fire2. In run-22
         # such connections hung on "tail ... waiting for the rest of the frame".
         if bytes(app[:7]).split(b" ")[0] in (b"GET", b"POST", b"PUT", b"DELETE", b"HEAD"):
             print("  (this is HTTP, not Fire2 - ByteVault handling)")
+            bytevault = True
+            conn.settimeout(args.idle_timeout)
             _serve_http(w, bytearray(app), args)
             return
 
@@ -440,7 +458,10 @@ def handle(conn: socket.socket, addr, args, out_dir: Path,
                     pkt = bytes(buf[:total])
                     del buf[:total]
                     frameno += 1
-                    (out_dir / f"blaze-{tag}-{frameno:02d}.bin").write_bytes(pkt)
+                    if not args.no_capture:
+                        # Includes Authentication.login, whose AUTH is the player's EA code -
+                        # the installed launcher passes --no-capture.
+                        (out_dir / f"blaze-{tag}-{frameno:02d}.bin").write_bytes(pkt)
                     try:
                         fr = blaze.Fire2.decode(pkt)
                     except Exception as e:            # noqa: BLE001
@@ -463,10 +484,10 @@ def handle(conn: socket.socket, addr, args, out_dir: Path,
                         sess.send(resp)
                         print(f"  -> reply comp={fr.component} cmd={fr.command} "
                               f"({len(resp)} B)")
-                        # After login we switch on a short timeout, so we wake up every
-                        # keepalive seconds and keep the Blaze connection alive (see
-                        # below - otherwise the game drops it with error 0x800e0000).
-                        if fr.component == 1 and fr.command == 152 and args.keepalive:
+                        # After login - or a resumed session - we switch on a short timeout, so
+                        # we wake up every keepalive seconds and keep the Blaze connection alive
+                        # (see below - otherwise the game drops it with error 0x800e0000).
+                        if not logged_in and sess.uid and args.keepalive:
                             logged_in = True
                             conn.settimeout(args.keepalive)
                         _deliver(sess, _after_reply(fr, args, sess))
@@ -521,6 +542,13 @@ def handle(conn: socket.socket, addr, args, out_dir: Path,
         except ConnectionError:
             print("  (client closed the connection)")
 
+    except socket.timeout:
+        # The session loop handles its own timeouts, so this is the handshake or ByteVault HTTP.
+        if bytevault:
+            print(f"  (ByteVault connection idle for {args.idle_timeout} s - closed; the game "
+                  f"opens a new one when it needs one)")
+        else:
+            print(f"  (handshake not finished within {args.handshake_timeout:g} s - closed)")
     except (ConnectionError, ValueError, struct.error) as e:
         print(f"  session error: {e}")
     finally:
@@ -551,8 +579,9 @@ def _deliver(sess, notes) -> None:
               f"({len(note)} B){who}")
 
 
-def _bind_exclusive(s: socket.socket, port: int, purpose: str) -> None:
-    """A bind that fails LOUDLY when the port already belongs to someone.
+def _bind_exclusive(s: socket.socket, ip: str, port: int, purpose: str) -> None:
+    """A bind that fails LOUDLY when the port already belongs to someone. Called from the main
+    thread only: sys.exit in any other thread ends just that thread, without a word.
 
     Why not SO_REUSEADDR (which used to be here): on Windows that option lets a
     SECOND process take the same address:port, and then only one of them gets the
@@ -566,9 +595,9 @@ def _bind_exclusive(s: socket.socket, port: int, purpose: str) -> None:
     if excl is not None:
         s.setsockopt(socket.SOL_SOCKET, excl, 1)
     try:
-        s.bind(("0.0.0.0", port))
+        s.bind((ip, port))
     except OSError as e:
-        sys.exit(f"\nPORT {port} ({purpose}) IS ALREADY IN USE: {e}\n"
+        sys.exit(f"\nPORT {ip}:{port} ({purpose}) IS ALREADY IN USE: {e}\n"
                  f"Most likely a terminator from an earlier run is still running "
                  f"(and the game then talks to THAT one, not to this process).\n"
                  f"Check:  netstat -ano | Select-String {port}\n"
@@ -702,12 +731,14 @@ def _identify(req: bytes, args, peer) -> tuple[bytes, bytes] | None:
             _lobby(args).names[peer[0]] = name    # the name still counts
         return b"400 Bad Request", b"no usable save id"
     _lobby(args).register(peer[0], int(uid), name=name,
-                          user=int(user) if user.isdigit() else 0)
+                          user=int(user) if user.isdigit() else 0,
+                          guess=src == ea_identity.SOURCE_GUESS)
     return b"200 OK", b"ok"
 
 
 LAUNCHER_PREFIX = "/turborivals/"
 AVATAR_MAX = 64 * 1024              # a launcher sends a 128 px PNG, well under this
+GAME_PICTURE_MAX = 16 * 1024        # the JPEG a 1.0.10 launcher makes for the game, at most
 HTTP_HEAD_MAX = 8192
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 JPEG_MAGIC = b"\xff\xd8\xff"
@@ -753,6 +784,7 @@ def _launcher_request(head: bytes, body: bytes | None, args,
                                          the launchers, a JPEG for the game. Whose it is comes
                                          from the sender's ADDRESS (Lobby.uid_for), so nobody can
                                          replace someone else's
+      DELETE /turborivals/avatar         removes the sender's own picture, both files
       GET  /turborivals/players          who is logged in right now (ONLINE NOW), JSON
       GET  /turborivals/avatar/<uid>     that player's picture
     """
@@ -767,15 +799,34 @@ def _launcher_request(head: bytes, body: bytes | None, args,
     if path == IDENTIFY_PATH:
         status, reply = _identify(head, args, peer)
         return status, text, reply
-    if path == LAUNCHER_PREFIX + "avatar" and method == b"POST":
+    if path == LAUNCHER_PREFIX + "avatar" and method in (b"POST", b"DELETE"):
+        # Refusals go into the log too: a launcher only shows "picture not sent" to its own
+        # player, and the host had no way to tell why.
+        def refused(status: bytes, why: str):
+            print(f"  [avatar] {peer[0]}: refused - {why}")
+            return status, text, why.encode()
+
+        uid = _lobby(args).uid_for(peer[0])
+        if not uid:
+            return refused(b"409 Conflict", "unknown player - connect first (JOIN A SESSION)")
+        if method == b"DELETE":
+            removed = []
+            for suffix in (".png", ".jpg"):
+                f = _avatar_path(args, uid).with_suffix(suffix)
+                try:
+                    f.unlink()
+                    removed.append(suffix[1:])
+                except FileNotFoundError:
+                    pass
+                except OSError as e:
+                    return b"500 Internal Server Error", text, str(e).encode(errors="replace")
+            print(f"  [avatar] {peer[0]}: picture of uid {uid} removed ({', '.join(removed) or 'none'})")
+            return b"200 OK", text, b"ok"
         # PNG for the launchers, JPEG for the game (ByteVault Pictures, _bytevault_record)
         kind = ".png" if body and body.startswith(PNG_MAGIC) else \
                ".jpg" if body and body.startswith(JPEG_MAGIC) else ""
         if body is None or len(body) > AVATAR_MAX or not kind:
-            return b"400 Bad Request", text, b"a PNG or JPEG of at most 64 KB"
-        uid = _lobby(args).uid_for(peer[0])
-        if not uid:
-            return b"409 Conflict", text, b"unknown player - connect first"
+            return refused(b"400 Bad Request", "a PNG or JPEG of at most 64 KB")
         target_file = _avatar_path(args, uid).with_suffix(kind)
         try:
             target_file.parent.mkdir(parents=True, exist_ok=True)
@@ -784,7 +835,9 @@ def _launcher_request(head: bytes, body: bytes | None, args,
             os.replace(tmp, target_file)
         except OSError as e:
             return b"500 Internal Server Error", text, str(e).encode(errors="replace")
-        print(f"  [avatar] {peer[0]}: picture of uid {uid} saved ({kind[1:]}, {len(body)} B)")
+        print(f"  [avatar] {peer[0]}: picture of uid {uid} saved ({kind[1:]}, {len(body)} B)"
+              + (" - more than a 1.0.10 launcher makes; the game gets it in several TLS records"
+                 if kind == ".jpg" and len(body) > GAME_PICTURE_MAX else ""))
         return b"200 OK", text, b"ok"
     if path == LAUNCHER_PREFIX + "players":
         players = []
@@ -862,6 +915,65 @@ def _qos_probe_reply(data: bytes, peer, args) -> bytes:
     return bytes(buf)
 
 
+# The key our login reply gives every session (build_login_response, KEY = "1_<uid>_sess").
+SESSION_KEY_RE = re.compile(r"^1_(\d+)_sess$")
+# Error code for a session that cannot be resumed here. ASSUMED: ERR_SYSTEM (1) - the numeric
+# value of USER_ERR_RESUMABLE_SESSION_NOT_FOUND is not known. Any error beats the old empty
+# acknowledgement, which told the game "resumed" while the server did not know who it was.
+RESUME_REFUSED = 1
+
+
+def _resume_session(fr, args, sess) -> bytes:
+    """UserSessions.resumeSession (0x7802/0x23), ResumeSessionRequest {SKEY mSessionKey}.
+
+    A game whose Blaze connection dropped - the host's server restarted, the PC slept - comes
+    back with the session key of its earlier login instead of logging in again (01.10,
+    server-20261001-203209: straight on the Blaze port, 23 B = "1_1802434674_sess"). It used to
+    get an empty acknowledgement, pinged once and gave up. Now the key's uid takes the session
+    back (Lobby.resume) and the login notifications follow (_after_reply); a key that cannot be
+    resumed gets an error, so the game logs in from scratch."""
+    key = str(_req_fields(fr).get("SKEY", ""))
+    m = SESSION_KEY_RE.match(key)
+    uid = int(m.group(1)) if m else 0
+    if uid and sess.uid == uid:
+        notes = []                                    # this connection already is that player
+    else:
+        notes = _lobby(args).resume(sess, uid) if uid and not sess.uid else None
+    if notes is None:
+        print(f"  [resume] WARNING {sess.ip}: session key {key!r} cannot be resumed here - "
+              f"answering with an error, so the game logs in again")
+        return blaze.Fire2(component=0x7802, command=0x23, payload=b"", error=RESUME_REFUSED,
+                           seq=fr.seq, msg_type=args.reply_msgtype).encode()
+    sess.outbox += notes
+    sess.resumed = True
+    print(f"  [player] {sess.ip} -> {sess.persona} (uid {sess.uid}, resumeSession)")
+    return blaze.build_empty_reply(0x7802, 0x23, fr.seq, msg_type=args.reply_msgtype)
+
+
+def _lookup_users(fr, args, sess) -> bytes:
+    """UserSessions.lookupUsers (0x7802/13): the game asks who owns a car whose id no Blaze user
+    has (LTYP 0 = by BlazeId). Unanswered, that car stays an ordinary racer - icon and name only
+    up close (1.0.0 after a session change; log-40). Lobby.resolve finds the player; the reply
+    carries the id the game asked about, so its car and the Blaze user match from then on."""
+    req = _req_fields(fr)
+    lb = _lobby(args)
+    found = []
+    for ident in req.get("ULST") or []:
+        fields = {t.strip(): v for t, _w, v in ident} if isinstance(ident, list) else {}
+        asked = int(fields.get("ID", 0) or 0)
+        if not asked:
+            continue
+        user = lb.resolve(sess, asked)
+        if user is None:
+            print(f"  [lookup] WARNING {sess!r} asks about id {asked}, which is no player's - the car "
+                  f"behind it stays an ordinary racer (name only up close). Check that player's "
+                  f"career save in its launcher (orange = guessed), or pass --player-id IP=<id>")
+            continue
+        print(f"  [lookup] {sess!r} asks about id {asked} -> {user['persona']} ({user['how']})")
+        found.append(user)
+    return blaze.build_lookup_users_response(fr.seq, found, msg_type=args.reply_msgtype)
+
+
 def _dispatch_blaze(fr, args, sess):
     """Returns the Fire2 reply bytes for a known request, or None (no handler).
     `sess` = this connection's lobby.Session (player identity, address, games)."""
@@ -904,8 +1016,9 @@ def _dispatch_blaze(fr, args, sess):
               f"{sess.id_check})")
         if sess.id_source == lobby.SYNTHETIC:
             print(f"  [identity] WARNING {sess.ip}: EA save id unknown - this player's progress "
-                  f"goes to {sess.uid}.sav, which the game never loads. Connect with the "
-                  f"launcher (JOIN A SESSION) or pass --player-id {sess.ip}=<id>")
+                  f"goes to {sess.uid}.sav, which the game never loads, and the other players' "
+                  f"games may show its car as an ordinary racer (name only up close). Connect "
+                  f"with the launcher (JOIN A SESSION) or pass --player-id {sess.ip}=<id>")
         return blaze.build_login_response(fr.seq, sess.uid, sess.persona,
                                           msg_type=args.reply_msgtype)
     if fr.component == 9 and fr.command == 8:           # Util.postAuth
@@ -941,6 +1054,10 @@ def _dispatch_blaze(fr, args, sess):
                 sess.addr = addr
         return blaze.build_empty_reply(fr.component, fr.command, fr.seq,
                                        msg_type=args.reply_msgtype)
+    if fr.component == 0x7802 and fr.command == 0xD and not args.no_lookup_users:
+        return _lookup_users(fr, args, sess)
+    if fr.component == 0x7802 and fr.command == 0x23 and not args.no_resume:
+        return _resume_session(fr, args, sess)
     # --- post-login RPCs (run-20/21b). Names from emulating getCommandName in the binary,
     #     reply layouts from the TDF field tables - see the builders in blaze.py.
     req = _req_fields(fr)
@@ -1049,15 +1166,28 @@ def _dispatch_blaze(fr, args, sess):
         # reports, so we take the rows from the stored state. --no-speed-walls goes back to an empty
         # acknowledgement (A/B).
         store = _player_store(args)
+        lb = _lobby(args)
+        me = int(req.get("BLID", 0) or 0) or sess.uid
+        ranked = lb.ranked_uids()
         walls = []
         for swid in req.get("SWIS") or []:
-            rows = store.rows_for_entity(swid) if store else []
+            rows = [r for r in (store.rows_for_entity(swid) if store else [])
+                    if r["blaze_id"] in ranked]
             for r in rows:
-                r["persona"] = _lobby(args).persona_of(r["blaze_id"])
+                r["persona"] = lb.persona_of(r["blaze_id"])
             walls.append((int(swid), rows))
-            print(f"  [speed wall] {swid}: {len(rows)} row(s)"
-                  + (f" {rows[0]['float'] or rows[0]['int']}" if rows else ""))
-        return blaze.build_in_game_speed_walls_response(fr.seq, walls, msg_type=mt)
+            def score(r) -> str:
+                # the row's main value - the first stat the report carried (speed, AverageSpeed,
+                # eventTime ...), so the log shows who is ahead
+                for kind in ("float", "int"):
+                    for stat, value in r[kind].items():
+                        return f"{value:.1f} {stat}" if kind == "float" else f"{value} {stat}"
+                return "-"
+            print(f"  [speed wall] {swid}: " + (", ".join(
+                f"{'you' if r['blaze_id'] == me else r['persona']} {score(r)}" for r in rows)
+                or "no results yet"))
+        return blaze.build_in_game_speed_walls_response(
+            fr.seq, walls, local_id=me, rival_relation=args.speedwall_relation, msg_type=mt)
     if fr.component == 9 and fr.command == 20:          # Util.filterForProfanity
         # run-23: TLST [{DIRT 2, UTXT ''}] - the empty acknowledgement returned an EMPTY list, so
         # the game got zero results for one text. We send every text back unchanged.
@@ -1393,35 +1523,48 @@ def _resolve_matchmaking(lb, args, sess, msid, req) -> list:
             msid, sess.uid, blaze.MATCHMAKING_RESULT["SESSION_TIMED_OUT"]))]
     crit = {t.strip(): v for t, _w, v in (req.get("CRIT") or [])}
     agam = {t.strip(): v for t, _w, v in (crit.get("AGAM") or [])}
-    g = lb.find_public_game(sess, {int(x) for x in (agam.get("GIDL") or [])})
-    if g is None:
-        skipped = lb.migrated_games_skipped(sess)
-        g = lb.create_game(sess, _mm_game_params(req), getattr(args, "gm_player_state", 4))
-        print(f"  [matchmaking] session {msid}, MODE={req.get('MODE')} DUR={req.get('DUR')} ms -> "
-              f"new game {g.gid:#x} (SUCCESS_CREATED_GAME)")
-        if skipped:
-            print(f"  [matchmaking] skipped game(s) after a host migration: "
-                  f"{', '.join(f'{x:#x}' for x in skipped)} - a player joining one never gets game "
-                  f"traffic from the migrated host (test 62). Players in it rejoin with 'Search session'.")
-        return [(sess, _game_setup(lb, g, (msid, blaze.MATCHMAKING_RESULT["SUCCESS_CREATED_GAME"],
-                                           sess.uid)))]
-    lb.join(sess, g)
-    print(f"  [matchmaking] session {msid}: {sess!r} JOINS game {g.gid:#x} hosted by "
-          f"{lb.persona_of(g.host_uid)} (players: {len(g.players)})")
-    # The joiner has to know the other players (UserAdded with their addresses) before it gets the
-    # game with the roster; players already in the game get the joiner's UserAdded and NotifyPlayerJoining.
-    others = lb.members(g, exclude=sess.uid)
-    out = [(sess, blaze.build_useradded_notify(o.uid, o.persona, component=args.notify_comp,
-                                               command=2, addr=o.addr)) for o in others]
-    out.append((sess, _game_setup(
-        lb, g, (msid, blaze.MATCHMAKING_RESULT["SUCCESS_JOINED_EXISTING_GAME"], sess.uid))))
-    joiner = next(p for p in lb.roster(g) if p["uid"] == sess.uid)
-    for o in others:
-        out.append((o, blaze.build_useradded_notify(sess.uid, sess.persona,
-                                                    component=args.notify_comp,
-                                                    command=2, addr=sess.addr)))
-        out.append((o, blaze.build_notify_player_joining(g.gid, joiner)))
-    return out
+    # One decision under one lock, frames included: two decisions firing together (each on its own
+    # timer thread) could otherwise both see the last free slot and both take it - three players in
+    # a two-slot game (RivalsNET's two-thread fixture, tests/test_matchmaking.py). The lock is
+    # re-entrant, so the lobby calls below take it again freely; sending happens in _deliver, after
+    # it is released.
+    avoid = {int(x) for x in (agam.get("GIDL") or [])}
+    strict = getattr(args, "strict_avoid", False)
+    with lb.lock:
+        g = lb.find_public_game(sess, avoid, strict=strict)
+        if avoid:
+            listed = ", ".join(f"{x:#x}" for x in sorted(avoid))
+            print(f"  [matchmaking] session {msid}: the game asks to avoid {listed}"
+                  + (" - it is the only one, joining it anyway (--strict-avoid would not)"
+                     if g is not None and g.gid in avoid else ""))
+        if g is None:
+            skipped = lb.migrated_games_skipped(sess)
+            g = lb.create_game(sess, _mm_game_params(req), getattr(args, "gm_player_state", 4))
+            print(f"  [matchmaking] session {msid}, MODE={req.get('MODE')} DUR={req.get('DUR')} ms -> "
+                  f"new game {g.gid:#x} (SUCCESS_CREATED_GAME)")
+            if skipped:
+                print(f"  [matchmaking] skipped game(s) after a host migration: "
+                      f"{', '.join(f'{x:#x}' for x in skipped)} - a player joining one never gets game "
+                      f"traffic from the migrated host (test 62). Players in it rejoin with 'Search session'.")
+            return [(sess, _game_setup(lb, g, (msid, blaze.MATCHMAKING_RESULT["SUCCESS_CREATED_GAME"],
+                                               sess.uid)))]
+        lb.join(sess, g)
+        print(f"  [matchmaking] session {msid}: {sess!r} JOINS game {g.gid:#x} hosted by "
+              f"{lb.persona_of(g.host_uid)} (players: {len(g.players)})")
+        # The joiner has to know the other players (UserAdded with their addresses) before it gets the
+        # game with the roster; players already in the game get the joiner's UserAdded and NotifyPlayerJoining.
+        others = lb.members(g, exclude=sess.uid)
+        out = [(sess, blaze.build_useradded_notify(o.uid, o.persona, component=args.notify_comp,
+                                                   command=2, addr=o.addr)) for o in others]
+        out.append((sess, _game_setup(
+            lb, g, (msid, blaze.MATCHMAKING_RESULT["SUCCESS_JOINED_EXISTING_GAME"], sess.uid))))
+        joiner = next(p for p in lb.roster(g) if p["uid"] == sess.uid)
+        for o in others:
+            out.append((o, blaze.build_useradded_notify(sess.uid, sess.persona,
+                                                        component=args.notify_comp,
+                                                        command=2, addr=sess.addr)))
+            out.append((o, blaze.build_notify_player_joining(g.gid, joiner)))
+        return out
 
 
 def _cancel_matchmaking(sess) -> None:
@@ -1500,11 +1643,12 @@ def _bytevault_record(method: str, path: str, body: bytes, args,
     player it shows (log-29/log-32, 15.09), and it had always got "{}". What it expects back is
     NOT known yet (the JSON keys are not in the binary; the record classes are Record {DELT INFO
     LOAD} @0x141a2c8e0 and payload {DATA blob, MIME} @0x1416b50c0, and the game links libjpeg).
-    So this is the research stage:
+    Settled on 30.09 (1.0.6): the bare JPEG bytes with Content-Type image/jpeg.
       - every WRITE the game makes is kept as is (<data_dir>/bytevault/...) and logged in full -
         setting a profile picture in the game shows the exact upload format;
-      - a GET gets back what the game itself wrote there, else the launcher's picture
-        (avatars/<uid>.jpg) in the --bytevault-pictures shape: raw JPEG, a JSON guess, or off.
+      - a GET gets the launcher's picture (avatars/<uid>.jpg) in the --bytevault-pictures shape:
+        raw JPEG, a JSON guess, or off. Until 1.0.9 it got what the game itself had written there
+        first - an unknown format, now only kept.
     Every Pictures answer is logged: one GET per player = accepted, a loop = rejected."""
     m = BYTEVAULT_RECORD_RE.match(path)
     if not m:
@@ -1528,15 +1672,8 @@ def _bytevault_record(method: str, path: str, body: bytes, args,
         return None                          # the reply itself stays as before
     if method != "GET" or cat != PICTURES_CATEGORY:
         return None
-    if stored.exists():
-        try:
-            meta = json.loads(stored.with_suffix(".meta.json").read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            meta = {}
-        data = stored.read_bytes()
-        ctype = meta.get("headers", {}).get("content-type") or "application/octet-stream"
-        print(f"  [bytevault] Pictures/{name} -> what the game wrote ({len(data)} B, {ctype})")
-        return "200 OK", ctype, data
+    # What the game itself wrote stays on disk for research, but is not served back: its format
+    # is unknown, and the launcher's raw JPEG is the one the game is known to take (1.0.6).
     mode = getattr(args, "bytevault_pictures", "raw")
     jpg = _avatar_path(args, int(name)).with_suffix(".jpg") if name.isdigit() else None
     if mode == "off" or jpg is None or not jpg.exists():
@@ -1550,7 +1687,11 @@ def _bytevault_record(method: str, path: str, body: bytes, args,
         out = json.dumps(doc).encode()
         print(f"  [bytevault] Pictures/{name} -> launcher picture as JSON ({len(out)} B)")
         return "200 OK", "application/json", out
-    print(f"  [bytevault] Pictures/{name} -> launcher picture, raw JPEG ({len(data)} B)")
+    records = -(-len(data) // MAX_FRAGMENT)
+    print(f"  [bytevault] Pictures/{name} -> launcher picture, raw JPEG ({len(data)} B, "
+          f"{records} TLS record(s))"
+          + (" - sent by a launcher before 1.0.10, a new pick makes it smaller"
+             if len(data) > GAME_PICTURE_MAX else ""))
     return "200 OK", "image/jpeg", data
 
 
@@ -1570,6 +1711,20 @@ def _bytevault_reply(method: str, path: str, body: bytes, args,
             if listing else b""
         return "200 OK", "application/heat", payload
     return "200 OK", "application/json", (b'{"records":[],"totalCount":0}' if listing else b"{}")
+
+
+def _redact_header(line: str) -> str:
+    """An HTTP header line for the log, with credentials cut. ByteVault's Authorization can be
+    the player's real EA access token (01.10: "AT0:3.0:...:sesdm", X-TOKEN-TYPE NUCLEUS_AUTH_TOKEN),
+    not only our own TR_AUTH_<uid> - and since 1.0.9 the log is a file players send around."""
+    name, sep, value = line.partition(":")
+    key = name.strip().lower()
+    secret = (key in ("authorization", "cookie", "set-cookie") or key.startswith("x-auth")
+              or ("token" in key and key != "x-token-type"))
+    value = value.strip()
+    if not sep or not secret or not value:
+        return line
+    return f"{name}: {value[:6]}... (redacted, {len(value)} chars)"
 
 
 def _serve_http(w, buf: bytearray, args) -> None:
@@ -1600,7 +1755,7 @@ def _serve_http(w, buf: bytearray, args) -> None:
         body, buf = bytes(rest[:clen]), bytearray(rest[clen:])
         print(f"  [HTTP] {method} {path}")
         for ln in lines[1:]:
-            print(f"      {ln}")
+            print(f"      {_redact_header(ln)}")
         if body:
             print(f"      BODY ({len(body)} B): {body[:300]!r}")
         status, ctype, payload = _bytevault_reply(method, path, body, args, headers)
@@ -1625,7 +1780,9 @@ def _after_reply(fr, args, sess):
     def me(frame):
         out.append((sess, frame))
 
-    if fr.component == 1 and fr.command == 152:         # after login
+    resumed = fr.component == 0x7802 and fr.command == 0x23 and sess.resumed
+    if (fr.component == 1 and fr.command == 152) or resumed:   # after login / a resumed session
+        sess.resumed = False
         if args.notify_probe:
             for cmd in range(1, 11):
                 me(blaze.build_usersession_update(sess.uid, component=args.notify_comp, command=cmd))
@@ -1740,6 +1897,17 @@ def main() -> int:
                     help="DER certificate (patched OID); defaults to pki/server.der")
     ap.add_argument("--key", type=Path, default=pki / "server.key")
     ap.add_argument("-o", "--out", type=Path, default=Path("docs/recon/capture"))
+    ap.add_argument("--no-capture", action="store_true",
+                    help="do not save raw Fire2 frames (blaze-*.bin) to --out. They include "
+                         "Authentication.login with the player's EA auth code; the installed "
+                         "launcher always passes this")
+    ap.add_argument("--bind-ip", default="0.0.0.0", metavar="IP[,IP...]",
+                    help="local IPv4 address(es) to listen on, comma-separated. The default "
+                         "takes every interface. A host whose own game should stay the local "
+                         "player (127.0.0.1) needs 127.0.0.1 in the list")
+    ap.add_argument("--handshake-timeout", type=float, default=10.0, metavar="SEC",
+                    help="close a connection that has not finished the TLS handshake and sent "
+                         "its first packet within SEC seconds")
     ap.add_argument("--redirect-ip", default="127.0.0.1",
                     help="address handed back in the getServerInstance reply (by default "
                          "ourselves, so the client comes back for the next packet)")
@@ -1799,6 +1967,10 @@ def main() -> int:
                     help="<requestid> in the /qos/qos reply. MUST be >= 2 - the same field "
                          "selects the probe receive path, and the bandwidth path only works "
                          "for >= 2")
+    ap.add_argument("--session-bps", type=int, default=blaze.SESSION_BPS, metavar="BPS",
+                    help="bandwidth (bit/s, both ways) the other players are told each player has, "
+                         "in the session data and the game's NQOS. 100000 = up to 1.0.8 (A/B: "
+                         "whether a 'slow' player is why name tags show only up close)")
     ap.add_argument("--qos-upstream-bps", type=int, default=100_000_000,
                     help="client upstream bandwidth reported in the reply to the first "
                          "bandwidth probe (bits/s, field +0x14)")
@@ -1886,6 +2058,21 @@ def main() -> int:
     ap.add_argument("--no-speed-walls", action="store_true",
                     help="answer NFS.getInGameSpeedWalls (2050/20) with an empty acknowledgement "
                          "instead of saved results (A/B)")
+    ap.add_argument("--strict-avoid", action="store_true",
+                    help="never put a player into a game its matchmaking asks to avoid (CRIT.AGAM.GIDL), "
+                         "as before 1.0.12.1. By default such a game is still taken when it is the only "
+                         "one - a game avoids the one it just dropped out of")
+    ap.add_argument("--no-resume", action="store_true",
+                    help="answer UserSessions.resumeSession (0x7802/0x23) with an empty "
+                         "acknowledgement, as before 1.0.12, instead of taking the session back (A/B)")
+    ap.add_argument("--speedwall-relation", type=int, default=blaze.RELATION_FRIEND, metavar="N",
+                    help="UserRelationType given to the OTHER players' speed wall rows (the asker's "
+                         "own row is LOCAL_PLAYER=1). 2 = FIRSTPARTY_FRIEND (default), 3 = "
+                         "RECENTLY_PLAYED, 0 = NOT_SET as before 1.0.12. Values ASSUMED from the "
+                         "order of the enum's names in the binary")
+    ap.add_argument("--no-lookup-users", action="store_true",
+                    help="answer UserSessions.lookupUsers (0x7802/13) with an empty acknowledgement, "
+                         "as before 1.0.8, instead of the players behind the asked ids (A/B)")
     ap.add_argument("--entitlements", choices=("none", "online"), default="none",
                     help="Authentication.listUserEntitlements2 (1/29): none = empty list, "
                          "online = an ONLINE_ACCESS entry for the NFS14PC group")
@@ -1932,6 +2119,19 @@ def main() -> int:
     cert_der = args.cert.read_bytes()
     rsa = load_rsa_priv(args.key)
     print(f"RSA key loaded ({rsa[2] * 8} bit), cert {len(cert_der)} B")
+    blaze.SESSION_BPS = args.session_bps
+    print(f"players' bandwidth in the session data: {args.session_bps} bit/s (--session-bps)")
+
+    bind_ips = [ip.strip() for ip in args.bind_ip.split(",") if ip.strip()]
+    for ip in bind_ips:
+        try:
+            ipaddress.IPv4Address(ip)
+        except ValueError:
+            sys.stderr.write(f"--bind-ip: {ip!r} is not an IPv4 address\n")
+            return 1
+    if not bind_ips:
+        sys.stderr.write("--bind-ip: no address given\n")
+        return 1
 
     # Listening on the redirector port AND on the Blaze port - keeping them apart lets us
     # see whether the game actually connects after the getServerInstance reply.
@@ -1941,12 +2141,7 @@ def main() -> int:
 
     counter, lock = [0], threading.Lock()
 
-    def serve(port: int) -> None:
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        _bind_exclusive(s, port, "redirector/Blaze")
-        s.listen(16)
-        role = "redirector" if port == args.port else "BLAZE"
-        print(f"listening on 0.0.0.0:{port} ({role})")
+    def serve(s: socket.socket, port: int) -> None:
         while True:
             conn, addr = s.accept()
             threading.Thread(target=handle,
@@ -1954,7 +2149,7 @@ def main() -> int:
                                    rsa, cert_der),
                              daemon=True).start()
 
-    def serve_qos(port: int) -> None:
+    def serve_qos(s: socket.socket, port: int) -> None:
         """QoS responder over UDP.
 
         After preAuth the Blaze client probes the ping sites from QOSS. We point them at
@@ -1962,9 +2157,6 @@ def main() -> int:
         finishes. The reply content is built by _qos_probe_reply (the client rejects a
         bare echo: the latency path needs >= 30 B and carries the external address).
         """
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        _bind_exclusive(s, port, "QoS UDP probes")
-        print(f"listening on UDP 0.0.0.0:{port} (QoS probes)")
         n = 0
         while True:
             try:
@@ -1984,7 +2176,7 @@ def main() -> int:
                 print(hexdump(reply, 64))
             s.sendto(reply, peer)
 
-    def serve_qos_http(port: int) -> None:
+    def serve_qos_http(s: socket.socket, port: int) -> None:
         """QoS probe over TCP/HTTP.
 
         DirtySDK also queries the ping site over HTTP - the binary has the URL patterns
@@ -1993,10 +2185,6 @@ def main() -> int:
         We log the whole request (that shows what the client wants) and answer with
         an empty 200, so as not to leave it with nothing.
         """
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        _bind_exclusive(s, port, "QoS HTTP")
-        s.listen(8)
-        print(f"listening on TCP 0.0.0.0:{port} (QoS HTTP)")
         while True:
             try:
                 conn, peer = s.accept()
@@ -2038,14 +2226,30 @@ def main() -> int:
                 except OSError:
                     pass
 
-    for p in ports[1:]:
-        threading.Thread(target=serve, args=(p,), daemon=True).start()
-    if not args.no_qos_responder:
-        for i in range(args.qos_interfaces):
-            threading.Thread(target=serve_qos, args=(args.qos_port + i,),
-                             daemon=True).start()
-        threading.Thread(target=serve_qos_http, args=(args.qos_port,), daemon=True).start()
-    _lobby(args)                  # now, not on the first login: the local identity goes in the log up front
+    # Every socket is bound here, in the main thread, before anything is served: a port that is
+    # taken stops the server with a message instead of silently killing one listener thread.
+    listeners = []                                    # (serve function, socket, port)
+    for ip in bind_ips:
+        for p in ports:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            _bind_exclusive(s, ip, p, "redirector/Blaze")
+            s.listen(16)
+            print(f"listening on {ip}:{p} ({'redirector' if p == args.port else 'BLAZE'})")
+            listeners.append((serve, s, p))
+        if not args.no_qos_responder:
+            for i in range(args.qos_interfaces):
+                s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                _bind_exclusive(s, ip, args.qos_port + i, "QoS UDP probes")
+                print(f"listening on UDP {ip}:{args.qos_port + i} (QoS probes)")
+                listeners.append((serve_qos, s, args.qos_port + i))
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            _bind_exclusive(s, ip, args.qos_port, "QoS HTTP")
+            s.listen(8)
+            print(f"listening on TCP {ip}:{args.qos_port} (QoS HTTP)")
+            listeners.append((serve_qos_http, s, args.qos_port))
+    for target, s, p in listeners[1:]:
+        threading.Thread(target=target, args=(s, p), daemon=True).start()
+    _lobby(args)                 # now, not on the first login: the local identity goes in the log up front
     print(f"handing the game this Blaze address: {args.redirect_ip}:{args.blaze_port}. "
           f"Ctrl+C to stop.")
     print("progress saving: " + ("OFF (--no-store)" if args.no_store
@@ -2056,7 +2260,8 @@ def main() -> int:
           f"{args.qos_port} and UDP {args.qos_port}-{args.qos_port + args.qos_interfaces - 1}; "
           f"game UDP 3659.\n")
     try:
-        serve(ports[0])
+        target, s, p = listeners[0]
+        target(s, p)
     except KeyboardInterrupt:
         print("\nstopped")
     return 0

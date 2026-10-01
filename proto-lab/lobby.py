@@ -64,6 +64,7 @@ class Session:
         self.pending = None              # dispatch decision (createGame/resetDedicated) for _after_reply
         self.outbox: list = []           # notifications (session, frame) to send after the reply
         self.mm_timer = None             # threading.Timer with a deferred matchmaking decision
+        self.resumed = False             # resumeSession just took an identity: login notes follow
         self.alive = True
         self._send_raw = send_raw
         self._lock = threading.Lock()
@@ -148,6 +149,8 @@ class Lobby:
             ip: (int(uid), "--player-id") for ip, uid in (player_ids or {}).items()}
         self.registered_user: dict[str, int] = {}        # ip -> EA App user id its launcher reported
         self.names: dict[str, str] = {}                  # ip -> nickname its launcher reported
+        self.guessed: set[str] = set()                   # ips whose launcher only guessed the save id
+        self.aliases: dict[int, int] = {}                # id a game asked about (lookupUsers) -> uid
         self._key_ip: dict[str, str] = {}                # players.json key -> address of its last login
         self.lock = threading.RLock()
         self.sessions: dict[int, Session] = {}
@@ -176,12 +179,17 @@ class Lobby:
             print(f"  [lobby] could not write {self.players_file}: {e}")
 
     def register(self, ip: str, uid: int, source: str = "launcher", name: str = "",
-                 user: int = 0) -> None:
+                 user: int = 0, guess: bool = False) -> None:
         """The EA save id (and nickname, EA App user id) a player's launcher reported before
         starting the game. Used on that address's next login, once the token confirms the id
-        (_identity); the nickname then goes into players.json under the player's id."""
+        (_identity); the nickname then goes into players.json under the player's id. guess: the
+        launcher found no save and sent the EA App user id instead (shown orange there)."""
         with self.lock:
             self.registered[ip] = (int(uid), source)
+            if guess:
+                self.guessed.add(ip)
+            else:
+                self.guessed.discard(ip)
             if user:
                 self.registered_user[ip] = int(user)
             if name:
@@ -357,6 +365,42 @@ class Lobby:
             self.sessions[sess.uid] = sess
             return out
 
+    def resume(self, sess: Session, uid: int) -> list | None:
+        """UserSessions.resumeSession: a game coming back on a new connection with the session
+        key of its earlier login - after the server restarted, or the PC slept (01.10, log
+        server-20261001-203209: the guest's game resumed straight on the Blaze port, got an empty
+        acknowledgement and gave up). The key names the uid; that player must be known here
+        (the local player from 127.0.0.1, ea:<uid>, or an address entry with that uid), and no one
+        else may be logged in under it from another address. None = refuse, the game logs in anew.
+        Otherwise the session takes the identity as a login would, and the player's previous,
+        perhaps half-open connection leaves its games - the notifications are returned."""
+        with self.lock:
+            if sess.is_local:
+                local = self.players.get(LOCAL_KEY, {})
+                key = LOCAL_KEY if uid in (self.local_id, int(local.get("uid", 0) or 0)) else ""
+            elif f"{EA_KEY}{uid}" in self.players:
+                key = f"{EA_KEY}{uid}"
+            else:
+                key = sess.ip if int(self.players.get(sess.ip, {}).get("uid", 0) or 0) == uid else ""
+            live = self.sessions.get(uid)
+            known = bool(key) and (key in self.players or key == LOCAL_KEY)
+            taken = live is not None and live.alive and live.ip != sess.ip
+            if not known or taken:
+                return None
+            entry = self.players.setdefault(key, {"uid": uid, "persona": self.local_persona or "Player"})
+            sess.key, sess.uid = key, uid
+            sess.persona = (self.names.get(sess.ip) or self.forced.get(sess.ip)
+                            or (self.local_persona if sess.is_local else "")
+                            or str(entry.get("persona", uid)))
+            sess.id_source, sess.id_check = "resumeSession", "session key"
+            self._key_ip[key] = sess.ip
+            out = []
+            if live is not None and live is not sess:
+                live.alive = False
+                out = self._leave_all(live, blaze.PLAYER_REMOVED_REASON["PLAYER_CONN_LOST"])
+            self.sessions[uid] = sess
+            return out
+
     def logout(self, sess: Session) -> list:
         with self.lock:
             sess.alive = False
@@ -388,6 +432,16 @@ class Lobby:
             return [{"uid": s.uid, "name": s.persona, "local": s.is_local}
                     for s in self.sessions.values() if s.alive]
 
+    def ranked_uids(self) -> set[int]:
+        """Whose results the speed walls show: players with a known career save (local, ea:<id>)
+        and whoever is logged in right now. stats/ also holds results under ids those same people
+        had before (an old synthetic uid, an EA App user id taken for a save id) - shown, they
+        would be rivals who are really the player himself."""
+        with self.lock:
+            known = {int(e.get("uid", 0) or 0) for k, e in self.players.items()
+                     if k == LOCAL_KEY or k.startswith(EA_KEY)}
+            return known | {s.uid for s in self.sessions.values() if s.alive}
+
     def uid_for(self, ip: str) -> int:
         """The uid of the player at an address - who a launcher's request speaks for: the live
         session from there, else the id its launcher registered, else (local) the id the local
@@ -413,6 +467,55 @@ class Lobby:
                     return (self.names.get(ip) or self.forced.get(ip)
                             or str(e.get("persona", uid)))
             return str(uid)
+
+    def _unconfirmed(self, s: Session) -> bool:
+        """Whether a player's uid may not be the PersonaId its game goes by: a synthetic uid, an
+        id its launcher only guessed, or a listUserEntitlements2 BUID that differs from it."""
+        return (s.id_source == SYNTHETIC
+                or (s.ip in self.guessed and self.registered.get(s.ip, (0, ""))[0] == s.uid)
+                or bool(s.persona_id and s.persona_id != s.uid))
+
+    def resolve(self, requester: Session, blaze_id: int) -> dict | None:
+        """The player behind a BlazeId a game asks about (UserSessions.lookupUsers), as
+        {id, persona, addr, how} with id = the asked id, or None.
+
+        A game names each car in its world by its owner's PersonaId (from the EA App) and looks
+        for the Blaze user with that id. When the owner logged in under another uid it asks -
+        log-40: the guest asked about the host's PersonaId while the host was logged in under its
+        EA App user id - and a car nobody answers for stays an ordinary racer, icon and name only
+        up close. In order: a live uid, an alias learned before, a player whose
+        listUserEntitlements2 BUID is that id, a stored player, and finally the only other player
+        in a game shared with the asker whose uid is unconfirmed. The asker itself is no candidate:
+        it asks about the cars it sees, and its own lookup (solo, before 1.0.4) is covered by its
+        BUID - otherwise an unconfirmed asker would lend its name to a car with a wrong id."""
+        with self.lock:
+            def found(s: Session, how: str) -> dict:
+                if s.uid != blaze_id:
+                    self.aliases[blaze_id] = s.uid
+                return {"id": blaze_id, "persona": s.persona, "addr": s.addr, "how": how}
+
+            s = self.sessions.get(blaze_id)
+            if s is not None and s.alive:
+                return found(s, "uid")
+            s = self.sessions.get(self.aliases.get(blaze_id, 0))
+            if s is not None and s.alive:
+                return found(s, "alias")
+            for s in self.sessions.values():
+                if s.alive and s.persona_id == blaze_id:
+                    return found(s, "listUserEntitlements2 BUID")
+            if any(e.get("uid") == blaze_id for e in self.players.values()):
+                return {"id": blaze_id, "persona": self.persona_of(blaze_id), "addr": None,
+                        "how": "players.json (offline)"}
+            shared = {uid for gid in requester.games
+                      for uid in getattr(self.games.get(gid), "players", {})}
+            # A player has one PersonaId: one whose id is already known is no longer a candidate.
+            placed = set(self.aliases.values())
+            candidates = [s for s in self.sessions.values()
+                          if s.alive and s is not requester and s.uid in shared
+                          and s.uid not in placed and self._unconfirmed(s)]
+            if len(candidates) == 1:
+                return found(candidates[0], "the only player with an unconfirmed id")
+            return None
 
     # ------------------------------------------------------------ games
     def new_msid(self) -> int:
@@ -444,20 +547,24 @@ class Lobby:
             return [g.gid for g in self.games.values()
                     if g.migrated and g.public and sess.uid not in g.players]
 
-    def find_public_game(self, sess: Session, avoid: set[int]) -> Game | None:
+    def find_public_game(self, sess: Session, avoid: set[int], strict: bool = False) -> Game | None:
         """Another player's public game that can be joined: host connected, game already running
-        (PRE_GAME/IN_GAME), not on the avoid list (CRIT.AGAM.GIDL), a free slot available, and no
-        host migration so far (Game.migrated) - unless --join-migrated-games."""
+        (PRE_GAME/IN_GAME), a free slot available, and no host migration so far (Game.migrated) -
+        unless --join-migrated-games. Games on the avoid list (CRIT.AGAM.GIDL) come last, not never:
+        a game asks to avoid the one it just dropped out of (01.10, a laptop waking from sleep:
+        GIDL = [the host's game]), and with no other game around a strict avoid left that player
+        alone in a new one. strict (--strict-avoid) keeps the old behaviour."""
         with self.lock:
-            for g in sorted(self.games.values(), key=lambda x: x.gid):
-                host = self.sessions.get(g.host_uid)
-                if (g.public and g.gid not in avoid and sess.uid not in g.players
+            joinable = [g for g in sorted(self.games.values(), key=lambda x: x.gid)
+                        if g.public and sess.uid not in g.players
                         and (self.join_migrated or not g.migrated)
-                        and host is not None and host.alive
+                        and (host := self.sessions.get(g.host_uid)) is not None and host.alive
                         and g.state in (blaze.GAME_STATE["PRE_GAME"], blaze.GAME_STATE["IN_GAME"])
-                        and len(g.players) < int(g.params.get("max_players", 6))):
-                    return g
-            return None
+                        and len(g.players) < int(g.params.get("max_players", 6))]
+            preferred = [g for g in joinable if g.gid not in avoid]
+            if preferred:
+                return preferred[0]
+            return None if strict or not joinable else joinable[0]
 
     def join(self, sess: Session, g: Game) -> None:
         with self.lock:

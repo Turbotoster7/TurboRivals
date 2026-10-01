@@ -106,7 +106,7 @@
                         <span class="check-label">FIREWALL RULES</span>
                         <span class="check-note" id="firewallNote">server ports + P2P 3659</span>
                     </div>
-                    <button class="btn btn-mini" data-action="firewall">ADD</button>
+                    <button class="btn btn-mini" data-action="firewall-toggle" id="btnFirewall">ADD</button>
                 </div>
             </div>
         </div>
@@ -121,7 +121,7 @@
                 <div class="field">
                     <span class="field-label">YOUR NAME &amp; PICTURE</span>
                     <div class="name-row">
-                        <button type="button" class="avatar-pick" data-avatar-pick title="Set your picture - everyone in the session sees it"></button>
+                        <button type="button" class="avatar-pick" data-avatar-pick title="Set your picture - everyone in the session sees it. Right-click removes it."></button>
                         <input type="text" id="persona" class="tech-input" placeholder="host" autocomplete="off">
                     </div>
                 </div>
@@ -167,7 +167,7 @@
                 <div class="field">
                     <span class="field-label">YOUR NAME &amp; PICTURE (SHOWN TO OTHER PLAYERS)</span>
                     <div class="name-row">
-                        <button type="button" class="avatar-pick" data-avatar-pick title="Set your picture - everyone in the session sees it"></button>
+                        <button type="button" class="avatar-pick" data-avatar-pick title="Set your picture - everyone in the session sees it. Right-click removes it."></button>
                         <input type="text" id="guestName" class="tech-input" maxlength="32" placeholder="your nickname" autocomplete="off">
                     </div>
                 </div>
@@ -199,6 +199,7 @@
                 <span class="panel-title">SERVER LOG</span>
                 <div class="panel-actions">
                     <span class="status" id="serverStatus">OFFLINE</span>
+                    <button class="btn btn-mini" id="btnOpenLogs" title="every server run is saved as a file - send the newest one with a bug report">LOGS</button>
                     <button class="btn btn-mini" id="btnClearLog">CLEAR</button>
                 </div>
             </div>

@@ -60,13 +60,19 @@ if "--make-cert" in sys.argv:
 
 # Used by the uninstaller. Removing the launcher while the redirect is still on
 # would leave a hosts entry that breaks the EA App and every other EA game -
-# with the tool for undoing it just deleted.
-if "--hosts-off" in sys.argv:
+# with the tool for undoing it just deleted. --cleanup also takes the firewall
+# rules down; --hosts-off stays for anything that still calls it.
+if "--hosts-off" in sys.argv or "--cleanup" in sys.argv:
     import commands as _commands
 
     _result = _commands.hosts_off()
     print("hosts restored" if _result["ok"] else _result["error"])
-    raise SystemExit(0 if _result["ok"] else 1)
+    _ok = _result["ok"]
+    if "--cleanup" in sys.argv:
+        _result = _commands.firewall_off()
+        print("firewall rules removed" if _result["ok"] else _result["error"])
+        _ok = _ok and _result["ok"]
+    raise SystemExit(0 if _ok else 1)
 
 import webview  # noqa: E402
 import commands  # noqa: E402
@@ -113,6 +119,7 @@ class Api:
             "admin": commands.is_admin(),
             "ea_app": commands.ea_app_running(),
             "hosts": commands.hosts_status(),
+            "firewall": commands.firewall_status(),
             "cert": commands.cert_exists(),
             "server_running": self._server.is_running(),
             "addresses": commands.local_addresses(),
@@ -147,8 +154,14 @@ class Api:
     def resolved_redirector(self) -> list:
         return commands.resolved_redirector()
 
-    def firewall_rules(self, mode: str) -> dict:
-        return commands.firewall_rules(mode)
+    def firewall_rules(self, mode: str, local_ip: str = "") -> dict:
+        return commands.firewall_rules(mode, local_ip)
+
+    def firewall_status(self) -> dict:
+        return commands.firewall_status()
+
+    def firewall_off(self) -> dict:
+        return commands.firewall_off()
 
     def make_cert(self) -> dict:
         return commands.make_cert()
@@ -171,6 +184,9 @@ class Api:
 
     def upload_avatar(self, server_ip: str) -> dict:
         return commands.upload_avatar(server_ip)
+
+    def clear_avatar(self, server_ip: str = "") -> dict:
+        return commands.clear_avatar(server_ip)
 
     def fetch_players(self, server_ip: str) -> dict:
         return commands.fetch_players(server_ip)
@@ -196,6 +212,7 @@ class Api:
     def start_server(self, local_name: str, public_ip: str, entitlements: str) -> dict:
         # The server picks the host's save id by itself (ea_identity) - back the saves up first.
         commands.backup_saves()
+        commands.purge_captures()
         try:
             command = commands.build_command(
                 local_name, self._game.get_list_players(), public_ip, entitlements)
@@ -211,6 +228,9 @@ class Api:
 
     def stop_server(self) -> dict:
         return self._server.stop()
+
+    def open_logs(self) -> dict:
+        return commands.open_logs()
 
     # --- window -----------------------------------------------------------
 

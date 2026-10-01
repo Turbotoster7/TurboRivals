@@ -814,3 +814,255 @@ protocol.md section 12.
   `powershell -File build.ps1` from bash, or do not redirect stderr.
 - The launcher keeps the server log only in its window. For a test that needs the log, run the
   server from the repo with the same arguments and redirect it to a file.
+
+## 2026-10-01 - fixes taken over from the RivalsNET review (1.0.7)
+
+RivalsNET (49Ssr/RivalsNET) uses this server as an optional backend: a submodule pinned to
+aa58fe5 plus their own `tools/turborivals/backend.patch`, with tests under `tests/turborivals/`.
+Their review (`research/2026-09-30-turborivals-review.md`) found real problems. Each one was
+checked against HEAD before taking it over.
+
+### Taken over
+
+- **Two players on the last slot.** `_resolve_matchmaking` picked a game and joined it under
+  separate lobby locks, and the decisions fire on their own `threading.Timer` threads. Two searches
+  firing together both saw the free slot: three players in a two-slot game. Their two-thread
+  fixture reproduces it against the old code. The whole decision now runs under `lb.lock` (an
+  RLock, so the lobby calls inside take it again); sending still happens in `_deliver`, after it.
+- **Bad record MAC / bad Finished were only logged.** That was a diagnostics leftover. The run
+  logs hold 400 `verify_data OK` and no mismatch or bad MAC at all, so both now raise and end
+  the connection ("session error").
+- **No timeout before the handshake.** A connection that opened and sent nothing held its thread
+  forever. `--handshake-timeout` (10 s) covers the handshake and the first packet. ByteVault HTTP
+  gets `--idle-timeout`, so its keep-alive behaves as before.
+- **`--bind-ip`** (comma list, default `0.0.0.0`). All sockets are now bound in the main thread,
+  before anything is served. `sys.exit` from a listener thread ended only that thread, silently,
+  so a taken Blaze or QoS port used to go unnoticed.
+- **Raw frames.** `blaze-*.bin` includes `Authentication.login` with the player's EA auth code,
+  and the installed launcher wrote them to `%LOCALAPPDATA%\TurboRivals\capture` with no limit.
+  `--no-capture` is passed whenever frozen, and leftover frames there are deleted on server
+  start. Run from source, capture stays on. The ByteVault `Authorization` header in the log is
+  `TR_AUTH_<uid>`, our own getAuthToken value, so the HTTP log stays as it is. **Wrong, corrected
+  the same evening (1.0.12.1):** a guest's header carried its real EA access token. See below.
+- **`hosts` written byte for byte.** It was read as UTF-8 with `errors="replace"` and written back
+  with LF, which turned any non-UTF-8 byte into U+FFFD for good. It is now read as latin-1, split
+  on `\n` only (`splitlines()` also breaks on 0x85, the cp1250 ellipsis), and written back with the
+  file's own line ending. Removing stale lines outside the block (1.0.2) stays.
+- **Firewall.** Host rules were open on every interface and never removed. With the host's chosen
+  address they now carry `localip=`, but only when the address is this PC's own; a rule for
+  someone else's address would block everyone. The uninstaller runs `--cleanup` (`hosts` and the
+  rules). Since it runs unelevated, nothing to remove counts as success without admin rights.
+- **Tests.** The repo had none. `tests/` now covers matchmaking, the server on loopback (handshake,
+  RPC, MAC/Finished rejection, timeout, ByteVault, QoS, no frames), the `hosts` round trip and the
+  firewall rules. CI runs them on `windows-latest`.
+
+### Not taken over
+
+- **Their default `127.0.0.1` listener and VPN-address host entry.** The host's own game would
+  then connect from the VPN address and stop being the local player, so local save detection
+  would not apply. `--bind-ip 127.0.0.1,<VPN>` gives them the narrow listener without that.
+- **Refusing to start on a foreign `gosredirector` line instead of removing it.** The removal is
+  the 1.0.2 fix for joining from another PC.
+- **Empty preAuth.** Their installation logs in only with an empty preAuth reply (error 80070000
+  otherwise). Here the full reply reaches login on Steam and EA App copies, and an empty one drops
+  the CONF time values, ByteVault and the QoS ping site. Open: which field it is. That needs a
+  bisect on their installation, ideally a clean one.
+
+## 2026-10-01 - other players shown as ordinary racers: `lookupUsers` (1.0.8)
+
+1.0.7 (the RivalsNET fixes, built at 17:00) does not have this; 1.0.8 is 1.0.7 plus this handler.
+Live result for 1.0.7: a guest won a new car and the career save kept it.
+
+**Symptom.** Other players sometimes looked like ordinary racers. Their icon and name appeared
+only up close, not from afar as in the original game, while the car itself moved smoothly. In
+1.0.0 it came after a session change. The tag ranges are game data (EBX `MaxDrawDistance`,
+`FarFadeMaxRange`); the game keeps separate icons for humans and AI (`HumanRacerIconTextureId`,
+`icon_ai_racer`).
+
+**Cause (frames and logs, 13-16.09).** A game names every car by its owner's PersonaId and
+looks for the Blaze user with that BlazeId. If there is none, it asks
+`UserSessions.lookupUsers` (`LTYP 0` = `BLAZE_ID`). There were 126 such queries, all about
+`1006431274704`, the host's PersonaId, while the host was logged in under its EA App user id
+`1012917074704`. In log-40 the guest's connection asked as well. We answered every one with an
+empty acknowledgement, so that car never became a known player. The 30.09 sessions held none of
+these queries in 24,000 frames: by then (1.0.3/1.0.4) every uid was already the PersonaId.
+
+**Ruled out.** Friend lists (`getLists`): the game takes `FIRSTPARTY_FRIEND` from the EA App.
+Replication and QoS: the far car is smooth. `mesh()` and 4/116: these are per game, so a second
+game gets them too.
+
+**Decision.** A handler for `lookupUsers` (`tls_terminator._lookup_users`, `Lobby.resolve`).
+The reply carries the id the game asked about, with that player's name and address. A player
+is found by:
+
+1. a live uid;
+2. an alias learned earlier;
+3. the `listUserEntitlements2` BUID, which held the PersonaId in exactly the log-40 case;
+4. players.json;
+5. the only other player in a shared game whose uid is unconfirmed (synthetic, or an id its
+   launcher only guessed). That last one owns a single id.
+
+The asker never lends its own name. An id nobody owns gets
+`[lookup] WARNING` with the fix (the player's career save). `--no-lookup-users` brings back the
+empty acknowledgement. The captured 16.09 query replayed offline now resolves to the host.
+
+**Live, 1.0.8 (01.10, host log).** The host logged in as `1006431274704` and the guest as
+`1802434674`, both PersonaIds. The mesh came up both ways and 116/30 went to both. There was
+**no** `lookupUsers` at all, so the server sent exactly what 1.0.7 sends. Name tags were still
+short for both roles (~100 m), while an earlier 1.0.7 session had the cop seeing the racer from
+about a kilometre. That difference does not come from the server. The game never tells the
+server its faction: `userSettingsSave` holds only `UGC_BLOCKED`/`MULTIPLAYER_ENABLED`, and in
+`startMatchmaking` `RNFO` is empty and `TID` is 65534 for cop and racer alike. Visibility per
+faction lives in game data (`FactionVisibility_Cop/_Racer/_Both`). Not yet separated: the
+racer's Heat and pursuit state at the time of each observation.
+
+**Open.** Whether far tags come back in a live session. A player with a correct save id needs
+no lookup at all, so if the tags stay close without any `[lookup]` line, the cause lies elsewhere.
+Also open: the QoS data in session data (`f_extended_data`, the game's `NQOS`) is hardcoded at
+100 kbit/s, while the clients report 5.12/100 Mbit/s in `updateNetworkInfo`.
+
+## 2026-10-01 (evening) - a laptop asleep, short name tags at Heat x8, and logs (1.0.9)
+
+**Laptop asleep.** The guest's connection dropped (`WinError 10054`). The server cleaned up as
+it should: the host got PlayerRemoved (4/40) and the admin list change (4/202), and its game
+reported the mesh down (STAT=0). The host's game stayed open to joiners. After that the laptop
+did not reach the server at all for ~2.5 minutes, so its "find a new session" never got here.
+The cause is on the laptop: the VPN after waking, the game's online state, or the EA App.
+
+**The log was incomplete.** The launcher window keeps the last 1500 lines (`LOG_LIMIT`), so a
+log copied out of it starts mid-session, without the logins. **Decision:** every server run also
+goes to `LOG_DIR/server-<time>.log` (`%LOCALAPPDATA%\TurboRivals\logs`, the last 20). The file
+starts with the launcher version and the command. *LOGS* opens the folder.
+
+**Name tags short even at Heat x8.** So it is not Heat. Ids were right and there was no
+`lookupUsers`. The one big difference left between what our server tells the games about each
+other and what real Blaze told them: every player was described as a 100 kbit/s link (QDAT in
+the session data, NQOS of the game), while the games measure 5.12/100 Mbit/s themselves
+(`updateNetworkInfo`). **Experiment:** `blaze.SESSION_BPS`, 10 Mbit/s by default, set by
+`--session-bps`. 100000 is the old value. Not established: whether the game ties detail or
+tag range to a peer's bandwidth at all.
+
+**A/B without a new build:** `"server_args"` in the launcher's `config.json` is appended to the
+server command. `save_config` now merges onto the file on disk, so the UI no longer drops keys
+it does not know.
+
+## 2026-10-01 (night) - pictures that drop the game, and a list that never heals (1.0.10)
+
+**Report (players).** Since 1.0.6, a player who sets a profile picture gets disconnected a few
+seconds after joining a session. Deleting `C:\Users\<user>\TurboRivals` fixes it, and the
+pictures in *ONLINE NOW* come back even after an uninstall. Players also see "picture not sent".
+The photo was 256 KB.
+
+**Cause 1: a TLS record over the limit.** `_serve_http` sent the whole HTTP reply through one
+`Wire.send_record`, and that never split anything. TLS caps a record at 2^14 B of plaintext.
+The launcher made the game's JPEG (256 px, quality 0.85) up to 64 KB. Our own pictures were
+13-15 KB (`~\TurboRivals\data\avatars`), which is why every test here passed. A detailed photo
+gives 20-40 KB, and the game fetches every shown player's picture right after joining. That
+matches "a few seconds after joining", and deleting the data fixes it because then no picture
+is sent. The game's ProtoSSL limit itself has not been read from the binary (no debug strings).
+The TLS standard is the basis.
+
+**Cause 2: no second chance for a picture.** The server refused a picture from an address it
+did not know yet (409) and logged nothing. The host sent its picture only in the first ~10 s
+of its server, and a guest only once after identify. **Cause 3:** a Pictures GET first served
+back whatever the game itself had written, a leftover of the research stage in an unknown
+format. **Cause 4:** a picture could not be removed, and the uninstaller kept all data.
+
+**Decision.**
+- `Wire.send_record` splits into records of at most `MAX_FRAGMENT = 16384` B, each with its
+  own MAC and sequence number.
+- The launcher's game JPEG stays within 16 KB (256 to 96 px, quality 0.85 to 0.4).
+- Pictures GET serves only the launcher's JPEG, and the log shows its size and record count.
+- Refusals are logged as `[avatar] ... refused`.
+- The launcher sends its picture again whenever ONLINE NOW shows it without one (at most every
+  30 s, a toast only when the same reason repeats).
+- Right-click removes the picture (`DELETE /turborivals/avatar`).
+- The uninstaller asks, default No, whether to remove settings, pictures, logs, the certificate
+  and the host's player data. Career saves and save backups always stay.
+
+**Verification (offline).** A socket pair: 40 KB goes as 16384 + 16384 + rest and is
+reassembled. On loopback, a 40 KB Pictures GET arrives whole in several records. Upload, removal
+and refusal are covered, with the refusal in the log. Not yet live: the reporting player, with
+a new picture and with the old one.
+
+## 2026-10-01 (late) - a guest with no hosts file (ZeroTier) (1.0.11)
+
+**Report.** A player on ZeroTier could not turn the redirect on ("no permission to write the
+hosts file"). The PC had no `hosts` at all, only `hosts.ics`, which name resolution never reads.
+The player had put `127.0.0.1 gosredirector.ea.com` there by hand. That is wrong for a guest in
+any case: a guest needs the host's address. Ping to the host worked.
+
+**Cause.** `read_hosts` and the backup (`shutil.copy2`) raised `FileNotFoundError`, and
+*TURN ON* / *REDIRECT AND PLAY* reported a write failure. A read-only `hosts` file, or a missing
+elevation, looked the same to the player.
+
+**Decision.**
+- A missing file reads as empty and gets created (CRLF), with no backup since there is nothing
+  to copy.
+- A read-only file is made writable once.
+- When Windows still refuses (an antivirus guarding the file), the error names the exact line to
+  add by hand.
+- A missing elevation points to ELEVATE.
+- The readme says the guest needs the host's address, in `hosts` and not `hosts.ics`.
+
+## 2026-10-01 (late) - back after a dropped connection, and rivals on the speed walls (1.0.12)
+
+**Dropped connection.** `server-20261001-203209.log`: the host restarted its server. The
+guest's game, still running, connected straight to the Blaze port and sent
+`UserSessions.resumeSession` (0x7802/0x23, `ResumeSessionRequest {SKEY}`, 23 B =
+`1_1802434674_sess`, our login key). It got the empty acknowledgement of an unknown RPC, pinged
+once and closed. That is most likely also why a slept laptop never got back.
+
+**Decision:** `Lobby.resume` gives the key's uid back to a known player: the local player from
+127.0.0.1, `ea:<uid>`, or an address entry. It refuses a uid that is logged in from another
+address, and a half-open old connection leaves its games. The login notifications follow. A key
+that cannot be resumed gets `error = 1`, ASSUMED to make the game log in again.
+`--no-resume` restores the old behaviour. Keepalive now starts whenever a session has a uid,
+not only after 1/152.
+
+**Speed walls without rivals.** Two players drove the same zone. The rows were all there
+(`8 row(s)`), but every `BlazeUser.URTY` (mRelationType) was 0, `USER_RELATION_TYPE_NOT_SET`.
+**Decision:**
+- the asker's row (`BLID` of the request) is `LOCAL_PLAYER` (1), and the others get
+  `--speedwall-relation` (default 2, `FIRSTPARTY_FRIEND`);
+- the values are ASSUMED from the order of the names, since the {name, value} table is built
+  at run time and NFS14.exe holds no pointer to the names;
+- rows now come only from players with a known career save (local, ea:) and whoever is online.
+  stats/ also held results under those same people's old ids, from before 1.0.4 (8 rows for
+  2 players), and they would have shown up as rivals.
+
+**Also.** The two "no data within the timeout" lines were idle ByteVault connections closed
+after `--idle-timeout`; the message now says so, and the handshake case has its own. A STOP
+showed "server died (code 1)" because Windows ends a terminated process with 1; the UI and the
+log file now say "stopped". `NFS.getInGameRecommendations` (Autolog: rivals, "X beat your
+time") is still unanswered. It is a feature of its own, and its reply layout is still to be
+read from the binary.
+
+## 2026-10-01 (night) - back into the host's game, and an EA token in the log (1.0.12.1)
+
+The host was a racer and the guest (laptop) a cop, on 1.0.12. The laptop slept, then tried
+"find a new session", also from the in-game menu (Esc / Page Up). Log `server-20261001-210619`.
+
+**Back from sleep, but alone.** The laptop logged in from scratch by itself (redirector,
+preAuth, originLogin), so no resume was needed. Its `startMatchmaking` was 794 B against 783 B
+on the first join. The 11 B are exactly `CRIT.AGAM.GIDL` with one id (tag 3 + type 1 + element
+type 1 + count 1 + varint `0x10000001` 5): the game asks to avoid the game it dropped out of.
+`find_public_game` honoured that strictly, there was no other game, so the guest got a new game
+of its own (`0x10000002`). **Decision:** avoided games come last instead of never. When the only
+joinable game is an avoided one, the player still joins it, with a log line saying so.
+`--strict-avoid` restores the old behaviour.
+
+**An EA token in the log.** The guest's ByteVault requests carried
+`Authorization: QVQwOjMuMDoz...`, base64 of `AT0:3.0:3.0:240:...:60810:sesdm`, with
+`X-TOKEN-TYPE: NUCLEUS_AUTH_TOKEN`: the player's real EA access token, not our `TR_AUTH_<uid>`.
+RivalsNET's review had said so. Since 1.0.9 the log is a file players pass around.
+**Decision:** `_redact_header` cuts `Authorization`, `Cookie`, `X-Auth*` and `*token*` values
+(keeping `X-TOKEN-TYPE`) to six characters and a length. A loopback test checks that no secret
+reaches the log. Log files from 1.0.9 to 1.0.12 may hold such tokens and should not be shared.
+
+**Speed walls.** The rows now carry rivals (`you + 2 rival(s)`), and the game still showed no
+ranking. Autolog showed platform friends; the game takes them from the EA App
+(`FIRSTPARTY_FRIEND`, `OriginQueryFriends`), so accounts that are not EA App friends may be left
+out whatever URTY says. The cop was also on the racer's speed cameras. Next test: two racers,
+friends in the EA App. The log now lists every row with its value (`you 45.9 AverageSpeed,
+CustomNickname2 50.1 AverageSpeed`).

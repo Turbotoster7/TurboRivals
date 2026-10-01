@@ -30,6 +30,7 @@ import ctypes
 import datetime as dt
 import os
 import shutil
+import stat
 import sys
 from pathlib import Path
 
@@ -63,8 +64,57 @@ def is_admin() -> bool:
         return False
 
 
-def read_hosts() -> list[str]:
-    return HOSTS.read_text(encoding="utf-8", errors="replace").splitlines()
+# latin-1 maps every byte to one character and back, so lines we do not touch are written back
+# byte for byte - whatever codepage another tool or a hand edit used for them. Reading as UTF-8
+# with errors="replace" turned such bytes into U+FFFD for good.
+ENCODING = "latin-1"
+
+
+def read_hosts(path: Path | None = None) -> list[str]:
+    """The file's lines; none when there is no hosts file at all. Some Windows installs have none -
+    only hosts.ics, which name resolution never reads (a player on 01.10) - and that is the same
+    as an empty one: write_hosts creates it."""
+    try:
+        raw = (path or HOSTS).read_bytes()
+    except FileNotFoundError:
+        return []
+    # Not splitlines(): it also breaks on \x85 and a few control bytes, and 0x85 is the ellipsis in
+    # cp1250/cp1252 - a comment holding one would come back as two lines.
+    lines = raw.decode(ENCODING).split("\n")
+    if lines[-1] == "":
+        lines.pop()                                   # the last line ending, not an empty line
+    return [line[:-1] if line.endswith("\r") else line for line in lines]
+
+
+def write_hosts(lines: list[str], path: Path | None = None) -> None:
+    """Writes the lines back with the file's own line ending: CRLF unless the file has none
+    (Windows ships hosts with CRLF), LF for a file that uses bare LF. A read-only hosts file -
+    set by hand or by a "protection" tool - is made writable once; anything else that refuses
+    (an antivirus guarding the file) raises PermissionError for the caller to explain."""
+    path = path or HOSTS
+    try:
+        raw = path.read_bytes()
+    except FileNotFoundError:
+        raw = b""
+    newline = "\n" if b"\n" in raw and b"\r\n" not in raw else "\r\n"
+    data = (newline.join(lines) + newline).encode(ENCODING)
+    try:
+        path.write_bytes(data)
+    except PermissionError:
+        if not path.exists() or os.access(path, os.W_OK):
+            raise
+        os.chmod(path, stat.S_IREAD | stat.S_IWRITE)  # clears the read-only attribute
+        path.write_bytes(data)
+
+
+def backup_hosts(path: Path | None = None) -> Path | None:
+    """A dated copy next to the file before a change; None when there is no file to copy."""
+    path = path or HOSTS
+    if not path.exists():
+        return None
+    backup = path.with_suffix(f".turborivals-{dt.datetime.now():%Y%m%d-%H%M%S}.bak")
+    shutil.copy2(path, backup)
+    return backup
 
 
 def strip_block(lines: list[str]) -> list[str]:
@@ -160,13 +210,12 @@ def cmd_on(args) -> int:
     names = PRIMARY + (EXTRA if args.all else [])
     lines, removed = strip_redirects(read_hosts())
 
-    backup = HOSTS.with_suffix(f".turborivals-{dt.datetime.now():%Y%m%d-%H%M%S}.bak")
-    shutil.copy2(HOSTS, backup)
+    backup = backup_hosts()
 
     block = [BEGIN] + [f"{args.ip}\t{n}" for n in names] + [END]
-    HOSTS.write_text("\n".join(lines + block) + "\n", encoding="utf-8")
+    write_hosts(lines + block)
 
-    print(f"backup: {backup}")
+    print(f"backup: {backup}" if backup else f"no hosts file existed - created {HOSTS}")
     for line in removed:
         print(f"removed an old entry outside the block: {line}")
     print(f"redirected {len(names)} hosts to {args.ip}:")
@@ -186,10 +235,8 @@ def cmd_off(_args) -> int:
         print("nothing to remove")
         return 0
     if removed:
-        backup = HOSTS.with_suffix(f".turborivals-{dt.datetime.now():%Y%m%d-%H%M%S}.bak")
-        shutil.copy2(HOSTS, backup)
-        print(f"backup: {backup}")
-    HOSTS.write_text("\n".join(cleaned) + "\n", encoding="utf-8")
+        print(f"backup: {backup_hosts()}")
+    write_hosts(cleaned)
     for line in removed:
         print(f"removed an old entry outside the block: {line}")
     print("TurboRivals redirect removed - hosts restored")

@@ -15,6 +15,7 @@ const state = {
     admin: false,
     cert: false,
     hosts: { active: false, ip: null },
+    firewall: { host: false, client: false, any: false },   // commands.firewall_status()
     serverRunning: false,
     players: [],
     maxGuests: 5,
@@ -171,11 +172,21 @@ function clearLog() {
     $('#logBody').innerHTML = '<div class="log-empty">&gt; log cleared</div>';
 }
 
+/* The window keeps the last LOG_LIMIT lines; the whole run is in a file (commands.LOG_DIR). */
+async function openLogs() {
+    const result = await callApi('open_logs');
+    if (!result.ok) toast(result.error, 'bad');
+}
+
+/* Windows ends a terminated process with code 1, so a STOP alone used to read "server died". */
+let serverStopRequested = false;
+
 function onServerExit(code) {
     state.serverRunning = false;
-    appendLog([`--- server exited (code ${code}) ---`]);
-    toast(code === 0 ? 'server stopped' : `server died (code ${code})`,
-          code === 0 ? '' : 'bad');
+    const stopped = code === 0 || serverStopRequested;
+    serverStopRequested = false;
+    appendLog([`--- server ${stopped ? 'stopped' : 'exited'} (code ${code}) ---`]);
+    toast(stopped ? 'server stopped' : `server died (code ${code})`, stopped ? '' : 'bad');
     render();
 }
 
@@ -231,9 +242,18 @@ function render() {
     }
     btnHosts.classList.toggle('off', hostsOn);
 
+    /* Missing rules leave the dot neutral, not red: the row is not in the count below. */
+    const firewallOn = !!state.firewall[state.mode];
+    $('#checkFirewall').classList.toggle('ok', firewallOn);
+    $('#checkFirewall').querySelector('.check-dot').classList.toggle('neutral', !firewallOn);
     $('#firewallNote').textContent = state.mode === 'host'
         ? 'TCP 42127,14219,17502 + UDP 17502-17503, 3659'
         : 'UDP 3659 (player-to-player traffic)';
+    const btnFirewall = $('#btnFirewall');
+    if (!btnFirewall.dataset.pending) {
+        btnFirewall.textContent = firewallOn ? 'REMOVE' : 'ADD';
+    }
+    btnFirewall.classList.toggle('off', firewallOn);
 
     /* Count only the checks that actually apply: the certificate is the host's
        business alone. Folding it in as "cert || client" used to hand the
@@ -329,10 +349,14 @@ function renderSave() {
    ======================================================================= */
 /* Two copies: a small PNG for the launchers, a JPEG for the game (the server answers its ByteVault
    profile picture requests with it - the game links libjpeg). The first size, or quality, that
-   fits the server's limit wins. */
-const AVATAR_PNG = { type: 'image/png', sizes: [128, 96, 64], qualities: [undefined] };
-const AVATAR_JPEG = { type: 'image/jpeg', sizes: [256, 192, 128], qualities: [0.85, 0.7, 0.55] };
+   fits the format's limit wins. The game's copy stays within 16 KB: the pictures known to work
+   were 8-15 KB, and up to 1.0.9 a bigger one (a detailed photo made 20-40 KB) went out as one
+   oversized TLS record and dropped the game a few seconds into a session. */
 const AVATAR_MAX = 64 * 1024;
+const AVATAR_PNG = { type: 'image/png', sizes: [128, 96, 64], qualities: [undefined],
+                     max: AVATAR_MAX };
+const AVATAR_JPEG = { type: 'image/jpeg', sizes: [256, 192, 128, 96],
+                      qualities: [0.85, 0.7, 0.55, 0.4], max: 16 * 1024 };
 
 function avatarImg(src) {
     const img = document.createElement('img');
@@ -376,7 +400,7 @@ function squareImage(img, format) {
             ctx.drawImage(img, (img.width - side) / 2, (img.height - side) / 2, side, side,
                           0, 0, size, size);
             const url = canvas.toDataURL(format.type, quality);
-            if ((url.length - url.indexOf(',') - 1) * 3 / 4 <= AVATAR_MAX) return url;
+            if ((url.length - url.indexOf(',') - 1) * 3 / 4 <= format.max) return url;
         }
     }
     throw new Error('the picture is too detailed - try another one');
@@ -412,6 +436,37 @@ async function sendAvatar(ip, attempts = 1) {
         if (i === attempts - 1) return toast(`picture not sent: ${result.error}`, 'warn');
         await new Promise((done) => setTimeout(done, 1000));
     }
+}
+
+/* A picture that did not get through used to stay missing until it was picked again: the host
+   sends it only in the first seconds of its server, a guest once after identify. So whenever the
+   ONLINE NOW list shows this player without one, it goes again - quietly, at most every 30 s, and
+   a toast only when the same reason comes back twice. */
+const AVATAR_RESEND_MS = 30000;
+let avatarResentAt = 0;
+let avatarResendError = '';
+
+async function resendMissingAvatar(target, players) {
+    if (!state.avatar || !players || Date.now() - avatarResentAt < AVATAR_RESEND_MS) return;
+    const mine = players.find((p) => (state.mode === 'host' ? p.local : p.uid === state.save.id));
+    if (!mine || mine.avatar) return;
+    avatarResentAt = Date.now();
+    const result = await callApi('upload_avatar', target);
+    if (!result.ok && result.error === avatarResendError) {
+        toast(`picture not sent: ${result.error}`, 'warn');
+    }
+    avatarResendError = result.ok ? '' : result.error;
+}
+
+/* Right-click on the picture: gone here, and from the host's server when connected. */
+async function clearAvatar() {
+    if (!state.avatar) return;
+    const result = await callApi('clear_avatar', onlineTarget());
+    if (result.local === false) return toast(result.error, 'bad');
+    state.avatar = '';
+    renderAvatar();
+    toast(result.ok ? 'picture removed' : result.error, result.ok ? 'good' : 'warn');
+    pollOnline();
 }
 
 /* Whose server to ask: our own while it runs, or the one this launcher connected to. */
@@ -464,6 +519,7 @@ async function pollOnline() {
         const result = await callApi('fetch_players', target);
         state.online = result.players;
         state.onlineNote = result.ok ? 'nobody logged in yet' : 'the server does not answer';
+        if (result.ok) await resendMissingAvatar(target, result.players);
     } finally {
         onlineBusy = false;
     }
@@ -545,6 +601,7 @@ async function refreshState() {
     state.admin = fresh.admin;
     state.cert = fresh.cert;
     state.hosts = fresh.hosts;
+    state.firewall = fresh.firewall;
     state.serverRunning = fresh.server_running;
     state.maxGuests = fresh.max_guests;
     state.addresses = fresh.addresses;
@@ -639,12 +696,21 @@ function toastRemoved(result) {
         toast(`removed an old hosts entry: ${line}`, 'warn'));
 }
 
-async function addFirewall() {
-    const result = await callApi('firewall_rules', state.mode);
-    if (!result.ok) return toast(result.error, 'bad');
-    $('#checkFirewall').classList.add('ok');
-    $('#checkFirewall').querySelector('.check-dot').classList.remove('neutral');
-    toast(`rules added: ${result.rules.length}`, 'good');
+async function toggleFirewall() {
+    if (state.firewall[state.mode]) {
+        /* Every launcher rule, both modes - the P2P one is shared between them anyway. */
+        const result = await callApi('firewall_off');
+        if (!result.ok) return toast(result.error, 'bad');
+        toast(`rules removed: ${result.removed.length}`, 'good');
+    } else {
+        /* A host's rules cover only the address the players reach it on (localip),
+           when it is one of this PC's - commands.firewall_commands checks that. */
+        const localIp = state.mode === 'host' ? $('#publicIp').value.trim() : '';
+        const result = await callApi('firewall_rules', state.mode, localIp);
+        if (!result.ok) return toast(result.error, 'bad');
+        toast(`rules added: ${result.rules.length}`, 'good');
+    }
+    state.firewall = await callApi('firewall_status');
 }
 
 async function makeCert() {
@@ -656,6 +722,7 @@ async function makeCert() {
 
 async function toggleServer() {
     if (state.serverRunning) {
+        serverStopRequested = true;
         await callApi('stop_server');
         state.serverRunning = false;
         return;
@@ -670,6 +737,7 @@ async function toggleServer() {
     state.serverRunning = true;
     clearLog();
     appendLog([`--- start: ${result.command.join(' ')} ---`]);
+    if (result.log) appendLog([`--- the whole run is saved to ${result.log} (LOGS) ---`]);
     toast(`server up (PID ${result.pid})`, 'good');
     persist();
     sendAvatar('127.0.0.1', 10);        // the server takes a moment to listen
@@ -751,7 +819,7 @@ function bind() {
     };
     onPending('[data-action="cert"]', makeCert);
     onPending('[data-action="hosts-toggle"]', toggleHosts);
-    onPending('[data-action="firewall"]', addFirewall);
+    onPending('[data-action="firewall-toggle"]', toggleFirewall);
     onPending('#btnServer', toggleServer);
     onPending('#btnConnect', connectAsClient);
 
@@ -765,6 +833,7 @@ function bind() {
         toast(`launching via ${result.via}`, 'good');
     };
     $('#btnClearLog').onclick = clearLog;
+    $('#btnOpenLogs').onclick = openLogs;
 
     ['#persona', '#publicIp', '#serverIp'].forEach((sel) => {
         $(sel).oninput = () => { renderAddressChips(); renderIpHint(); renderCommandPreview(); persist(); };
@@ -778,7 +847,10 @@ function bind() {
     const syncHostName = $('#persona').oninput;
     $('#persona').oninput = () => { $('#guestName').value = $('#persona').value; syncHostName(); };
 
-    $$('[data-avatar-pick]').forEach((button) => { button.onclick = () => $('#avatarFile').click(); });
+    $$('[data-avatar-pick]').forEach((button) => {
+        button.onclick = () => $('#avatarFile').click();
+        button.oncontextmenu = (e) => { e.preventDefault(); clearAvatar(); };
+    });
     $('#avatarFile').onchange = (e) => {
         pickAvatar(e.target.files[0]);
         e.target.value = '';            // the same file picked again still fires
