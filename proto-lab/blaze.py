@@ -1469,25 +1469,136 @@ RELATION_NOT_SET, RELATION_LOCAL_PLAYER, RELATION_FRIEND, RELATION_RECENTLY_PLAY
 
 def build_in_game_speed_walls_response(seq: int, walls: list[tuple[int, list[dict]]], *,
                                        local_id: int = 0, rival_relation: int = RELATION_FRIEND,
-                                       msg_type: int = MSG_REPLY) -> bytes:
+                                       command: int = 20, msg_type: int = MSG_REPLY) -> bytes:
     """walls = [(speed wall id, [row, ...])], row = {blaze_id, persona, int, float, str}.
     A speed wall without stored data goes out with an empty row list - the game gets an answer for
     every id it asked about. The asker's own row (local_id = BLID of the request) is LOCAL_PLAYER,
     everyone else's rival_relation: up to 1.0.11 every row was NOT_SET, and the walls showed no one
     to beat, though the rows were there."""
-    items = []
-    for swid, rows in walls:
-        row_structs = [[
-            f_struct("BLUS", [f_int("BLIS", r["blaze_id"]), f_str("PENA", r.get("persona", "")),
-                              f_int("URTY", RELATION_LOCAL_PLAYER if r["blaze_id"] == local_id
-                                    else rival_relation)]),
-            f_map_float("STAF", r.get("float", {})),
-            f_map_int("STAI", r.get("int", {})),
-            f_map_str("STAS", r.get("str", {})),
-        ] for r in rows]
-        items.append([f_list_struct("ROWS", row_structs), f_int("SWID", swid)])
+    items = [_speed_wall_fields(swid, rows, local_id, rival_relation) for swid, rows in walls]
     payload = encode_tdf([f_list_struct("ROWS", items), f_list_struct("SPWA", items)])
-    return Fire2(component=2050, command=20, payload=payload, error=0, seq=seq,
+    return Fire2(component=2050, command=command, payload=payload, error=0, seq=seq,
+                 msg_type=msg_type).encode()
+
+
+def f_blaze_user(tag: str, blaze_id: int, persona: str, relation: int) -> Field:
+    """BlazeUser (candidate @0x141a2c040) {BLIS mBlazeId, PENA mPersonaName, URTY mRelationType}."""
+    return f_struct(tag, [f_int("BLIS", blaze_id), f_str("PENA", persona), f_int("URTY", relation)])
+
+
+def _speed_wall_fields(swid: int, rows: list[dict], local_id: int,
+                       rival_relation: int) -> list[Field]:
+    """InGameSpeedWallResponseSpeedWall {ROWS mSpeedWall, SWID mSpeedWallId}: a row per player,
+    InGameSpeedWallResponseRow {BLUS, STAF, STAI, STAS} - the stats a GameReporting report filed
+    under that object."""
+    row_structs = [[
+        f_blaze_user("BLUS", r["blaze_id"], r.get("persona", ""),
+                     RELATION_LOCAL_PLAYER if r["blaze_id"] == local_id else rival_relation),
+        f_map_float("STAF", r.get("float", {})),
+        f_map_int("STAI", r.get("int", {})),
+        f_map_str("STAS", r.get("str", {})),
+    ] for r in rows]
+    return [f_list_struct("ROWS", row_structs), f_int("SWID", swid)]
+
+
+def f_map_int_struct(tag: str, items: dict[int, list[Field]]) -> Field:
+    """heat2 map int -> struct, keys ascending (the client keeps maps as sorted vectors): key type,
+    value type, count, then (key, struct fields + terminator) pairs without tags."""
+    body = bytes((T_INT, T_STRUCT)) + enc_int(len(items))
+    for k in sorted(items):
+        body += enc_int(int(k)) + b"".join(f.encode() for f in items[k]) + b"\x00"
+    return Field(tag, T_MAP, body)
+
+
+# NFS.getInGameRecommendations (2050/21) - Autolog. Classes from the TDF tables:
+#   InGameRecommendationsRequest  {BLID mBlazeId}
+#   InGameRecommendationsResponse @0x1416b7490 {RILI mRivalList, SPWA mSpeedWallIDToSpeedWallMap}
+#   InGameRecommendationsRival    @0x1416b5d20 {BLUS mRivalBlazeUser, PENA mRivalName, PLSC
+#                                  mPlayerScore, RECM mRecommendationsList, RIBL mRivalBlazeId,
+#                                  RISC mRivalScore}
+#   ...ResponseRecommendation     @0x141a2c160 {BLUS mTargetBlazeUser, RETY mRecommendationType,
+#                                  STAF/STAI/STAS mMisc*, STOB/STOT mStoryString*ID, SWID
+#                                  mSpeedWallId, TABL mTargetBlazeId, TANA mTargetName,
+#                                  TITL mTitleStringID}
+# The map's values are the same InGameSpeedWallResponseSpeedWall as in getInGameSpeedWalls.
+RECOMMENDATIONS_MAX_PAYLOAD = 60000     # Fire2 carries a 16-bit length
+# RecommendationType: the names come in this order - BEAT_YOU, HOT, POPULAR - and the VALUES are
+# ASSUMED to follow it (the table is built at run time); title string ids from the binary.
+RECOMMENDATION_BEAT_YOU, RECOMMENDATION_HOT, RECOMMENDATION_POPULAR = 0, 1, 2
+RECOMMENDATION_TITLES = {RECOMMENDATION_BEAT_YOU: "ID_REC_TITLE_BEAT",
+                         RECOMMENDATION_HOT: "ID_REC_TITLE_HOT",
+                         RECOMMENDATION_POPULAR: "ID_REC_TITLE_POP"}
+
+
+def _recommendation_fields(rec: dict, rival_relation: int) -> list[Field]:
+    """rec = {swid, blaze_id, persona, type, title, row}: row = the target's speed wall result."""
+    row = rec.get("row") or {}
+    return [                                            # tags ascending
+        f_blaze_user("BLUS", rec["blaze_id"], rec["persona"], rival_relation),
+        f_int("RETY", rec["type"]),
+        f_map_float("STAF", row.get("float", {})),
+        f_map_int("STAI", row.get("int", {})),
+        f_map_str("STAS", row.get("str", {})),
+        f_str("STOB", ""),
+        f_str("STOT", ""),
+        f_int("SWID", rec["swid"]),
+        f_int("TABL", rec["blaze_id"]),
+        f_str("TANA", rec["persona"]),
+        f_str("TITL", rec["title"]),
+    ]
+
+
+def build_in_game_recommendations_response(seq: int, rivals: list[dict],
+                                           walls: list[tuple[int, list[dict]]], *,
+                                           local_id: int, rival_relation: int = RELATION_FRIEND,
+                                           max_payload: int = RECOMMENDATIONS_MAX_PAYLOAD,
+                                           msg_type: int = MSG_REPLY) -> tuple[bytes, int]:
+    """rivals = [{blaze_id, persona, player_score, rival_score, recommendations=[rec]}] (rec: see
+    _recommendation_fields), walls = [(id, rows)] in priority order. Speed walls go in until the
+    payload would pass max_payload. Returns (frame, how many walls went in)."""
+    rili = f_list_struct("RILI", [[
+        f_blaze_user("BLUS", r["blaze_id"], r["persona"], rival_relation),
+        f_str("PENA", r["persona"]),
+        f_int("PLSC", r["player_score"]),
+        f_list_struct("RECM", [_recommendation_fields(rec, rival_relation)
+                               for rec in r.get("recommendations", [])]),
+        f_int("RIBL", r["blaze_id"]),
+        f_int("RISC", r["rival_score"]),
+    ] for r in rivals])
+    base = len(rili.encode()) + 16
+    chosen, size = {}, base
+    for swid, rows in walls:
+        fields = _speed_wall_fields(swid, rows, local_id, rival_relation)
+        entry = len(enc_int(swid)) + sum(len(f.encode()) for f in fields) + 1
+        if size + entry > max_payload:
+            break
+        chosen[swid] = fields
+        size += entry
+    payload = encode_tdf([rili, f_map_int_struct("SPWA", chosen)])
+    return Fire2(component=2050, command=21, payload=payload, error=0, seq=seq,
+                 msg_type=msg_type).encode(), len(chosen)
+
+
+def build_special_guest_info_response(seq: int, *, msg_type: int = MSG_REPLY) -> bytes:
+    """NFS.getSpecialGuestInfo (2050/39) {BLIS} -> @0x141a2c0d0 {BLIS mSpecialGuests, SPGN
+    mSpecialGroupName, SPGT mSpecialGuestType, SPLA mSplashScreenFileName, STAI
+    mSpecialGuestRealNames}. Special Guests were EA people's results; there are none now, so an
+    empty but well-formed reply. The bare acknowledgement before 1.0.12.3 had the game ask ~700
+    times a session."""
+    payload = encode_tdf([f_list_int("BLIS", []), f_str("SPGN", ""), f_int("SPGT", 0),
+                          f_str("SPLA", ""), f_map_str("STAI", {})])
+    return Fire2(component=2050, command=39, payload=payload, error=0, seq=seq,
+                 msg_type=msg_type).encode()
+
+
+def build_autolog_playlist_response(seq: int, blaze_id: int, *,
+                                    msg_type: int = MSG_REPLY) -> bytes:
+    """NFS.getAutologPlaylist (2050/29) {BLID}. Two classes fit the reply - {BLID, PLAY mPlaylist}
+    and {BLID, ROWS mPlaylist} - and the elements of a playlist are unknown, so: both lists,
+    empty. The client skips the tag its class does not have."""
+    payload = encode_tdf([f_int("BLID", blaze_id), f_list_struct("PLAY", []),
+                          f_list_struct("ROWS", [])])
+    return Fire2(component=2050, command=29, payload=payload, error=0, seq=seq,
                  msg_type=msg_type).encode()
 
 

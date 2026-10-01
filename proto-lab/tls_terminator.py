@@ -915,6 +915,127 @@ def _qos_probe_reply(data: bytes, peer, args) -> bytes:
     return bytes(buf)
 
 
+RECOMMENDATIONS_PER_RIVAL = 20       # "beat you" entries per rival (1.0.12.3 sent 20 fine)
+EVENT_RECOMMENDATIONS_PER_RIVAL = 10  # of which events at most; the speed walls fill the rest
+
+
+def _autolog_recommendations(fr, args, sess) -> bytes:
+    """NFS.getInGameRecommendations (2050/21): Autolog's rivals and their speed walls.
+
+    The game asks this after login and now and then (3x in a session). It used to get an empty
+    acknowledgement, and the speed walls showed no rival although getInGameSpeedWalls carried
+    their rows: InGameRecommendationsResponse::mSpeedWallIDToSpeedWallMap says the rivals' walls
+    come from here. A rival = every other player with a known career save or online
+    (Lobby.ranked_uids) who has a speed wall result; PLSC/RISC = on how many shared walls the asker /
+    the rival leads. The map holds every wall a rival has a result on, shared ones first, as many
+    as fit in a Fire2 frame.
+
+    RECM = "X beat you": the shared walls the rival leads. Events (races, pursuits ...) come first,
+    up to 10, and cameras, zones and jumps fill the rest up to 20, newest first in each group. The
+    newest 20 alone were all cameras, which left the events out. A rival with no entry is left
+    out of the list but stays on the walls: an empty RECM crashes the game (confirmed 02.10,
+    decisions.md). --autolog-world-only drops the event entries (the 1.0.12.4 behaviour)."""
+    req = _req_fields(fr)
+    mt = args.reply_msgtype
+    me = int(req.get("BLID", 0) or 0) or sess.uid
+    store, lb = _player_store(args), _lobby(args)
+    if not store or not me:
+        return blaze.build_empty_reply(2050, 21, fr.seq, msg_type=mt)
+    ranked = lb.ranked_uids()
+    mine = store.speedwall_ids(me)
+    rows_of: dict[int, dict[int, dict]] = {}
+
+    def rows(swid: int) -> dict[int, dict]:
+        if swid not in rows_of:
+            rows_of[swid] = {r["blaze_id"]: r for r in store.rows_for_entity(swid)
+                             if r["blaze_id"] in ranked}
+        return rows_of[swid]
+
+    beat_type = getattr(args, "autolog_beat_type", blaze.RECOMMENDATION_BEAT_YOU)
+    world_only = getattr(args, "autolog_world_only", False)
+    world_ids = store.speedwall_ids(me, world_only=True)
+    recommendable = world_ids if world_only else mine
+    rivals, left_out, theirs_all = [], [], set()
+    for pid in sorted(ranked - {me}):
+        theirs = store.speedwall_ids(pid)
+        if not theirs:
+            continue
+        theirs_all |= theirs
+        persona = lb.persona_of(pid)
+        lead = trail = 0
+        beaten = []
+        for swid in mine & theirs:
+            a = player_store.primary_stat(rows(swid).get(me))
+            b = player_store.primary_stat(rows(swid).get(pid))
+            if a and b and a[0] == b[0] and a[1] != b[1]:
+                if (a[1] < b[1]) if a[2] else (a[1] > b[1]):
+                    lead += 1
+                    continue
+                trail += 1
+                if swid in recommendable:
+                    # the rival is ahead here: "X beat you" - a target to go and beat
+                    beaten.append({"swid": swid, "blaze_id": pid, "persona": persona,
+                                   "type": beat_type, "row": rows(swid)[pid],
+                                   "title": blaze.RECOMMENDATION_TITLES.get(beat_type,
+                                                                            "ID_REC_TITLE_BEAT")})
+        if not beaten and not getattr(args, "autolog_empty_rivals", False):
+            left_out.append(persona)
+            continue
+        beaten.sort(key=lambda rec: rec["row"].get("updated", 0), reverse=True)
+        events = [rec for rec in beaten if rec["swid"] not in world_ids][:EVENT_RECOMMENDATIONS_PER_RIVAL]
+        world = [rec for rec in beaten if rec["swid"] in world_ids]
+        rivals.append({"blaze_id": pid, "persona": persona, "player_score": lead,
+                       "rival_score": trail, "events": len(events),
+                       "recommendations": events + world[:RECOMMENDATIONS_PER_RIVAL - len(events)]})
+    if not rivals:
+        # a first-time or solo player: an empty RILI never reached the game, and an empty RECM
+        # crashes it, so the bare acknowledgement it got without trouble until 1.0.12.1
+        print(f"  [autolog] {lb.persona_of(me)}: no rival"
+              + (f" (left out with nothing to beat: {', '.join(left_out)})" if left_out else "")
+              + " - bare acknowledgement")
+        return blaze.build_empty_reply(2050, 21, fr.seq, msg_type=mt)
+    walls = []
+    for swid in sorted(theirs_all & mine) + sorted(theirs_all - mine):
+        listed = list(rows(swid).values())
+        for r in listed:
+            r["persona"] = lb.persona_of(r["blaze_id"])
+        walls.append((swid, listed))
+    frame, sent = blaze.build_in_game_recommendations_response(
+        fr.seq, rivals, walls, local_id=me, rival_relation=args.speedwall_relation, msg_type=mt)
+    print(f"  [autolog] {lb.persona_of(me)}: {len(rivals)} rival(s)"
+          + (" (" + "; ".join(f"{r['persona']}: you lead {r['player_score']}, they lead "
+                              f"{r['rival_score']}, {len(r['recommendations'])} \"beat you\" "
+                              f"({r['events']} on events)" for r in rivals) + ")" if rivals else "")
+          + (f", left out with nothing to beat: {', '.join(left_out)}" if left_out else "")
+          + (", \"beat you\" on speed walls only" if world_only else "")
+          + f", {sent} of {len(walls)} speed wall(s) sent")
+    return frame
+
+
+def _autolog_other(fr, args, sess) -> bytes | None:
+    """The rest of Autolog on the NFS component, or None for another command:
+      39 getSpecialGuestInfo      - an empty, well-formed reply (no Special Guests exist any more);
+                                    the bare acknowledgement had the game ask ~700 times a session
+      41 getSpecialGuestSpeedWall - empty speed walls for the ids asked about
+      29 getAutologPlaylist       - empty playlist (its entries' layout is unknown)
+      31 setRecommendationRivalScore {BLID PLSC RIBL RISC} - logged and acknowledged"""
+    mt = args.reply_msgtype
+    req = _req_fields(fr)
+    if fr.command == 39:
+        return blaze.build_special_guest_info_response(fr.seq, msg_type=mt)
+    if fr.command == 41:
+        walls = [(int(swid), []) for swid in req.get("SWIS") or []]
+        return blaze.build_in_game_speed_walls_response(fr.seq, walls, command=41, msg_type=mt)
+    if fr.command == 29:
+        return blaze.build_autolog_playlist_response(
+            fr.seq, int(req.get("BLID", 0) or 0) or sess.uid, msg_type=mt)
+    if fr.command == 31:
+        print(f"  [autolog] {sess!r} reports its score against rival {req.get('RIBL')}: "
+              f"{req.get('PLSC')}:{req.get('RISC')}")
+        return blaze.build_empty_reply(2050, 31, fr.seq, msg_type=mt)
+    return None
+
+
 # The key our login reply gives every session (build_login_response, KEY = "1_<uid>_sess").
 SESSION_KEY_RE = re.compile(r"^1_(\d+)_sess$")
 # Error code for a session that cannot be resumed here. ASSUMED: ERR_SYSTEM (1) - the numeric
@@ -1058,6 +1179,10 @@ def _dispatch_blaze(fr, args, sess):
         return _lookup_users(fr, args, sess)
     if fr.component == 0x7802 and fr.command == 0x23 and not args.no_resume:
         return _resume_session(fr, args, sess)
+    if fr.component == 2050 and fr.command == 21 and not args.no_autolog:
+        return _autolog_recommendations(fr, args, sess)
+    if fr.component == 2050 and fr.command in (29, 31, 39, 41) and not args.no_autolog:
+        return _autolog_other(fr, args, sess)
     # --- post-login RPCs (run-20/21b). Names from emulating getCommandName in the binary,
     #     reply layouts from the TDF field tables - see the builders in blaze.py.
     req = _req_fields(fr)
@@ -1177,12 +1302,10 @@ def _dispatch_blaze(fr, args, sess):
                 r["persona"] = lb.persona_of(r["blaze_id"])
             walls.append((int(swid), rows))
             def score(r) -> str:
-                # the row's main value - the first stat the report carried (speed, AverageSpeed,
-                # eventTime ...), so the log shows who is ahead
-                for kind in ("float", "int"):
-                    for stat, value in r[kind].items():
-                        return f"{value:.1f} {stat}" if kind == "float" else f"{value} {stat}"
-                return "-"
+                # the row's main value (speed, AverageSpeed, distance, eventTime), so the log
+                # shows who is ahead
+                main = player_store.primary_stat(r)
+                return f"{main[1]:.1f} {main[0]}" if main else "-"
             print(f"  [speed wall] {swid}: " + (", ".join(
                 f"{'you' if r['blaze_id'] == me else r['persona']} {score(r)}" for r in rows)
                 or "no results yet"))
@@ -2065,6 +2188,24 @@ def main() -> int:
     ap.add_argument("--no-speed-walls", action="store_true",
                     help="answer NFS.getInGameSpeedWalls (2050/20) with an empty acknowledgement "
                          "instead of saved results (A/B)")
+    ap.add_argument("--no-autolog", action="store_true",
+                    help="answer Autolog (NFS 2050/21 recommendations, 29 playlist, 31 rival score, "
+                         "39 Special Guest info, 41 Special Guest speed wall) with an empty "
+                         "acknowledgement, as before 1.0.12.2 (A/B)")
+    ap.add_argument("--autolog-beat-type", type=int, default=blaze.RECOMMENDATION_BEAT_YOU,
+                    metavar="N", help="RecommendationType of the \"X beat you\" entries: 0 = BEAT_YOU "
+                                      "(default), 1 = HOT, 2 = POPULAR - values ASSUMED from the order "
+                                      "of the names in the binary")
+    ap.add_argument("--autolog-world-only", action="store_true",
+                    help="\"X beat you\" entries only on cameras, zones and jumps, none on events "
+                         "(races, pursuits ...) - the 1.0.12.4 behaviour, should an event entry crash "
+                         "the game after a race")
+    # 1.0.12.4's switch for the event entries, now the default; kept so a config.json that still
+    # carries it starts the server
+    ap.add_argument("--autolog-event-recommendations", action="store_true", help=argparse.SUPPRESS)
+    ap.add_argument("--autolog-empty-rivals", action="store_true",
+                    help="list Autolog rivals with no \"X beat you\" entry too (empty RECM) - "
+                         "CRASHES the game on the reply (confirmed 02.10, unmodded game); tests only")
     ap.add_argument("--strict-avoid", action="store_true",
                     help="never put a player into a game its matchmaking asks to avoid (CRIT.AGAM.GIDL), "
                          "as before 1.0.12.1. By default such a game is still taken when it is the only "

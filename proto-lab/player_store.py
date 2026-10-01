@@ -34,6 +34,37 @@ import blaze
 # is not virtualized and lies outside OneDrive.
 DATA_DIR = Path.home() / "TurboRivals" / "data"
 REPORT_TDF_ID = 0xF3E30E29        # class of the RPRT.GAME object in all run-24 reports
+# Report categories whose objects are speed walls (names carry a hash suffix, e.g.
+# SpeedCameras00596c35): the SpeedWallType_* values of the binary, cops' events included.
+SPEEDWALL_CATEGORIES = ("SpeedCameras", "RacerRoadRule", "JumpSpots", "Speedlist", "Hunted",
+                        "DirectedRaces", "HotPursuit", "RapidResponse", "TimeAttack",
+                        "Interceptor", "DriftCorners")
+# The speed walls out in the world (cameras, zones, jumps) - the rest are events.
+WORLD_SPEEDWALL_CATEGORIES = ("SpeedCameras", "RacerRoadRule", "JumpSpots")
+
+# A speed wall row's main result: (stat, value, lower_is_better). The categories' stat names
+# (stats/*.json): SpeedCameras speed, RacerRoadRule AverageSpeed, JumpSpots distance, events
+# eventTime - the only one where less is better.
+PRIMARY_STATS = (("eventTime", True), ("speed", False), ("AverageSpeed", False), ("distance", False))
+
+
+def primary_stat(row: dict | None) -> tuple[str, float, bool] | None:
+    if not row:
+        return None
+    for stat, lower in PRIMARY_STATS:
+        for kind in ("float", "int"):
+            if stat in row.get(kind, {}):
+                return stat, float(row[kind][stat]), lower
+    return None
+
+
+def _slot_rank(slot: dict) -> tuple:
+    """Order of a player's results on one object: the better main result first, then the newer."""
+    main = primary_stat(slot)
+    updated = int(slot.get("updated", 0) or 0)
+    if not main:
+        return 0, 0.0, updated
+    return 1, -main[1] if main[2] else main[1], updated
 
 
 def _fields(fields) -> dict:
@@ -85,10 +116,23 @@ class PlayerStore:
         with self._lock:
             return json.loads(json.dumps(self._load(pid)))
 
+    def speedwall_ids(self, pid: int, world_only: bool = False) -> set[int]:
+        """Ids (ENTI) of the speed walls this player has a result on: the objects of the
+        report categories that are speed wall types in the binary (SpeedWallType_SpeedCamera,
+        _RoadRule, _Jump, _Speedlist, _Race, _HotPursuit, _RapidResponse, _Interceptor, ...) - the
+        cops' events included, unless world_only. ENTI 0 is a category as a whole, not an object."""
+        kinds = WORLD_SPEEDWALL_CATEGORIES if world_only else SPEEDWALL_CATEGORIES
+        with self._lock:
+            state = self._load(pid)
+            return {int(e) for cat, ents in state.items() if cat.startswith(kinds)
+                    for e in ents if e.isdigit() and e != "0"}
+
     def rows_for_entity(self, entity: int) -> list[dict]:
-        """Speed wall rows: for every player with a stored object ENTI == entity - the stat maps
-        merged from all categories in which this object appears (in run-25 always just one:
-        SpeedCameras*, RacerRoadRule* ...). Returns [{blaze_id, int, float, str}]."""
+        """Speed wall rows: for every player with a stored object ENTI == entity, the stat maps
+        of one category. An object can sit in several (an event in DirectedRaces7c5c0574 and
+        DirectedRaces7c5c8955: two attempts with their own times); the row is the one with the
+        better main result, then the newer - never fields of one attempt mixed with another's.
+        Returns [{blaze_id, int, float, str, updated}], updated = that report's time (0 if none)."""
         key = str(int(entity))
         rows = []
         with self._lock:
@@ -96,16 +140,12 @@ class PlayerStore:
             pids = {int(p.stem) for p in stats_dir.glob("*.json") if p.stem.isdigit()} \
                 if stats_dir.exists() else set()
             for pid in sorted(pids | set(self._cache)):
-                merged = {"int": {}, "float": {}, "str": {}}
-                found = False
-                for ents in self._load(pid).values():
-                    slot = ents.get(key)
-                    if slot:
-                        found = True
-                        for kind in merged:
-                            merged[kind].update(slot[kind])
-                if found:
-                    rows.append({"blaze_id": pid, **merged})
+                slots = [ents[key] for ents in self._load(pid).values() if ents.get(key)]
+                if slots:
+                    best = max(slots, key=_slot_rank)
+                    rows.append({"blaze_id": pid,
+                                 **{kind: dict(best.get(kind, {})) for kind in ("int", "float", "str")},
+                                 "updated": int(best.get("updated", 0) or 0)})
         return rows
 
     def record(self, report: dict) -> list[int]:
