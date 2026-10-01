@@ -138,6 +138,39 @@ class MatchmakingTests(unittest.TestCase):
         self.assertIn(guest.uid, game.players)
         self.assertEqual(len(lb.games), 1)
 
+    def left(self, lb, guest, game, reason):
+        tls_terminator._resolve_matchmaking(lb, ARGS, guest, 1, REQUEST)
+        self.assertIn(guest.uid, game.players)
+        lb.remove_player(game, guest.uid, blaze.PLAYER_REMOVED_REASON[reason])
+
+    def test_find_a_new_session_does_not_loop_back_into_the_same_game(self):
+        # 01.10, 1.0.12.1: Esc -> find a new session left the game (leaveGameByGroup, REAS 7)
+        # and was put straight back into it; the host's mesh never came up, and it looped.
+        lb = lobby.Lobby(local_id=10001)
+        _host, game = self.running_game(lb)
+        guest = self.session(lb, "192.0.2.2")
+        self.left(lb, guest, game, "GROUP_LEFT")
+        tls_terminator._resolve_matchmaking(lb, ARGS, guest, 2, self.avoiding(game))
+        self.assertNotIn(guest.uid, game.players)
+        self.assertEqual(len(lb.games), 2)                    # a session of its own, as in vanilla
+
+    def test_after_a_lost_connection_the_game_is_rejoined(self):
+        lb = lobby.Lobby(local_id=10001)
+        _host, game = self.running_game(lb)
+        guest = self.session(lb, "192.0.2.2")
+        self.left(lb, guest, game, "PLAYER_CONN_LOST")         # the laptop slept
+        tls_terminator._resolve_matchmaking(lb, ARGS, guest, 2, self.avoiding(game))
+        self.assertIn(guest.uid, game.players)
+
+    def test_a_game_left_long_ago_can_be_rejoined(self):
+        lb = lobby.Lobby(local_id=10001)
+        _host, game = self.running_game(lb)
+        guest = self.session(lb, "192.0.2.2")
+        self.left(lb, guest, game, "PLAYER_LEFT")
+        lb.left_at[(guest.uid, game.gid)] -= lobby.REJOIN_GRACE_S + 1
+        tls_terminator._resolve_matchmaking(lb, ARGS, guest, 2, self.avoiding(game))
+        self.assertIn(guest.uid, game.players)
+
     def test_strict_avoid_keeps_the_old_behaviour(self):
         lb = lobby.Lobby(local_id=10001)
         _host, game = self.running_game(lb)

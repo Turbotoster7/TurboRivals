@@ -34,6 +34,7 @@ import os
 import shutil
 import socket
 import threading
+import time
 import zlib
 from pathlib import Path
 
@@ -46,6 +47,10 @@ SYNTHETIC = "synthetic pool"         # id source of a player whose EA save id is
 LOCAL_UID_BASE = 1_000_000_000_000   # uid pool for the player at the server machine
 REMOTE_UID_BASE = 1_100_000_000_000  # uid pool for players from other addresses
 DEFAULT_ADDR = (0x7F000001, 3659, 0x7F000001, 3659, 0)   # exip, export, inip, inport, maci
+# A player who LEFT a game itself (PLAYER_LEFT, GROUP_LEFT) is not put straight back into it,
+# avoided or not, for this long: on 01.10 a rejoin right after "find a new session" never got
+# the host's mesh connection (the host's game was still closing the old one) and looped.
+REJOIN_GRACE_S = 60
 
 
 class Session:
@@ -151,6 +156,7 @@ class Lobby:
         self.names: dict[str, str] = {}                  # ip -> nickname its launcher reported
         self.guessed: set[str] = set()                   # ips whose launcher only guessed the save id
         self.aliases: dict[int, int] = {}                # id a game asked about (lookupUsers) -> uid
+        self.left_at: dict[tuple[int, int], float] = {}  # (uid, gid) -> monotonic time it left itself
         self._key_ip: dict[str, str] = {}                # players.json key -> address of its last login
         self.lock = threading.RLock()
         self.sessions: dict[int, Session] = {}
@@ -553,18 +559,33 @@ class Lobby:
         unless --join-migrated-games. Games on the avoid list (CRIT.AGAM.GIDL) come last, not never:
         a game asks to avoid the one it just dropped out of (01.10, a laptop waking from sleep:
         GIDL = [the host's game]), and with no other game around a strict avoid left that player
-        alone in a new one. strict (--strict-avoid) keeps the old behaviour."""
+        alone in a new one. strict (--strict-avoid) keeps the old behaviour. A game the player
+        LEFT itself within REJOIN_GRACE_S is never taken (1.0.12.1 looped on that)."""
         with self.lock:
             joinable = [g for g in sorted(self.games.values(), key=lambda x: x.gid)
                         if g.public and sess.uid not in g.players
                         and (self.join_migrated or not g.migrated)
                         and (host := self.sessions.get(g.host_uid)) is not None and host.alive
                         and g.state in (blaze.GAME_STATE["PRE_GAME"], blaze.GAME_STATE["IN_GAME"])
-                        and len(g.players) < int(g.params.get("max_players", 6))]
+                        and len(g.players) < int(g.params.get("max_players", 6))
+                        # not a game the player itself left a moment ago: that is "find a new
+                        # session", and an immediate rejoin loops (REJOIN_GRACE_S). Dropping out
+                        # (sleep, a lost connection) is not leaving.
+                        and self.left_ago(sess.uid, g.gid) is None]
             preferred = [g for g in joinable if g.gid not in avoid]
             if preferred:
                 return preferred[0]
             return None if strict or not joinable else joinable[0]
+
+    def left_ago(self, uid: int, gid: int) -> float | None:
+        """Seconds since the player left that game itself, when that was within
+        REJOIN_GRACE_S; None otherwise."""
+        with self.lock:
+            when = self.left_at.get((uid, gid))
+            if when is None:
+                return None
+            ago = time.monotonic() - when
+            return ago if ago < REJOIN_GRACE_S else None
 
     def join(self, sess: Session, g: Game) -> None:
         with self.lock:
@@ -609,6 +630,9 @@ class Lobby:
             if uid not in g.players:
                 return []
             del g.players[uid]
+            if reason in (blaze.PLAYER_REMOVED_REASON["PLAYER_LEFT"],
+                          blaze.PLAYER_REMOVED_REASON["GROUP_LEFT"]):
+                self.left_at[(uid, g.gid)] = time.monotonic()
             s = self.sessions.get(uid)
             if s is not None:
                 s.games.discard(g.gid)

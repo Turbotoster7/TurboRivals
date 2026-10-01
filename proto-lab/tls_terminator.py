@@ -1534,9 +1534,16 @@ def _resolve_matchmaking(lb, args, sess, msid, req) -> list:
         g = lb.find_public_game(sess, avoid, strict=strict)
         if avoid:
             listed = ", ".join(f"{x:#x}" for x in sorted(avoid))
-            print(f"  [matchmaking] session {msid}: the game asks to avoid {listed}"
-                  + (" - it is the only one, joining it anyway (--strict-avoid would not)"
-                     if g is not None and g.gid in avoid else ""))
+            left = [(x, lb.left_ago(sess.uid, x)) for x in sorted(avoid)]
+            left = [(x, ago) for x, ago in left if ago is not None]
+            if g is not None and g.gid in avoid:
+                why = " - it is the only one, joining it anyway (--strict-avoid would not)"
+            elif g is None and left:
+                why = (f", which it left {left[0][1]:.0f} s ago - a new game (an immediate "
+                       f"rejoin fails: the host's game is still closing the old connection)")
+            else:
+                why = ""
+            print(f"  [matchmaking] session {msid}: the game asks to avoid {listed}{why}")
         if g is None:
             skipped = lb.migrated_games_skipped(sess)
             g = lb.create_game(sess, _mm_game_params(req), getattr(args, "gm_player_state", 4))
