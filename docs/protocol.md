@@ -474,6 +474,53 @@ it, without guessing:
 The same technique (`getCommandName` + jump table) works for every component - cheaper than
 guessing numbers from other games' emulators.
 
+### NFS.getInGameRecommendations (2050/21) - Autolog rivals
+
+Request `{BLID}`, asked after login and now and then. Reply (since 1.0.12.2)
+`InGameRecommendationsResponse` @`0x1416b7490 {RILI mRivalList, SPWA mSpeedWallIDToSpeedWallMap}`:
+- rival @`0x1416b5d20` `{BLUS mRivalBlazeUser, PENA mRivalName, PLSC mPlayerScore, RECM
+  mRecommendationsList, RIBL mRivalBlazeId, RISC mRivalScore}`, where PLSC/RISC = shared speed
+  walls on which the asker / the rival leads (less is better only for `eventTime`);
+- map speed wall id -> `InGameSpeedWallResponseSpeedWall {ROWS, SWID}`, as in
+  getInGameSpeedWalls, for every wall a rival has a result on, shared ones first, trimmed to
+  ~60 KB (Fire2's 16-bit length);
+- `RECM` (since 1.0.12.3): one recommendation @`0x141a2c160` `{BLUS mTargetBlazeUser, RETY,
+  STAF/STAI/STAS mMisc*, STOB/STOT mStoryString*ID, SWID, TABL mTargetBlazeId, TANA mTargetName,
+  TITL mTitleStringID}` per shared wall the rival leads. At most 20 per rival, newest result
+  first.
+  - `RETY = 0` is `RECOMMENDATION_TYPE_BEAT_YOU`, ASSUMED from the order of the names (BEAT_YOU,
+    HOT, POPULAR).
+  - `TITL = "ID_REC_TITLE_BEAT"` (the binary also has `_HOT`, `_POP`, `ID_RECOMMENDS_BEAT`,
+    `ID_REC_PE_RECOMMENDATION_BEATEN/_NOT_BEATEN`).
+  - The misc maps carry the rival's result; the story ids are left empty.
+  - `--autolog-beat-type` changes RETY.
+  - **A rival with an empty `RECM` crashes the game** (confirmed 02.10 on an unmodded game,
+    decisions.md), so such a rival is not sent. It stays in `SPWA`. `--autolog-empty-rivals`
+    sends it anyway, for tests only.
+  - Since 1.0.12.5, `RECM` lists events first (all categories except `SpeedCameras`,
+    `RacerRoadRule` and `JumpSpots`), up to 10, newest first. Cameras, zones and jumps fill
+    the rest up to 20, newest first. Ranked by time alone, the newest 20 were all cameras.
+  - 1.0.12.4 sent no event entries. `--autolog-world-only` keeps that behaviour. The original
+    had event entries (`ID_REC_PE_RECOMMENDATION_BEATEN/_NOT_BEATEN`, PE = post-event).
+    Confirmed in play on 02.10, including an entry for the event just finished.
+  - No rival left, for example a first-time or solo player: since 1.0.12.6 the reply is the
+    bare acknowledgement the game got until 1.0.12.1, not an empty `RILI`. An empty `RILI` was
+    never sent to the game, and an empty `RECM` crashes it.
+
+The rest of Autolog (`--no-autolog` turns all of it off):
+
+| cmd | name | reply |
+|---|---|---|
+| 29 | getAutologPlaylist `{BLID}` | `{BLID, PLAY [], ROWS []}`. Two classes fit and the playlist entries are unknown, so both lists go out, empty |
+| 31 | setRecommendationRivalScore `{BLID PLSC RIBL RISC}` | logged and acknowledged (not yet seen from the game) |
+| 39 | getSpecialGuestInfo `{BLIS}` | @`0x141a2c0d0` `{BLIS [], SPGN "", SPGT 0, SPLA "", STAI {}}`. With the bare acknowledgement the game asked ~700 times a session |
+| 41 | getSpecialGuestSpeedWall `{SWIS}` | the speed wall reply with no rows |
+
+Speed wall objects = the report categories named after `SpeedWallType_*`: SpeedCameras,
+RacerRoadRule, JumpSpots, Speedlist and the events (`player_store.SPEEDWALL_CATEGORIES`).
+Whether the game takes this reply has not been seen yet; up to 1.0.12.1 it got an empty
+acknowledgement.
+
 ### resumeSession (0x23) - back after a dropped connection
 
 `ResumeSessionRequest {SKEY mSessionKey}` (@`0x1416ae9e0`/@`0x1416d7c50`). A game whose Blaze

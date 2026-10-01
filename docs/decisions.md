@@ -1066,3 +1066,120 @@ ranking. Autolog showed platform friends; the game takes them from the EA App
 out whatever URTY says. The cop was also on the racer's speed cameras. Next test: two racers,
 friends in the EA App. The log now lists every row with its value (`you 45.9 AverageSpeed,
 CustomNickname2 50.1 AverageSpeed`).
+
+## 2026-10-01 (night) - Autolog rivals, and the loop of "find a new session" (1.0.12.2)
+
+**Loop.** Log `server-20261001-213245`. After the sleep the guest got back into the host's game
+(session 3, the mesh up both ways): the 1.0.12.1 fallback worked. Then "find a new session" from
+Esc made the guest's game leave (`leaveGameByGroup`, REAS 7) and ask to avoid that game. The
+fallback put it straight back in. The host's mesh to it never came up (`STAT=0`; the host's
+game was still closing the old connection). It left again, and so on through sessions 4-6:
+the loading screen hung. **Decision:** `remove_player` notes a player's own departures
+(PLAYER_LEFT, GROUP_LEFT), and `find_public_game` does not take a game that player left within
+`REJOIN_GRACE_S` (60 s), avoided or not. The player gets a session of its own, as in vanilla. A
+lost connection is not leaving, so after sleep the rejoin stays.
+
+**Speed walls still empty.** The rows were right
+(`you 50.5, CustomNickname2 45.9, REIKWE 28.7`). The binary has
+`InGameRecommendationsResponse::mSpeedWallIDToSpeedWallMap` and
+`LeaderboardCompareTopSpeedwallEntity`, and EA's server had `AUTOLOG_ERR_SPEEDWALL_*FILTERED_
+LEADERBOARD*` errors. So the rivals the walls compare against most likely come from Autolog's
+recommendations (2050/21), which got an empty acknowledgement. **Decision:** answer it with
+rivals (everyone in `ranked_uids` with a speed wall result, PLSC/RISC = shared walls led) and
+the map of their speed walls. On the host's real data: 2 rivals, 22 walls, 5.8 KB for the host;
+101 walls, 16 KB for the guest. `--no-autolog` restores the empty acknowledgement.
+Recommendation entries (RECM, the "X beat your time" items) stay empty, since `RETY` values are
+unknown. Not seen live yet.
+
+## 2026-10-02 - the rest of Autolog (1.0.12.3)
+
+Asked for "all of Autolog". What the binary and the 13-16.09 frames hold, and what was done:
+- **"X beat you" recommendations.** `InGameRecommendationsResponseRecommendation` @0x141a2c160.
+  The type names are `RECOMMENDATION_TYPE_BEAT_YOU, _HOT, _POPULAR` (values ASSUMED 0, 1, 2), and
+  the titles `ID_REC_TITLE_BEAT/_HOT/_POP`. Each rival's `RECM` now lists the shared walls it
+  leads, newest first, up to 20, with the rival's result in the misc maps. On the host's real
+  data: the host gets 3 + 1 such entries, and the guest 18 + 8 (20.6 KB in all).
+  `--autolog-beat-type` is the A/B switch.
+- **Special Guest.** `getSpecialGuestInfo {BLIS}` came 686 times in one session against the
+  bare acknowledgement. It now gets an empty, well-formed reply (@0x141a2c0d0). Special Guests
+  were EA people's results and are gone. `getSpecialGuestSpeedWall` gets walls without rows.
+- **Playlist.** `getAutologPlaylist {BLID}`. Both candidate replies ({BLID, PLAY} and
+  {BLID, ROWS}) go out with empty lists: the entries' layout is unknown, so no playlist can be
+  built.
+- **setRecommendationRivalScore** {BLID PLSC RIBL RISC}: logged and acknowledged. Never seen yet.
+
+Not known and not done: HOT/POPULAR recommendations, story strings (STOT/STOB), playlist entries,
+the Overwatch stats. Whether the game takes any of this has not been seen in play.
+
+## 2026-10-02 - a player's game crashed after every race (1.0.12.4)
+
+On 1.0.12.3, XARREK (a remote guest) crashed after finishing Sunset Tunnel. The game closed the
+connection, which shows up as `WinError 10054` on the host. Log `server-20261001-223917`:
+- Each of the 3 `getInGameRecommendations` replies to XARREK (25 KB) was followed straight
+  away by his disconnect.
+- The host (5 replies) and TestUser (1 reply) never crashed. The host also finished the same
+  race.
+
+What only his replies had:
+1. **A rival with an empty RECM** (REIKWE: XARREK led 11:0). Every other reply had at least one
+   entry per rival, and 1.0.12.2 (empty RECM for all) was never played. This fits all 3 crashes.
+   The encoding is valid TDF, so the suspect is the game reading the first element unchecked.
+2. **A "beat you" entry on the event he had just finished** (Sunset Tunnel, the host leads).
+   This fits 2 of 3: there was no DirectedRaces report before the first crash. The binary's
+   `ID_REC_PE_RECOMMENDATION_BEATEN/_NOT_BEATEN` says the post-event screen checks such entries,
+   and ours have empty story ids.
+
+The user chose the safe build first, then moving back towards the original:
+- "beat you" only on cameras, zones and jumps;
+- no rival with an empty RECM.
+
+`--autolog-empty-rivals` and `--autolog-event-recommendations` are there to find which one it
+was. If it was the empty RECM, event entries come back.
+
+Also found: the same race sat in two report categories for XARREK, `DirectedRaces7c5c0574`
+(152.04 s, 1 attempt) and `DirectedRaces7c5c8955` (289.67 s, 8 attempts). `rows_for_entity`
+merged them with `dict.update`, so the older, worse time won, and the attempts came from the
+other run. It now takes the one category with the better main result, newest on a tie, and
+`primary_stat` lives in `player_store` for the speed walls and Autolog both.
+
+**Confirmed the same night (test 1, `server-20261002-002048`).** On 1.0.12.4 with
+`--autolog-empty-rivals`, the host's own game crashed on its first recommendations reply. That
+game has no mods, and the reply was sent right after Sunset Tunnel, which the host leads. The
+reply's only difference from the 1.0.12.4 default was REIKWE with `0 "beat you"`. So an empty
+RECM crashes the game. XARREK's HUD mod is not needed for that, and leaving such rivals out
+(the 1.0.12.4 default) stays. Event entries (test 2, `--autolog-event-recommendations`) are not
+yet tested: if they are safe, they come back.
+
+## 2026-10-02 - "beat you" on events again (1.0.12.5)
+
+With the empty RECM confirmed as the crash, the event entries are largely cleared:
+- the host got one in every 1.0.12.3 reply (REIKWE, Rapid Response 393262543) and never crashed;
+- all 3 of XARREK's crashes had the empty RECM.
+
+The one case not yet seen in play is an entry on the event just finished, shown on the
+post-event screen. So the entries are back by default. `--autolog-world-only` turns them off,
+and the old `--autolog-event-recommendations` is accepted silently, so a config.json that
+still has it starts the server.
+
+Ranked by time alone, the newest 20 per rival left the events out: the host would get 0 of
+XARREK's 5. So events go first, up to 10, and cameras, zones and jumps fill the rest up to the 20
+that 1.0.12.3 sent without trouble.
+
+A rival with nothing to beat still cannot be listed. Filling that rival with walls the asker has not
+driven would not help REIKWE, who has none. On the host's data REIKWE is back anyway, with the
+Rapid Response entry.
+
+**Confirmed in play (02.10 00:46, `server-20261002-004017`).** The host finished Time Attack
+707187392 in 110.05 s, against XARREK's 73.07 s. The report was saved and the next
+recommendations reply carried XARREK's entries with 6 on events (5 before, plus the one just
+finished). The game did not crash: it looked XARREK up (`lookupUsers`) and went on. The host
+saw that he had been beaten. Event entries, including the one for the event just finished, stay
+on by default.
+
+## 2026-10-02 - no rival, no list (1.0.12.6)
+
+An empty `RECM` crashes the game. An empty `RILI` would come out for a first-time player with
+no results, or for someone alone on the server. It never appeared in any log (1.0.12.3-1.0.12.5),
+so it is untested and could crash the game the same way. Such a player now gets the bare
+acknowledgement the game had without trouble until 1.0.12.1. That player has no rival to show
+anyway, and the speed walls still come from `getInGameSpeedWalls`.

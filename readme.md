@@ -166,6 +166,35 @@ that dropped out also asks matchmaking to avoid the game it was in. Since 1.0.12
 still puts you back into that game when it is the only one around (`--strict-avoid` turns that
 off). Before that, the player ended up alone in a new session.
 
+"Find a new session" (from the menu or Esc / Page Up) leaves your game, and since 1.0.12.2 it
+never puts you straight back into it. A rejoin within the first minute looped on the loading
+screen: the host's game was still closing the old connection. With no other session around,
+you get a new one of your own, as in the original game, and the host can join it with their own
+"find a new session". A lost connection, such as a PC asleep, is not leaving: that player
+still goes back into the host's game.
+
+**Autolog rivals (1.0.12.2, experimental).** The game asks the server for its Autolog rivals
+(`NFS.getInGameRecommendations`), and their results are what speed walls compare you against.
+The server answers with every other player it knows and their speed walls, and logs it as
+`[autolog] You: 2 rival(s) (Friend: you lead 18, they lead 3, 3 "beat you"; ...)`.
+
+Since 1.0.12.3 it also lists the "X beat you" recommendations: every wall where a rival is
+ahead, newest first, up to 20 per rival. Special Guest and the Autolog playlist now get proper
+empty answers, because there are no Special Guests left and the playlist format is unknown. The
+recommendation type and title are read from the game's own names but not confirmed in play, so
+`--autolog-beat-type 1` / `2` are there to try. `--no-autolog` turns all of Autolog off.
+
+Since 1.0.12.5 races and other events get "X beat you" entries too: up to 10 per rival, listed
+first, with cameras, zones and jumps filling the rest up to 20.
+
+One difference from the original game remains. A rival with nothing to beat is left off the
+Autolog rival list, though that rival's results still show on the speed walls. The game
+crashes on such a rival even without mods: that crashed one player after every race on
+1.0.12.3. `--autolog-empty-rivals` is for testing only. If the game ever crashes right after an
+event, `--autolog-world-only` keeps the entries off events, as 1.0.12.4 did. A player with no
+rival at all, such as someone new or playing alone, gets the plain empty answer the game got
+before Autolog (since 1.0.12.6).
+
 **Speed walls** show the other players' results when they drove the same camera, zone or jump.
 The log lists who drove what (`[speed wall] ...: you 45.9 AverageSpeed, Friend 50.1 ...`). The
 original Autolog compared you with your platform friends, and the game still takes those from
@@ -173,8 +202,18 @@ the EA App. If a wall shows nobody, add each other as friends in the EA App. A c
 has no results on the racers' speed cameras.
 
 The launcher passes extra flags from `"server_args"` in its `config.json`
-(`%LOCALAPPDATA%\TurboRivals\config.json`). Edit it while the launcher is closed, for example
-`"server_args": ["--session-bps", "100000"]`, and remove the entry after the test.
+(`%LOCALAPPDATA%\TurboRivals\config.json`, i.e. `C:\Users\<you>\AppData\Local\TurboRivals\config.json`).
+Close the launcher, open the file in Notepad and replace the line `"server_args": []`, for example:
+
+```json
+"server_args": ["--speedwall-relation", "3"]
+"server_args": ["--speedwall-relation", "3", "--no-autolog"]
+```
+
+Each flag and each value is its own quoted item. Save, start the launcher, and the log shows the
+whole command on its first line. Put `[]` back after the test. Flags for A/B tests:
+`--speedwall-relation N`, `--no-autolog`, `--strict-avoid`, `--no-resume`, `--no-lookup-users`,
+`--session-bps N`.
 
 Firewall rules (once, as Administrator):
 
