@@ -1,5 +1,6 @@
 # TurboRivals
 
+# 1.0.12.6 not avaliable as release due to bugs with autolog!!! DM ask on discord to test it !! 
 Private multiplayer servers for **Need for Speed Rivals**.
 
 Discord: https://discord.gg/efckqjhR2z 
