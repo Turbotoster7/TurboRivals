@@ -919,6 +919,23 @@ RECOMMENDATIONS_PER_RIVAL = 20       # "beat you" entries per rival (1.0.12.3 se
 EVENT_RECOMMENDATIONS_PER_RIVAL = 10  # of which events at most; the speed walls fill the rest
 
 
+def _autolog_players(args, lb, me: int) -> tuple[set[int], set[int]]:
+    """Whose results Autolog and the speed walls show the asker: (shown, left out).
+
+    Lobby.ranked_uids (and --autolog-rival), less any OTHER player online whose identity is not
+    confirmed (Lobby.unconfirmed_uids: EA save id unknown, guessed, or not the PersonaId its game
+    reports). The asker's game cannot tie such a player's car to his Blaze user, so his results
+    from the session leave his rows empty there. On 02.10 (Player_15: no launcher, a cracked
+    game) that crashed the host's rival card, and the cameras he had just driven ahead of the
+    host showed nobody - he led most of them. Offline such a player is not ranked anyway.
+    --autolog-unconfirmed-rivals shows them as up to 1.0.12.6 (A/B)."""
+    shown = lb.ranked_uids() | set(getattr(args, "autolog_rival", None) or [])
+    if getattr(args, "autolog_unconfirmed_rivals", False):
+        return shown, set()
+    out = (lb.unconfirmed_uids() - {me}) & shown
+    return shown - out, out
+
+
 def _autolog_recommendations(fr, args, sess) -> bytes:
     """NFS.getInGameRecommendations (2050/21): Autolog's rivals and their speed walls.
 
@@ -934,14 +951,27 @@ def _autolog_recommendations(fr, args, sess) -> bytes:
     up to 10, and cameras, zones and jumps fill the rest up to 20, newest first in each group. The
     newest 20 alone were all cameras, which left the events out. A rival with no entry is left
     out of the list but stays on the walls: an empty RECM crashes the game (confirmed 02.10,
-    decisions.md). --autolog-world-only drops the event entries (the 1.0.12.4 behaviour)."""
+    decisions.md). --autolog-world-only drops the event entries (the 1.0.12.4 behaviour).
+
+    A player online whose identity is not confirmed is neither a rival nor on the walls
+    (_autolog_players). On 02.10 clicking Player_15 (no launcher, a cracked game, a synthetic uid)
+    crashed the host's game (NFS14.exe+0x9731bb): the card reads the rival's row on the wall of
+    each of its entries, and right after Player_15 drove through one of those cameras in the
+    host's session his row there had no stats - the host's game could not tie his car to his
+    Blaze user. --autolog-no-session-rivals leaves everyone in the asker's game off the list
+    (they stay on the walls), should the same ever happen with a confirmed player.
+
+    --autolog-vehicles (A/B): a rival's car (vehicleUsed) none of the asker's own results was driven
+    in - keep = as stored, drop = left out, swap = the asker's most used car. Suspected first, ruled
+    out on 02.10: offline, Player_15 with 18 such entries clicked fine.
+    --autolog-rival UID treats a stored player as if online (tests only)."""
     req = _req_fields(fr)
     mt = args.reply_msgtype
     me = int(req.get("BLID", 0) or 0) or sess.uid
     store, lb = _player_store(args), _lobby(args)
     if not store or not me:
         return blaze.build_empty_reply(2050, 21, fr.seq, msg_type=mt)
-    ranked = lb.ranked_uids()
+    ranked, unconfirmed = _autolog_players(args, lb, me)
     mine = store.speedwall_ids(me)
     rows_of: dict[int, dict[int, dict]] = {}
 
@@ -951,17 +981,40 @@ def _autolog_recommendations(fr, args, sess) -> bytes:
                              if r["blaze_id"] in ranked}
         return rows_of[swid]
 
+    vehicles = getattr(args, "autolog_vehicles", "keep")
+    my_cars = store.vehicles(me) if vehicles != "keep" else {}
+    my_car = max(my_cars, key=my_cars.get) if my_cars else None
+    hidden: set[int] = set()
+
+    def shown(row: dict) -> dict:
+        """The row as the asker's game gets it: a copy, without a car it may not have."""
+        car = row.get("int", {}).get("vehicleUsed")
+        if vehicles == "keep" or car is None or car in my_cars:
+            return dict(row)
+        hidden.add(car)
+        ints = {k: v for k, v in row["int"].items() if k != "vehicleUsed"}
+        if vehicles == "swap" and my_car is not None:
+            ints["vehicleUsed"] = my_car
+        return {**row, "int": ints}
+
     beat_type = getattr(args, "autolog_beat_type", blaze.RECOMMENDATION_BEAT_YOU)
     world_only = getattr(args, "autolog_world_only", False)
     world_ids = store.speedwall_ids(me, world_only=True)
-    recommendable = world_ids if world_only else mine
+    # never a Speedlist: the rival card cannot name one ("INVALID SPEEDWALL: 12", no route)
+    recommendable = (world_ids if world_only else mine) - store.speedwall_ids(
+        me, kinds=player_store.UNNAMED_SPEEDWALL_CATEGORIES)
+    mates = lb.game_mates(me) if getattr(args, "autolog_no_session_rivals", False) else set()
     rivals, left_out, theirs_all = [], [], set()
+    kept_off = [lb.persona_of(pid) + " (identity not confirmed)" for pid in sorted(unconfirmed)]
     for pid in sorted(ranked - {me}):
         theirs = store.speedwall_ids(pid)
         if not theirs:
             continue
-        theirs_all |= theirs
+        theirs_all |= theirs                  # on the walls either way
         persona = lb.persona_of(pid)
+        if pid in mates:
+            kept_off.append(persona + " (in your game)")
+            continue
         lead = trail = 0
         beaten = []
         for swid in mine & theirs:
@@ -975,7 +1028,7 @@ def _autolog_recommendations(fr, args, sess) -> bytes:
                 if swid in recommendable:
                     # the rival is ahead here: "X beat you" - a target to go and beat
                     beaten.append({"swid": swid, "blaze_id": pid, "persona": persona,
-                                   "type": beat_type, "row": rows(swid)[pid],
+                                   "type": beat_type, "row": shown(rows(swid)[pid]),
                                    "title": blaze.RECOMMENDATION_TITLES.get(beat_type,
                                                                             "ID_REC_TITLE_BEAT")})
         if not beaten and not getattr(args, "autolog_empty_rivals", False):
@@ -992,14 +1045,13 @@ def _autolog_recommendations(fr, args, sess) -> bytes:
         # crashes it, so the bare acknowledgement it got without trouble until 1.0.12.1
         print(f"  [autolog] {lb.persona_of(me)}: no rival"
               + (f" (left out with nothing to beat: {', '.join(left_out)})" if left_out else "")
+              + (f" (not listed: {', '.join(kept_off)})" if kept_off else "")
               + " - bare acknowledgement")
         return blaze.build_empty_reply(2050, 21, fr.seq, msg_type=mt)
     walls = []
     for swid in sorted(theirs_all & mine) + sorted(theirs_all - mine):
-        listed = list(rows(swid).values())
-        for r in listed:
-            r["persona"] = lb.persona_of(r["blaze_id"])
-        walls.append((swid, listed))
+        walls.append((swid, [{**shown(r), "persona": lb.persona_of(r["blaze_id"])}
+                             for r in rows(swid).values()]))
     frame, sent = blaze.build_in_game_recommendations_response(
         fr.seq, rivals, walls, local_id=me, rival_relation=args.speedwall_relation, msg_type=mt)
     print(f"  [autolog] {lb.persona_of(me)}: {len(rivals)} rival(s)"
@@ -1007,9 +1059,44 @@ def _autolog_recommendations(fr, args, sess) -> bytes:
                               f"{r['rival_score']}, {len(r['recommendations'])} \"beat you\" "
                               f"({r['events']} on events)" for r in rivals) + ")" if rivals else "")
           + (f", left out with nothing to beat: {', '.join(left_out)}" if left_out else "")
+          + (f", not listed: {', '.join(kept_off)}" if kept_off else "")
           + (", \"beat you\" on speed walls only" if world_only else "")
-          + f", {sent} of {len(walls)} speed wall(s) sent")
+          + f", {sent} of {len(walls)} speed wall(s) sent"
+          + (f", {len(hidden)} car(s) not in your game "
+             + ("swapped for yours" if vehicles == "swap" and my_car is not None else "left out")
+             if hidden else ""))
     return frame
+
+
+def _speed_walls(fr, args, sess) -> bytes:
+    """NFS.getInGameSpeedWalls (2050/20): the game asks about a speed wall when it approaches a
+    speed camera, a zone or an event (run-25: 46 queries about 35 ids). The id is the ENTI from
+    GameReporting reports, so the rows come from the stored state - the players
+    _autolog_players shows the asker. --no-speed-walls goes back to an empty acknowledgement."""
+    req = _req_fields(fr)
+    store, lb = _player_store(args), _lobby(args)
+    me = int(req.get("BLID", 0) or 0) or sess.uid
+    shown, unconfirmed = _autolog_players(args, lb, me)
+    walls = []
+    for swid in req.get("SWIS") or []:
+        stored = store.rows_for_entity(swid) if store else []
+        rows = [{**r, "persona": lb.persona_of(r["blaze_id"])}
+                for r in stored if r["blaze_id"] in shown]
+        walls.append((int(swid), rows))
+
+        def score(r) -> str:
+            # the row's main value (speed, AverageSpeed, distance, eventTime), so the log
+            # shows who is ahead
+            main = player_store.primary_stat(r)
+            return f"{main[1]:.1f} {main[0]}" if main else "-"
+        hidden = [lb.persona_of(r["blaze_id"]) for r in stored if r["blaze_id"] in unconfirmed]
+        print(f"  [speed wall] {swid}: " + (", ".join(
+            f"{'you' if r['blaze_id'] == me else r['persona']} {score(r)}" for r in rows)
+            or "no results yet")
+            + (f" (not shown, identity not confirmed: {', '.join(hidden)})" if hidden else ""))
+    return blaze.build_in_game_speed_walls_response(
+        fr.seq, walls, local_id=me, rival_relation=args.speedwall_relation,
+        msg_type=args.reply_msgtype)
 
 
 def _autolog_other(fr, args, sess) -> bytes | None:
@@ -1188,6 +1275,9 @@ def _dispatch_blaze(fr, args, sess):
     req = _req_fields(fr)
     mt = args.reply_msgtype
     if fr.component == 9 and fr.command == 10:          # Util.userSettingsLoad
+        # Logged: a click on a rival in Autolog's list asks this (02.10, right before the crash),
+        # and whose settings it wants is not known yet
+        print(f"  [settings] {sess!r} loads " + ", ".join(f"{k}={v!r}" for k, v in req.items()))
         return blaze.build_user_settings_load_response(fr.seq, str(req.get("KEY", "")), msg_type=mt)
     if fr.component == 7 and fr.command == 15:          # Stats.getKeyScopesMap
         return blaze.build_key_scopes_response(fr.seq, msg_type=mt)
@@ -1286,31 +1376,7 @@ def _dispatch_blaze(fr, args, sess):
         # (notifications) are sent by _after_reply
         return blaze.build_empty_reply(4, fr.command, fr.seq, msg_type=mt)
     if fr.component == 2050 and fr.command == 20 and not getattr(args, "no_speed_walls", False):
-        # NFS.getInGameSpeedWalls: the game asks about a speed wall when it approaches a speed camera,
-        # a zone or an event (run-25: 46 queries about 35 ids). The id is the ENTI from GameReporting
-        # reports, so we take the rows from the stored state. --no-speed-walls goes back to an empty
-        # acknowledgement (A/B).
-        store = _player_store(args)
-        lb = _lobby(args)
-        me = int(req.get("BLID", 0) or 0) or sess.uid
-        ranked = lb.ranked_uids()
-        walls = []
-        for swid in req.get("SWIS") or []:
-            rows = [r for r in (store.rows_for_entity(swid) if store else [])
-                    if r["blaze_id"] in ranked]
-            for r in rows:
-                r["persona"] = lb.persona_of(r["blaze_id"])
-            walls.append((int(swid), rows))
-            def score(r) -> str:
-                # the row's main value (speed, AverageSpeed, distance, eventTime), so the log
-                # shows who is ahead
-                main = player_store.primary_stat(r)
-                return f"{main[1]:.1f} {main[0]}" if main else "-"
-            print(f"  [speed wall] {swid}: " + (", ".join(
-                f"{'you' if r['blaze_id'] == me else r['persona']} {score(r)}" for r in rows)
-                or "no results yet"))
-        return blaze.build_in_game_speed_walls_response(
-            fr.seq, walls, local_id=me, rival_relation=args.speedwall_relation, msg_type=mt)
+        return _speed_walls(fr, args, sess)
     if fr.component == 9 and fr.command == 20:          # Util.filterForProfanity
         # run-23: TLST [{DIRT 2, UTXT ''}] - the empty acknowledgement returned an EMPTY list, so
         # the game got zero results for one text. We send every text back unchanged.
@@ -2206,6 +2272,22 @@ def main() -> int:
     ap.add_argument("--autolog-empty-rivals", action="store_true",
                     help="list Autolog rivals with no \"X beat you\" entry too (empty RECM) - "
                          "CRASHES the game on the reply (confirmed 02.10, unmodded game); tests only")
+    ap.add_argument("--autolog-unconfirmed-rivals", action="store_true",
+                    help="show an online player whose identity is not confirmed (no launcher, a "
+                         "guessed career save) in the others' Autolog - rival list and speed walls - "
+                         "as up to 1.0.12.6. Clicking such a rival after he drove through one of his "
+                         "cameras in your session CRASHED the game (02.10); tests only")
+    ap.add_argument("--autolog-no-session-rivals", action="store_true",
+                    help="leave everyone in your game off the Autolog rival list (they stay on the "
+                         "walls) - should the 02.10 crash ever come back with a confirmed player")
+    ap.add_argument("--autolog-vehicles", choices=("keep", "drop", "swap"), default="keep",
+                    help="a rival's car (vehicleUsed) that none of the asker's own results was "
+                         "driven in, in the Autolog reply: keep = as stored, drop = left out, swap = "
+                         "the asker's most used car instead (A/B; ruled out as the 02.10 crash)")
+    ap.add_argument("--autolog-rival", type=int, action="append", default=[], metavar="UID",
+                    help="treat this stored player as if online: an Autolog rival with rows on "
+                         "the speed walls - to reproduce a crash with a rival who is not around; "
+                         "repeatable, tests only")
     ap.add_argument("--strict-avoid", action="store_true",
                     help="never put a player into a game its matchmaking asks to avoid (CRIT.AGAM.GIDL), "
                          "as before 1.0.12.1. By default such a game is still taken when it is the only "

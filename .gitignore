@@ -20,6 +20,9 @@ __pycache__/
 # Rust (phases 3-4)
 target/
 
+#handoff from local PC DO NOT CHANGE its my private backup folder !!!
+TurboRivals-*
+
 # Server and Frida logs from test runs - large, generated locally on every test
 log-*.txt
 # The launcher's own server logs, one file per run (launcher/commands.py LOG_DIR)

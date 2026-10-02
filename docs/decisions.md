@@ -1183,3 +1183,86 @@ no results, or for someone alone on the server. It never appeared in any log (1.
 so it is untested and could crash the game the same way. Such a player now gets the bare
 acknowledgement the game had without trouble until 1.0.12.1. That player has no rival to show
 anyway, and the speed walls still come from `getInGameSpeedWalls`.
+
+## 2026-10-02 - clicking a rival who had just driven one of his cameras (1.0.12.7)
+
+**Symptom.** 02:14, 1.0.12.6, `server-20261002-015312`. The host clicked Player_15 in Autolog's
+rival list and his game crashed at NFS14.exe+0x9731bb: a read from address 0x10 with
+`rcx = 0`, in a leaf that looks a name up in a table of 0x68-byte entries. The name was
+`speed`. Player_15 was in the host's session and played without the launcher, so he had a
+synthetic uid ("EA save id unknown"); by his own account the game was cracked. Clicks on REIKWE
+the same night were fine.
+
+**What it was not: the cars.** 30 of the 33 cars in Player_15's results were ones the host
+never drove. Ruled out on a second PC (TestUser), with the night's data and
+`--autolog-rival 1100128479067`, a stored player treated as if online:
+- 18 of Player_15's 20 entries carried such cars, and clicking him did not crash;
+- `--autolog-vehicles keep|drop|swap` stays as an A/B switch.
+
+**Cause.** That PC's NFS14.exe (EA App) is byte for byte the Steam one, so the crash RVAs
+apply. A full memory dump of the running game and a Frida hook on the rival card
+(`proto-lab/hook_autolog_card.js`) give the mechanism:
+- `0x9d5660` builds the card. For each of the rival's entries it takes the speed wall by id,
+  then `0x973dd0` looks the rival's row up **by name** in that wall's rows (key `{TABL,
+  TANA}`).
+- `0x96b960` reads the wall's main stat (`speed`, `AverageSpeed`, `eventTime`) from the row's
+  stats. The stats are resolved on access from a key in the row and come out NULL when nothing
+  is registered under it, and the getter does not check. Layouts are in protocol.md, "The rival
+  card".
+- The crash dump's stack still held the key `{1100128479067, "Player_15"}`. The label the
+  previous entry left behind was `INVALID SPEEDWALL: 12`, his Speedlist entry.
+- Normally a rival's row has stats on the walls of that rival's own entries, so the card never
+  finds one empty. Confirmed for all four rivals, offline.
+- The night log, in order:
+  - 4414: Player_15 reports speed camera 2329405504, one of his entries for the host and the
+    first camera after his Speedlist entry;
+  - 4435: the host's game loads `UGC_BLOCKED` for him, which is what every click asks (now
+    logged as `[settings]`);
+  - 4447: the host's game is gone.
+  
+  He had driven three more of his entry cameras in the minutes before.
+
+So when a rival in your session drives one of his entry cameras, your game takes his new result
+from his game, peer to peer; the server only sees his report. After that his row there has no
+stats. The likely reason is that his game goes by another id than the uid the server gave him,
+so the host's game cannot tie the result to his Blaze user. Not seen with a confirmed player.
+Every click that night on XARREK and REIKWE was on them offline.
+
+**The same night, cameras with no Autolog.** The host remembered that some cameras showed an
+Autolog rival and some did not. The reports journals (`reports/*.jsonl`, with times) show:
+- 33 of the 34 cameras, zones and jumps he drove live had a rival's result, so the data was
+  there;
+- he was behind on 27 of them, and Player_15 led 26;
+- on 26 of the 34, Player_15 had driven the same camera 0-16 s before the host. They raced
+  together, and he was faster.
+
+So the camera's top row was Player_15's, emptied by his own result a few seconds earlier. Not
+confirmed in play, but it is the same mechanism as the crash.
+
+**Decision.**
+- A player online whose identity is not confirmed is left out of the others' Autolog
+  altogether: off the rival list and off the walls, both getInGameSpeedWalls and the map. Not
+  confirmed means `Lobby.unconfirmed_uids`: a synthetic uid, a guessed save, or a BUID that
+  differs from the uid. Offline such a player was never ranked, so this only adds the time they
+  are online.
+- `_autolog_players` decides for both replies, and getInGameSpeedWalls moved into
+  `_speed_walls`.
+- `--autolog-unconfirmed-rivals` shows them as before (A/B).
+- `--autolog-no-session-rivals` leaves off everybody in the asker's game, in case the crash
+  comes back with a confirmed player.
+- The log line names who was left off.
+
+**Also fixed on the card**, both confirmed in play on 1.0.12.7:
+- **Speedlist entries.** The card labels only `SpeedWallType` 1-11 (`0x7ae0d0`; the type table
+  is in protocol.md), so a Speedlist showed "INVALID SPEEDWALL: 12" with no route. Speedlists
+  get no entries any more but still count in the score.
+- **Story strings.** STOT/STOB now carry the story ids that sit next to the titles in the
+  binary: `ID_BEAT_YOU_STORY_ONE_TOP`/`_BOTTOM`, plus the HOT and POPULAR ones. Left empty, the
+  card showed a large "String not on Autolog Yet".
+
+**Open.**
+- **The confirmed-player case.** It needs a second player in the session: he drives one of his
+  entry cameras and the host clicks him, with `hook_autolog_card.js` on the host. The hook keeps
+  the card from crashing and logs whether his row lost its stats. If it did, the session rule
+  becomes the default, and it would have to cover the walls too.
+- **"CANT FIND NAME".** Seen once on an entry with a route; not traced.

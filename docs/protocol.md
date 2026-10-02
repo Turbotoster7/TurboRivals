@@ -492,7 +492,11 @@ Request `{BLID}`, asked after login and now and then. Reply (since 1.0.12.2)
     HOT, POPULAR).
   - `TITL = "ID_REC_TITLE_BEAT"` (the binary also has `_HOT`, `_POP`, `ID_RECOMMENDS_BEAT`,
     `ID_REC_PE_RECOMMENDATION_BEATEN/_NOT_BEATEN`).
-  - The misc maps carry the rival's result; the story ids are left empty.
+  - The misc maps carry the rival's result.
+  - `STOT`/`STOB` (since 1.0.12.7) are the story string ids that sit next to the titles in the
+    binary: `ID_BEAT_YOU_STORY_ONE_TOP`/`_BOTTOM` (also `ID_HOT_STORY_TOP`/`_BOTTOM` and
+    `ID_POPULAR_STORY_TOP`/`_BOTTOM`). Left empty, the rival card showed the placeholder
+    "String not on Autolog Yet" (next to "CANT FIND NAME" in `.rdata`).
   - `--autolog-beat-type` changes RETY.
   - **A rival with an empty `RECM` crashes the game** (confirmed 02.10 on an unmodded game,
     decisions.md), so such a rival is not sent. It stays in `SPWA`. `--autolog-empty-rivals`
@@ -506,6 +510,34 @@ Request `{BLID}`, asked after login and now and then. Reply (since 1.0.12.2)
   - No rival left, for example a first-time or solo player: since 1.0.12.6 the reply is the
     bare acknowledgement the game got until 1.0.12.1, not an empty `RILI`. An empty `RILI` was
     never sent to the game, and an empty `RECM` crashes it.
+  - No entries on a Speedlist (since 1.0.12.7). The card names only `SpeedWallType` 1-11 and
+    showed "INVALID SPEEDWALL: 12" with no route for one.
+  - A player online whose identity is not confirmed is in neither `RILI` nor `SPWA`, and not
+    in getInGameSpeedWalls either (since 1.0.12.7, see the rival card below).
+    `--autolog-unconfirmed-rivals` shows them anyway.
+
+**The rival card** (clicking a rival in Autolog's list; NFS14.exe RVAs, the same in the EA App
+and Steam builds):
+- `0x9d5660` builds it: for each of the rival's entries `r14` it takes the speed wall object
+  by id `[r14+0x100]`, with the type at `+0xe8` and the main stat name at `+0xa0`.
+- `0x973dd0(wall, &out, &key)` looks the rival's row up **by name**:
+  - the key is `{u64 [r14+0x148] TABL, char[17] [r14+0x170] TANA}`, built by `0x3b9380`;
+  - the rows are a `char*` tree at `wall+0x58` (root `[+0x18] & ~1`; node: right `+0`, left
+    `+8`, key `+0x18`, row `+0x20`).
+- The row's stats are resolved on access from a key at `row+0x10` (`0x97a5a0` → `0x96d3c0` →
+  `0x14a390`). They come out NULL when nothing is registered under that key.
+- `0x96b960` reads the float stat (e.g. `speed`) from them without a NULL check. That is the
+  02.10 crash at `0x9731bb` (decisions.md, 1.0.12.7).
+- A rival's row has stats on the walls of that rival's own entries, and on walls the game
+  asked about itself (2050/20). Rows that came only in `SPWA` have none, which is harmless: the
+  card reads only the walls of the rival's own entries.
+- On a click the game also loads `UGC_BLOCKED` for the rival (`Util.userSettingsLoad`, logged
+  as `[settings]`).
+
+`SpeedWallType` (the name table in memory): Invalid 0, Race 1, Jump 2, SpeedCamera 3, RoadRule
+4, TimeTrial 5, DriftCorners 6, HotPursuit 7, RapidResponse 8, Interceptor 9, Hunted 10,
+HotPursuitRacer 11, Speedlist 12. The card's labels (`0x7ae0d0`) cover 1-11; anything else is
+"INVALID SPEEDWALL: %d".
 
 The rest of Autolog (`--no-autolog` turns all of it off):
 

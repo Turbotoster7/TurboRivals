@@ -41,6 +41,9 @@ SPEEDWALL_CATEGORIES = ("SpeedCameras", "RacerRoadRule", "JumpSpots", "Speedlist
                         "Interceptor", "DriftCorners")
 # The speed walls out in the world (cameras, zones, jumps) - the rest are events.
 WORLD_SPEEDWALL_CATEGORIES = ("SpeedCameras", "RacerRoadRule", "JumpSpots")
+# Speed walls Autolog's rival card cannot name: it labels SpeedWallType 1..11 only (NFS14.exe
+# 0x7ae0d0), so a Speedlist (12) shows as "INVALID SPEEDWALL: 12" with no route (02.10)
+UNNAMED_SPEEDWALL_CATEGORIES = ("Speedlist",)
 
 # A speed wall row's main result: (stat, value, lower_is_better). The categories' stat names
 # (stats/*.json): SpeedCameras speed, RacerRoadRule AverageSpeed, JumpSpots distance, events
@@ -116,16 +119,32 @@ class PlayerStore:
         with self._lock:
             return json.loads(json.dumps(self._load(pid)))
 
-    def speedwall_ids(self, pid: int, world_only: bool = False) -> set[int]:
+    def speedwall_ids(self, pid: int, world_only: bool = False,
+                      kinds: tuple[str, ...] | None = None) -> set[int]:
         """Ids (ENTI) of the speed walls this player has a result on: the objects of the
         report categories that are speed wall types in the binary (SpeedWallType_SpeedCamera,
         _RoadRule, _Jump, _Speedlist, _Race, _HotPursuit, _RapidResponse, _Interceptor, ...) - the
-        cops' events included, unless world_only. ENTI 0 is a category as a whole, not an object."""
-        kinds = WORLD_SPEEDWALL_CATEGORIES if world_only else SPEEDWALL_CATEGORIES
+        cops' events included, unless world_only; kinds = other category prefixes. ENTI 0 is a
+        category as a whole, not an object."""
+        kinds = kinds or (WORLD_SPEEDWALL_CATEGORIES if world_only else SPEEDWALL_CATEGORIES)
         with self._lock:
             state = self._load(pid)
             return {int(e) for cat, ents in state.items() if cat.startswith(kinds)
                     for e in ents if e.isdigit() and e != "0"}
+
+    def vehicles(self, pid: int) -> dict[int, int]:
+        """The cars this player's results were driven in (the int stat vehicleUsed) -> on how many
+        objects: cars its own game certainly has. Autolog shows a rival's car to this player only
+        when it is one of them (--autolog-vehicles)."""
+        with self._lock:
+            counts: dict[int, int] = {}
+            for ents in self._load(pid).values():
+                for slot in ents.values():
+                    ints = slot.get("int") if isinstance(slot, dict) else None
+                    car = ints.get("vehicleUsed") if isinstance(ints, dict) else None
+                    if isinstance(car, int):
+                        counts[car] = counts.get(car, 0) + 1
+            return counts
 
     def rows_for_entity(self, entity: int) -> list[dict]:
         """Speed wall rows: for every player with a stored object ENTI == entity, the stat maps

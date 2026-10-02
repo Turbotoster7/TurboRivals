@@ -1528,19 +1528,27 @@ RECOMMENDATION_BEAT_YOU, RECOMMENDATION_HOT, RECOMMENDATION_POPULAR = 0, 1, 2
 RECOMMENDATION_TITLES = {RECOMMENDATION_BEAT_YOU: "ID_REC_TITLE_BEAT",
                          RECOMMENDATION_HOT: "ID_REC_TITLE_HOT",
                          RECOMMENDATION_POPULAR: "ID_REC_TITLE_POP"}
+# STOT mStoryStringTopID / STOB mStoryStringBottomID: the story string ids next to the titles in
+# the binary. Left empty until 1.0.12.7, the rival card showed the placeholder "String not on
+# Autolog Yet" (02.10).
+RECOMMENDATION_STORIES = {RECOMMENDATION_BEAT_YOU: ("ID_BEAT_YOU_STORY_ONE_TOP",
+                                                    "ID_BEAT_YOU_STORY_ONE_BOTTOM"),
+                          RECOMMENDATION_HOT: ("ID_HOT_STORY_TOP", "ID_HOT_STORY_BOTTOM"),
+                          RECOMMENDATION_POPULAR: ("ID_POPULAR_STORY_TOP", "ID_POPULAR_STORY_BOTTOM")}
 
 
 def _recommendation_fields(rec: dict, rival_relation: int) -> list[Field]:
     """rec = {swid, blaze_id, persona, type, title, row}: row = the target's speed wall result."""
     row = rec.get("row") or {}
+    top, bottom = RECOMMENDATION_STORIES.get(rec["type"], ("", ""))
     return [                                            # tags ascending
         f_blaze_user("BLUS", rec["blaze_id"], rec["persona"], rival_relation),
         f_int("RETY", rec["type"]),
         f_map_float("STAF", row.get("float", {})),
         f_map_int("STAI", row.get("int", {})),
         f_map_str("STAS", row.get("str", {})),
-        f_str("STOB", ""),
-        f_str("STOT", ""),
+        f_str("STOB", bottom),
+        f_str("STOT", top),
         f_int("SWID", rec["swid"]),
         f_int("TABL", rec["blaze_id"]),
         f_str("TANA", rec["persona"]),

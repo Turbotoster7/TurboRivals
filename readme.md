@@ -1,6 +1,5 @@
 # TurboRivals
 
-# 1.0.12.6 not avaliable as release due to bugs with autolog!!! DM ask on discord to test it !! 
 Private multiplayer servers for **Need for Speed Rivals**.
 
 Discord: https://discord.gg/efckqjhR2z 
@@ -196,6 +195,24 @@ event, `--autolog-world-only` keeps the entries off events, as 1.0.12.4 did. A p
 rival at all, such as someone new or playing alone, gets the plain empty answer the game got
 before Autolog (since 1.0.12.6).
 
+**A player whose identity is not confirmed is left out of the others' Autolog while online
+(1.0.12.7): off the rival list and off the speed walls.** That is someone who joined without the
+launcher, or whose *YOUR CAREER SAVE* is orange. Your game cannot tie such a player's car to
+them, so the results they set in your session leave their rows empty in your game:
+- On 1.0.12.6 the host clicked such a player in the rival list, right after that player drove
+  through one of their own "beat you" cameras, and the host's game crashed.
+- The cameras that player had just driven ahead of the host showed no Autolog rival at all.
+
+Offline such a player was never shown anyway. `--autolog-unconfirmed-rivals` brings them back
+(tests only). Should the crash ever come back with a confirmed player,
+`--autolog-no-session-rivals` keeps everyone in your session off the list. The log says who was
+left out (`not listed: ... (identity not confirmed)`, and on a wall `not shown, identity not
+confirmed: ...`).
+
+Also since 1.0.12.7, the rival card no longer shows "String not on Autolog Yet" or
+"INVALID SPEEDWALL: 12": the entries carry the game's own story texts, and Speedlists, which
+the card cannot name, get no "beat you" entries.
+
 **Speed walls** show the other players' results when they drove the same camera, zone or jump.
 The log lists who drove what (`[speed wall] ...: you 45.9 AverageSpeed, Friend 50.1 ...`). The
 original Autolog compared you with your platform friends, and the game still takes those from
@@ -214,7 +231,7 @@ Close the launcher, open the file in Notepad and replace the line `"server_args"
 Each flag and each value is its own quoted item. Save, start the launcher, and the log shows the
 whole command on its first line. Put `[]` back after the test. Flags for A/B tests:
 `--speedwall-relation N`, `--no-autolog`, `--strict-avoid`, `--no-resume`, `--no-lookup-users`,
-`--session-bps N`.
+`--session-bps N`, `--autolog-no-session-rivals`.
 
 Firewall rules (once, as Administrator):
 
@@ -396,8 +413,11 @@ Read the section above first — the three most common reports are not bugs.
   (the game has UPnP code of its own, a lead for phase 5)
 - other players' profile pictures in the game: served the same way as your own, not yet
   confirmed in a shared session
-- a few RPCs still answered with an empty acknowledgement: `UserSessions.lookupUsers`,
-  `NFS.getSpecialGuestInfo`, `getInGameRecommendations`, `getAutologPlaylist`
+- the Autolog playlist (its entries' layout is unknown, so it stays empty) and Autolog's HOT and
+  POPULAR recommendations
+- a few RPCs still answered with an empty acknowledgement: `NFS.getOverwatchStatsConfig`,
+  `Authentication.getAccount`, `Authentication.createWalUserSession`,
+  `GameManager.setPlayerAttributes`
 
 ## Repository layout
 

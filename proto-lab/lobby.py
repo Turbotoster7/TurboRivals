@@ -474,6 +474,20 @@ class Lobby:
                             or str(e.get("persona", uid)))
             return str(uid)
 
+    def unconfirmed_uids(self) -> set[int]:
+        """Players online whose uid may not be the PersonaId their game goes by (_unconfirmed):
+        the other games cannot tie such a player's car to its Blaze user."""
+        with self.lock:
+            return {s.uid for s in self.sessions.values() if s.alive and self._unconfirmed(s)}
+
+    def game_mates(self, uid: int) -> set[int]:
+        """Everyone in a game together with this player, the player left out."""
+        with self.lock:
+            s = self.sessions.get(uid)
+            if s is None:
+                return set()
+            return {u for gid in s.games for u in getattr(self.games.get(gid), "players", {})} - {uid}
+
     def _unconfirmed(self, s: Session) -> bool:
         """Whether a player's uid may not be the PersonaId its game goes by: a synthetic uid, an
         id its launcher only guessed, or a listUserEntitlements2 BUID that differs from it."""

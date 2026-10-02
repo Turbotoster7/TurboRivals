@@ -92,6 +92,22 @@ class AutologTests(unittest.TestCase):
                          (blaze.RECOMMENDATION_BEAT_YOU, "ID_REC_TITLE_BEAT", RIVAL, "CustomNickname2"))
         self.assertEqual(rec["STAF"], {"AverageSpeed": 45.0})              # the score to beat
         self.assertEqual(fields(rec["BLUS"])["BLIS"], RIVAL)
+        # empty, the card showed "String not on Autolog Yet"
+        self.assertEqual((rec["STOT"], rec["STOB"]),
+                         ("ID_BEAT_YOU_STORY_ONE_TOP", "ID_BEAT_YOU_STORY_ONE_BOTTOM"))
+
+    def test_no_beat_you_on_a_speedlist(self):
+        # the rival leads on a Speedlist too: it counts in the score, but the card cannot name a
+        # Speedlist ("INVALID SPEEDWALL: 12", no route), so it gets no entry
+        root = Path(self.args.data_dir) / "stats"
+        mine = json.loads((root / f"{ME}.json").read_text())
+        mine["Speedlist7c5c8955"] = {"555": stat(eventTime=300.0)}
+        (root / f"{ME}.json").write_text(json.dumps(mine))
+        self.rewrite_theirs({"RacerRoadRule00596c96": {"222": stat(AverageSpeed=45.0)},
+                             "Speedlist7c5c8955": {"555": stat(eventTime=200.0)}})
+        rival = fields(self.ask()["RILI"][0])
+        self.assertEqual(rival["RISC"], 2)
+        self.assertEqual([fields(r)["SWID"] for r in rival["RECM"]], [222])
 
     def rewrite_theirs(self, state: dict) -> None:
         (Path(self.args.data_dir) / "stats" / f"{RIVAL}.json").write_text(json.dumps(state))
@@ -155,6 +171,119 @@ class AutologTests(unittest.TestCase):
         self.assertEqual(rival["RISC"], 25)
         swids = [fields(r)["SWID"] for r in rival["RECM"]]
         self.assertEqual(swids, [5000 + n for n in range(24, 4, -1)])     # 20, newest first
+
+    def test_a_stored_player_can_be_made_a_rival(self):
+        # a player under a synthetic uid (players.json key = its address) is no rival offline...
+        guest = 1100128479067
+        (Path(self.args.data_dir) / "stats" / f"{guest}.json").write_text(json.dumps(
+            {"RacerRoadRule00596c96": {"222": stat(AverageSpeed=50.0)}}))
+        self.lb.players["26.101.169.15"] = {"uid": guest, "persona": "Player_15"}
+        tls_terminator._player_store(self.args)._cache.clear()
+        self.assertEqual([fields(r)["RIBL"] for r in self.ask()["RILI"]], [RIVAL])
+        # ...unless --autolog-rival puts it there, to reproduce 02.10 without it online
+        self.args.autolog_rival = [guest]
+        rivals = [fields(r) for r in self.ask()["RILI"]]
+        self.assertEqual([(r["RIBL"], r["PENA"]) for r in rivals],
+                         [(RIVAL, "CustomNickname2"), (guest, "Player_15")])
+
+    def rival_online(self, source: str) -> lobby.Session:
+        guest = lobby.Session("26.101.169.15", lambda _frame: None)
+        guest.uid, guest.persona, guest.id_source = RIVAL, "CustomNickname2", source
+        self.lb.sessions[RIVAL] = guest
+        return guest
+
+    def test_an_unconfirmed_rival_online_is_not_listed(self):
+        # 02.10: Player_15 (synthetic uid) drove through one of his cameras in the host's session,
+        # the host clicked him in the rival list and the game crashed (no stats on his row)
+        self.rival_online(lobby.SYNTHETIC)
+        reply = self.ask()
+        self.assertEqual(reply, {})                        # no rival left: the bare acknowledgement
+        self.args.autolog_unconfirmed_rivals = True        # A/B: as up to 1.0.12.6
+        self.assertEqual([fields(r)["RIBL"] for r in self.ask()["RILI"]], [RIVAL])
+
+    def add_xarrek(self):
+        (Path(self.args.data_dir) / "stats" / "1473685610.json").write_text(json.dumps(
+            {"RacerRoadRule00596c96": {"222": stat(AverageSpeed=50.0)}}))
+        self.lb.players["ea:1473685610"] = {"uid": 1473685610, "persona": "XARREK"}
+        tls_terminator._player_store(self.args)._cache.clear()
+
+    def test_an_unconfirmed_player_is_off_the_walls_too(self):
+        # 02.10: the cameras Player_15 had just driven ahead of the host showed nobody - his rows
+        # there were empty in the host's game, and he led most of them
+        self.rival_online(lobby.SYNTHETIC)
+        self.add_xarrek()
+        reply = self.ask()
+        self.assertEqual([fields(r)["RIBL"] for r in reply["RILI"]], [1473685610])
+        rows = {fields(fields(r)["BLUS"])["BLIS"] for r in fields(reply["SPWA"][222])["ROWS"]}
+        self.assertEqual(rows, {ME, 1473685610})
+        self.args.autolog_unconfirmed_rivals = True                      # as up to 1.0.12.6
+        reply = self.ask()
+        rows = {fields(fields(r)["BLUS"])["BLIS"] for r in fields(reply["SPWA"][222])["ROWS"]}
+        self.assertEqual(rows, {ME, RIVAL, 1473685610})
+
+    def walls(self, *swids) -> dict:
+        """getInGameSpeedWalls (2050/20) for the asker: wall id -> ids of the rows."""
+        request = blaze.Fire2(2050, 20, blaze.encode_tdf(
+            [blaze.f_int("BLID", ME), blaze.f_list_int("SWIS", list(swids))]), seq=5)
+        reply = blaze.Fire2.decode(tls_terminator._speed_walls(request, self.args, self.sess))
+        return {fields(w)["SWID"]: {fields(fields(r)["BLUS"])["BLIS"] for r in fields(w)["ROWS"]}
+                for w in fields(blaze.decode_tdf(reply.payload))["ROWS"]}
+
+    def test_speed_walls_leave_out_an_unconfirmed_player_online(self):
+        self.add_xarrek()
+        self.assertEqual(self.walls(222), {222: {ME, RIVAL, 1473685610}})     # RIVAL offline: shown
+        self.rival_online(lobby.SYNTHETIC)
+        self.assertEqual(self.walls(222), {222: {ME, 1473685610}})
+        self.args.autolog_unconfirmed_rivals = True
+        self.assertEqual(self.walls(222), {222: {ME, RIVAL, 1473685610}})
+
+    def test_an_unconfirmed_asker_still_sees_its_own_row(self):
+        self.sess.id_source = lobby.SYNTHETIC
+        self.assertEqual(self.walls(222), {222: {ME, RIVAL}})
+
+    def test_a_confirmed_rival_online_is_listed(self):
+        self.rival_online("launcher")
+        self.assertEqual([fields(r)["RIBL"] for r in self.ask()["RILI"]], [RIVAL])
+
+    def test_no_session_rivals_leaves_out_who_is_in_my_game(self):
+        self.rival_online("launcher")
+        game = lobby.Game(0x10000001, ME, {})
+        game.players = {ME: {}, RIVAL: {}}
+        self.lb.games[game.gid] = game
+        self.sess.games.add(game.gid)
+        self.assertEqual([fields(r)["RIBL"] for r in self.ask()["RILI"]], [RIVAL])
+        self.args.autolog_no_session_rivals = True
+        self.assertEqual(self.ask(), {})
+
+    def cars_in_the_reply(self, mode: str) -> tuple[dict, dict, dict]:
+        """(the rival's RECM entry on 222, its row on wall 222, my row there) - STAI of each."""
+        self.args.autolog_vehicles = mode
+        reply = self.ask()
+        rec = fields(fields(reply["RILI"][0])["RECM"][0])
+        rows = {fields(fields(r)["BLUS"])["BLIS"]: fields(r) for r in fields(reply["SPWA"][222])["ROWS"]}
+        return rec["STAI"], rows[RIVAL]["STAI"], rows[ME]["STAI"]
+
+    def test_a_car_the_asker_never_drove(self):
+        # I drove car 7 everywhere; the rival's lead on 222 was in car 99 (02.10: Player_15's cars)
+        self.rewrite_theirs({"RacerRoadRule00596c96": {"222": {
+            "float": {"AverageSpeed": 45.0}, "int": {"vehicleUsed": 99, "attempts": 2}, "str": {}}}})
+        store = tls_terminator._player_store(self.args)
+        self.assertEqual(store.vehicles(ME), {7: 5})
+        self.assertEqual(self.cars_in_the_reply("keep"),
+                         ({"vehicleUsed": 99, "attempts": 2}, {"vehicleUsed": 99, "attempts": 2},
+                          {"vehicleUsed": 7}))
+        self.assertEqual(self.cars_in_the_reply("drop"),
+                         ({"attempts": 2}, {"attempts": 2}, {"vehicleUsed": 7}))
+        self.assertEqual(self.cars_in_the_reply("swap"),
+                         ({"vehicleUsed": 7, "attempts": 2}, {"vehicleUsed": 7, "attempts": 2},
+                          {"vehicleUsed": 7}))
+        # the stored result itself is untouched
+        self.assertEqual(store.state(RIVAL)["RacerRoadRule00596c96"]["222"]["int"]["vehicleUsed"], 99)
+
+    def test_a_car_the_asker_drove_too_stays(self):
+        # the default fixture: everybody drove car 7 - nothing to hide in any mode
+        for mode in ("keep", "drop", "swap"):
+            self.assertEqual(self.cars_in_the_reply(mode), ({"vehicleUsed": 7},) * 3)
 
     def test_special_guests_and_playlist_are_well_formed_and_empty(self):
         def reply(command, payload):
