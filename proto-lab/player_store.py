@@ -110,9 +110,60 @@ class PlayerStore:
 
     def _load(self, pid: int) -> dict:
         if pid not in self._cache:
-            p = self._state_path(pid)
-            self._cache[pid] = json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
+            self._cache[pid] = self._read_state(pid)
         return self._cache[pid]
+
+    def _read_state(self, pid: int) -> dict:
+        """A player's state from disk. An unreadable file - cut short when the machine went down
+        between the replace and the disk catching up - used to raise into whatever asked: the
+        player's progress stopped being saved, and every speed wall query dropped the asking
+        player's connection (rows_for_entity reads every player). The journal has every report,
+        so the state is rebuilt from it; the broken file is kept beside it."""
+        p = self._state_path(pid)
+        if not p.exists():
+            return {}
+        try:
+            state = json.loads(p.read_text(encoding="utf-8"))
+            if isinstance(state, dict):
+                return state
+            problem = "not a JSON object"
+        except (OSError, ValueError) as e:
+            problem = str(e) or type(e).__name__
+        kept = p.with_name(f"{p.name}.corrupt-{int(time.time())}")
+        try:
+            os.replace(p, kept)
+        except OSError:
+            kept = p
+        state, entries = self._replay(pid)
+        print(f"  [store] stats/{pid}.json was unreadable ({problem}) - rebuilt from {entries} "
+              f"journal entries, the old file kept as {kept.name}")
+        if entries:
+            self._save(pid, state)
+        return state
+
+    def _replay(self, pid: int) -> tuple[dict, int]:
+        """The state the journal adds up to, and how many entries it had."""
+        state: dict = {}
+        try:
+            lines = (self.root / "reports" / f"{pid}.jsonl").read_text(encoding="utf-8").splitlines()
+        except OSError:
+            return state, 0
+        entries = 0
+        for line in lines:
+            try:
+                entry = json.loads(line)
+            except ValueError:
+                continue                    # the last line, cut short
+            if not isinstance(entry, dict):
+                continue
+            slot = state.setdefault(str(entry.get("category", "")), {}).setdefault(
+                str(entry.get("entity", 0)), {"int": {}, "float": {}, "str": {}, "reports": 0})
+            for kind in ("int", "float", "str"):
+                slot[kind].update(entry.get(kind) or {})
+            slot["updated"] = entry.get("t", 0)
+            slot["reports"] += 1
+            entries += 1
+        return state, entries
 
     def state(self, pid: int) -> dict:
         """Copy of a player state: category (GTYP) -> str(ENTI) -> {int, float, str, ...}."""

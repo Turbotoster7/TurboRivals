@@ -169,7 +169,18 @@ class Lobby:
         if self.players_file and self.players_file.exists():
             try:
                 self.players = json.loads(self.players_file.read_text(encoding="utf-8"))
-            except (OSError, ValueError):
+                if not isinstance(self.players, dict):
+                    raise ValueError("not a JSON object")
+            except (OSError, ValueError) as e:
+                # Start a new one, but never over the old: the next save used to overwrite it,
+                # and with it every player's uid and name.
+                kept = self.players_file.with_name(f"{self.players_file.name}.corrupt-{int(time.time())}")
+                try:
+                    os.replace(self.players_file, kept)
+                except OSError:
+                    kept = self.players_file
+                print(f"  [lobby] {self.players_file.name} was unreadable ({e}) - starting a new "
+                      f"one, the old file kept as {kept.name}")
                 self.players = {}
 
     # ------------------------------------------------------------ identity

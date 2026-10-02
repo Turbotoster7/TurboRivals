@@ -1266,3 +1266,220 @@ confirmed in play, but it is the same mechanism as the crash.
   the card from crashing and logs whether his row lost its stats. If it did, the session rule
   becomes the default, and it would have to cover the walls too.
 - **"CANT FIND NAME".** Seen once on an entry with a route; not traced.
+## 2026-10-01 - launcher 1.1: a new window, and what testing it turned up
+
+A rework of the launcher: a new interface in three steps (prepare this PC, the session, play), the
+checks moved off the one blocking call, and tests that drive the real server. The full list of what
+the review of 1.0.6 found is in [launcher.md](launcher.md); the server-side findings are here.
+
+### A taken port gave half a server
+
+**Symptom.** With TCP 17502 held by another program, the server printed its banner, then nothing:
+no `listening on TCP 0.0.0.0:17502 (QoS HTTP)` and no error. The launcher said "server up"; guests'
+`identify`, pictures and ONLINE NOW failed, and so did the game's QoS HTTP.
+
+**Cause.** `_bind_exclusive` called `sys.exit()` on a failed bind. Only the redirector binds on the
+main thread; in a listener thread `SystemExit` ends that thread and `threading` swallows it.
+
+**Decision.** Write the message and end the process (`os._exit(1)`). The launcher checks the server's
+ports before starting it - the same exclusive bind - and names the program in the way (`netstat
+-ano` + `tasklist`), telling a port still in TIME_WAIT after the last session apart from another
+program. Outside Windows the TCP listeners set `SO_REUSEADDR` (there it only allows a restart over
+TIME_WAIT); a quick restart used to fail on Linux.
+
+**Result.** Reproduced and fixed on Linux and on a Windows CI runner (`test_port_taken.py`).
+
+### Lines from different threads ran together
+
+**Symptom.** `listening on TCP 0.0.0.0:17502 (QoS HTTP)[identity] local player: ...`, with the
+line ends arriving later as blank lines.
+
+**Cause.** `print()` writes the text and the line end in two writes, so two threads interleave.
+
+**Decision.** `main()` installs a `print` that writes each line once, under a lock; every module
+the server prints from goes through it. The launcher reads the log line by line (levels, the
+hints), so a glued line was not just ugly.
+
+### The silent failed join, said out loud
+
+The most common failed join - the EA App not running on that machine, so the game stops after
+`Util.preAuth`/`Util.ping` without `Authentication.originLogin` - used to need someone reading the
+log. A Blaze connection that ends that way now leaves a `[hint]` line naming the address, and the
+launcher shows it under *Session events* and as a toast.
+
+### How the launcher is tested now
+
+- `tests/fake_game.py` stands in for the game's Blaze client: the TLS 1.0 handshake with RC4-SHA and
+  RSA key exchange, built from `tls_terminator`'s own primitives, and Fire2 requests over it. With it
+  the real server is driven through preAuth and login without the game - from `127.0.0.2` and up,
+  which the server treats as other players.
+- `launcher/dev/preview.py` serves the interface with a stand-in backend for working on it in a
+  browser; the real launcher also runs on Linux with pywebview's GTK backend, which is how the
+  host and join flows were driven end to end (with `/etc/hosts`, so the DNS check is real).
+- GitHub Actions runs the tests on `windows-latest` too: the job object, `tasklist`, `ipconfig`,
+  `netsh` and `netstat` are checked on a real Windows.
+
+### Tooling notes
+
+- The launcher now keeps every server run in `%LOCALAPPDATA%\TurboRivals\logs` (the newest 10), so
+  the note above about running the server by hand to keep its log no longer applies.
+
+## 2026-10-02 - launcher 1.1, second pass: a calm window, measured, and a bug hunt
+
+### The look
+
+**Why.** The first 1.1 window kept 1.0.6's HUD style - cyan on navy, glow, gradient buttons, capitals,
+skewed shapes. It read as a game overlay rather than a tool you set up once and leave running, and
+the request was a window "as modern as you would expect".
+
+**Decision.** Built like a current desktop app: a title bar of its own, a sidebar (*Host a session*,
+*Join a session*, *Server log*, *Settings*, *Report a problem*), a page of cards next to it. Neutral
+dark surfaces with hairline borders, one blue accent for what can be done, green/amber/red only for
+state; Segoe UI Variable on Windows, Inter (bundled) elsewhere; sentence case. The log and the
+settings got pages of their own. Nothing moves on its own except a spinner while something is
+pending. [launcher.md](launcher.md) describes the layout; the PR has before/after pictures, from the
+preview and from the installed build on a Windows runner.
+
+### Measured, not guessed
+
+Every change below came with a number before and after (the tables are in
+[launcher.md](launcher.md#measured)). Two of them were on Windows only, so CI now builds the
+installer, installs it, and times the window there (`tests/smoke_build.py`, `app.py --self-test`):
+
+- **The window came out 16x39 px short** (1084x641 for 1100x680; 1.0.6 too). pywebview sizes a
+  frameless form while it still has its frame and then removes the frame, keeping the client area.
+  The size is set again on `before_show`.
+- **pywebview's private mode** made a throw-away WebView2 profile in `%TEMP%` on every start, and on
+  closing waited for the browser process and deleted it; the page came through pywebview's own HTTP
+  server. The profile now stays in `%LOCALAPPDATA%\TurboRivals\webview` and the page is a file URL
+  (outside private mode that server would sit on the fixed port 42001). Page loaded 0.64 -> 0.26 s,
+  window drawn 2.33 -> 2.02 s.
+- **Closing** still takes about 2.1 s until the process is gone - but the window is gone after
+  0.12 s, and the rest is the same with `TerminateProcess` instead of `os._exit`: Windows tearing the
+  process down, not code of the launcher (likely WebView2's windows, which belong to its browser
+  process). Left as it is.
+- **10 MB for one file.** `cryptography` (9.4 MB of native code) was in the build only to make the
+  certificate, once per machine. `make_stub_cert.py` now builds keys, DER and signatures in plain
+  Python (129 ms); `tests/test_stub_cert.py` builds the certificate the old way too, from the same
+  keys, time and serials, and the bytes are the same - which matters, because ProtoSSL takes it
+  only for its exact bytes. Build 35.3 -> 25.5 MB, installer 14.3 -> 11.8 MB.
+- My first reading of the closing time was wrong twice: waiting for the output measured the browser
+  processes holding the inherited pipe, and the window was hidden before pywebview's wait, not left
+  on screen. Measuring the process handle and printing when `main()` returns settled it.
+
+### What the bug hunt found
+
+Server (`proto-lab`), each reproduced or tested:
+
+- QoS HTTP answered one connection after the other: a client that connected and said nothing held
+  up every launcher request for its 5 s timeout (4.8 s -> 0.001 s). A thread per connection, at most 32.
+- A failed `accept()` (a connection reset before it was accepted, a full descriptor table) ended the
+  listener for the rest of the session. `_accept_forever` keeps listening.
+- On Windows the QoS UDP responder ended on the `WSAECONNRESET` that follows a reply to a closed
+  port - one game closing its probe socket ended QoS for everyone. Reproduced on `windows-latest`
+  with the old code (a burst of probes from a socket that closes at once); fixed.
+- A stats file cut short dropped the asking player's connection on every speed wall query, and their
+  progress stopped being saved: it is now rebuilt from the journal. A broken `players.json` was
+  replaced by an empty one on the next save; it is now kept aside first.
+- A capture file per Blaze message by default - hundreds per session, forever. The launcher now
+  starts the server with `--no-capture` unless *Protocol captures* is on.
+
+Launcher:
+
+- A missing `hosts` file (some clean-up tools delete it; Windows reads it as empty) gave a red error
+  and the redirect could not be turned on. It now counts as empty and *Turn on* creates it.
+- The EA App check started `tasklist.exe` (and a console host) every 8 s; it reads the process
+  list from Windows itself now.
+- The page polled and redrew while minimized; uncaught script errors vanished (the packaged
+  launcher has no developer tools) - they go into the launcher log and the bug report now.
+
+### Tooling notes
+
+- The Windows job builds with `requirements.txt`, the same pins a local build uses. The runner's
+  artifact quota can be full; the upload is allowed to fail, the job summary has the results.
+- Temporary branches ran one-off Windows experiments (an A/B of the WebView2 setup, the exit
+  timing, the old QoS code) and were deleted afterwards.
+
+## 2026-10-02 - launcher 1.1 (PR #1, Sonic0810) merged onto 1.0.12.7 (1.1.0)
+
+The PR was made on 1.0.6, and main has had 1.0.7 to 1.0.12.7 since. It is merged as a merge
+commit, so its history and author stay, with the conflicts resolved file by file. Both sides had
+built some of the same things differently (`--no-capture`, log files, the hosts file, the
+firewall state), so neither side's version could be taken as a whole.
+
+**Checked before merging.**
+- **The certificate built without `cryptography`.** It matches main's and the one the game had
+  accepted on the second PC: 787 B, serial 962, issuer and subject DN byte for byte, the signature
+  OID patched in both places, the same extensions.
+- **Main's TLS loopback tests** (12, with a real RSA key exchange) pass on the PR's generator.
+- **In play:** the game logged in on a certificate made by the PR's code (02.10 14:27).
+- **The PR's own tests** pass: 71 in Python and 9 in JavaScript.
+
+**Server: main's structure, the PR's fixes.**
+
+Main's structure stays: everything bound on the main thread, `--bind-ip`, `--no-capture`, Autolog.
+Taken from the PR:
+- **`_accept_forever`:** an `accept()` error no longer ends a listener.
+- **`_serve_qos_udp`:** up to 1.0.12.7 a single `ConnectionResetError` silently ended QoS UDP for
+  everyone. Windows reports a reply that hit a closed port on the next `recvfrom`. That is a likely
+  reason for later joiners never getting past QoS in a long session.
+- **QoS HTTP on threads of their own** (at most 32), with a temp file per request for pictures.
+- **One write per printed line**, a sampled keepalive log, and a 16 MB limit on ByteVault
+  bodies.
+- **Recovery of a corrupt `players.json` or `stats/*.json`**, rebuilt from the journal.
+- **The `[hint]` for a game that never logs in**, with one change: it checks whether the session
+  got an identity. A game that came back with `resumeSession` never sends a login and was flagged
+  wrongly.
+
+**Launcher: the PR's window in TurboRivals colours.**
+
+The user's wish:
+- the navy and cyan of the 1.0 launcher;
+- the 1.0 boot screen;
+- Rajdhani for titles.
+
+Since cyan needs dark text, primary buttons use `--accent-ink`. Ported from main:
+- **`--cleanup` and `firewall_off`**, which the uninstaller runs.
+- **Firewall rules limited to the host's address.** The PR's `rule_state` now compares the scope,
+  so a rule for another address counts as outdated.
+- **`server_args`**, which the PR's `_sanitize` dropped, kept and appended last to the server
+  command.
+- **The picture:**
+  - the game's JPEG within 16 KB;
+  - resent when ONLINE NOW shows it missing;
+  - right-click removes it.
+- **`hosts_off`** with nothing to remove needs no administrator rights.
+- **Protocol captures on by default when run from source.**
+- **Server log files:** the newest 20 kept, each starting with the version and the command line.
+- **The line to add by hand** when the hosts file refuses the change.
+
+**`hosts_switch`.**
+- **Main's byte-faithful handling stays.** The PR's `splitlines()` split a cp1250 comment that
+  holds 0x85 (the ellipsis).
+- **From the PR:** `valid_address`, a read-back after writing, backups capped at 5, and restoring
+  the backup when a write fails.
+
+**Found while merging.**
+- **Backups and the read-only attribute.** `copy2` copied the attribute into the backup. A second
+  change in the same second (on, then off) could then neither replace that backup nor delete it.
+  The backup now copies content only and gets a unique name.
+- **A start that failed for good.** In the PR's window, a `get_snapshot` that raised left the page
+  "booting" forever. The boot screen now fades after 4 s at most and the placeholders go.
+- **The version resource.** The exe's version resource dropped the fourth part (1.0.12.7 showed as
+  1.0.12.0). It now has all four.
+
+**Build and CI.**
+- **Installer:** `--cleanup` stays. It also removes the WebView2 profile and the `*.tmp` files left
+  by an interrupted atomic write.
+- **CI:** the PR's workflow (Windows and Linux, Node, build, silent install and smoke test), with
+  main's hardening added: `permissions: contents: read`, `persist-credentials: false`, push only
+  on `main`, timeouts, Python 3.13.
+
+**Not taken.**
+- The PR's own `--no-capture`: main had one, and two would break argparse.
+- Its `_bind_exclusive` with `os._exit`: main binds every socket before serving.
+
+**Open.** `TURBORIVALS_HOSTS` and `TURBORIVALS_HOME` are honoured by the packaged exe too, because
+the installer's smoke test runs the installed launcher on a throwaway hosts file. A variable set
+in the user's environment could point an elevated launcher at another file. The risk is low: it
+takes control of that environment, and only the launcher's block is written.

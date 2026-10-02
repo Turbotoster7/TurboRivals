@@ -1,12 +1,12 @@
 ; TurboRivals - Inno Setup script
 ;
-; Builds dist\TurboRivalsSetup.exe out of the one-folder PyInstaller build in
+; Builds dist\TurboRivalsSetup-<version>.exe out of the one-folder PyInstaller build in
 ; dist\TurboRivals. Run it through ..\build.ps1, which makes that folder first.
 ;
 ; Per-user on purpose: PrivilegesRequired=lowest installs into
 ; %LOCALAPPDATA%\Programs without a UAC prompt. The launcher needs
 ; administrator rights only at runtime, for the hosts file and the firewall,
-; and it asks for them itself with its own ELEVATE button.
+; and it asks for them itself ("Restart as admin" in its Setup list).
 
 #define AppName      "TurboRivals"
 ; Read from ..\VERSION so the setup, the exe resource and the launcher window
@@ -78,7 +78,7 @@ begin
   Local := ExpandConstant('{localappdata}\{#AppName}');
   Home := ExpandConstant('{%USERPROFILE}\{#AppName}');
   if MsgBox('Also remove TurboRivals'' data from this PC?'#13#10#13#10
-            + 'Goes: settings, your picture, logs and certificate ('
+            + 'Goes: settings, your picture, logs, certificate and the window''s browser profile ('
             + Local + '), and what a host keeps about the players - names, pictures, '
             + 'speed wall results, reports (' + Home + '\data).'#13#10#13#10
             + 'Stays: your career saves (Documents) and their backups ('
@@ -88,6 +88,11 @@ begin
   DeleteFile(Local + '\config.json');
   DeleteFile(Local + '\avatar.png');
   DeleteFile(Local + '\avatar.jpg');
+  { leftovers of an interrupted atomic write (commands._write_atomic, 1.1) }
+  DeleteFile(Local + '\config.json.tmp');
+  DeleteFile(Local + '\avatar.png.tmp');
+  DeleteFile(Local + '\avatar.jpg.tmp');
+  DelTree(Local + '\webview', True, True, True);   { the window's WebView2 profile (1.1) }
   DelTree(Local + '\logs', True, True, True);
   DelTree(Local + '\capture', True, True, True);
   DelTree(Local + '\pki', True, True, True);

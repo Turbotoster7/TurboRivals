@@ -342,8 +342,9 @@ makes the same simplification.
 - Negotiation: ServerHello `0x0302`, cipher `0x0005`, no session id, null compression; RSA kx;
   TLS 1.0/1.1 PRF (P_MD5 XOR P_SHA1); HMAC-SHA1 MAC.
 - Crypto in pure Python (RC4, PRF, RSA-decrypt PKCS#1 v1.5). The key is read by a DER parser of
-  our own (`load_rsa_priv`), and the certificate is built with `cryptography` - since 29.09
-  nothing needs `openssl` on the machine.
+  our own (`load_rsa_priv`). The certificate was built with `cryptography` from 29.09 (so nothing
+  needed `openssl` any more); since 2026-10-02 it is built in plain Python, byte for byte the same
+  (`tests/test_stub_cert.py`).
 - The smoke test (a pure-Python test client mirroring the handshake): Finished `verify_data` OK
   in both directions, `ApplicationData` decrypted 1:1. On the live client the handshake closes
   and every Blaze exchange since runs over it.

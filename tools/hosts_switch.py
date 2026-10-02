@@ -21,6 +21,10 @@ Usage (console as administrator):
     python tools/hosts_switch.py on
     python tools/hosts_switch.py on --all --ip 192.168.1.10
     python tools/hosts_switch.py off
+
+TURBORIVALS_HOSTS=<file> points everything here at another file - for tests (the installer's
+smoke test runs the packaged launcher on one) and for trying the launcher on a machine whose
+real hosts file should stay untouched.
 """
 
 from __future__ import annotations
@@ -28,16 +32,22 @@ from __future__ import annotations
 import argparse
 import ctypes
 import datetime as dt
+import ipaddress
 import os
 import shutil
 import stat
 import sys
 from pathlib import Path
 
-HOSTS = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32/drivers/etc/hosts"
+DEFAULT_HOSTS = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32/drivers/etc/hosts"
+HOSTS = DEFAULT_HOSTS
+if os.environ.get("TURBORIVALS_HOSTS"):
+    HOSTS = Path(os.environ["TURBORIVALS_HOSTS"])
 
 BEGIN = "# >>> TurboRivals >>>"
 END = "# <<< TurboRivals <<<"
+BACKUP_GLOB = "hosts.turborivals-*.bak"
+BACKUPS_KEPT = 5            # every change makes one; without a cap they pile up in drivers\etc
 
 # The redirector the game actually uses. Established by observation:
 # NFS14.exe connected to 159.153.51.18:42127, and that address is
@@ -105,16 +115,56 @@ def write_hosts(lines: list[str], path: Path | None = None) -> None:
             raise
         os.chmod(path, stat.S_IREAD | stat.S_IWRITE)  # clears the read-only attribute
         path.write_bytes(data)
+    # Read back: a tool that holds or rewrites the file (some "hosts protection") can let the
+    # write through and undo it - the change would look made and not be.
+    if path.read_bytes() != data:
+        raise OSError(f"{path} did not read back as written - something else holds the file")
 
 
 def backup_hosts(path: Path | None = None) -> Path | None:
-    """A dated copy next to the file before a change; None when there is no file to copy."""
+    """A dated copy next to the file before a change; None when there is no file to copy. Only
+    the newest BACKUPS_KEPT stay."""
     path = path or HOSTS
     if not path.exists():
         return None
-    backup = path.with_suffix(f".turborivals-{dt.datetime.now():%Y%m%d-%H%M%S}.bak")
-    shutil.copy2(path, backup)
+    stamp = f"{dt.datetime.now():%Y%m%d-%H%M%S}"
+    backup = path.with_suffix(f".turborivals-{stamp}.bak")
+    n = 1
+    while backup.exists():                        # two changes in one second (on, then off)
+        backup = path.with_suffix(f".turborivals-{stamp}-{n}.bak")
+        n += 1
+    # the content only: copy2 also copied a read-only attribute, and the next backup of the
+    # same second could then neither replace it nor the cap delete it
+    shutil.copyfile(path, backup)
+    for old in sorted(path.parent.glob(BACKUP_GLOB))[:-BACKUPS_KEPT]:
+        try:
+            old.unlink()
+        except OSError:
+            pass
     return backup
+
+
+def restore(copy: Path | None, path: Path | None = None) -> bool:
+    """Puts a backup back after a failed write - best effort, the caller reports the failure.
+    No copy means there was no file before: nothing to put back."""
+    if copy is None:
+        return False
+    try:
+        shutil.copyfile(copy, path or HOSTS)
+        return True
+    except OSError:
+        return False
+
+
+def valid_address(ip: str) -> bool:
+    """Only an IPv4 address belongs in front of the redirector names: the game resolves them for
+    IPv4 (AF_INET), and a typo here would be written into a system file."""
+    try:
+        addr = ipaddress.ip_address(str(ip).strip())
+    except ValueError:
+        return False
+    return (isinstance(addr, ipaddress.IPv4Address) and not addr.is_unspecified
+            and not addr.is_multicast and addr != ipaddress.IPv4Address("255.255.255.255"))
 
 
 def strip_block(lines: list[str]) -> list[str]:
@@ -207,13 +257,21 @@ def cmd_on(args) -> int:
         print("administrator rights required", file=sys.stderr)
         return 1
 
+    if not valid_address(args.ip):
+        print(f"not an IPv4 address: {args.ip}", file=sys.stderr)
+        return 1
     names = PRIMARY + (EXTRA if args.all else [])
     lines, removed = strip_redirects(read_hosts())
 
     backup = backup_hosts()
 
     block = [BEGIN] + [f"{args.ip}\t{n}" for n in names] + [END]
-    write_hosts(lines + block)
+    try:
+        write_hosts(lines + block)
+    except OSError as e:
+        restore(backup)
+        print(f"writing hosts failed: {e}", file=sys.stderr)
+        return 1
 
     print(f"backup: {backup}" if backup else f"no hosts file existed - created {HOSTS}")
     for line in removed:
@@ -234,9 +292,15 @@ def cmd_off(_args) -> int:
     if cleaned == lines:
         print("nothing to remove")
         return 0
+    backup = backup_hosts()
     if removed:
-        print(f"backup: {backup_hosts()}")
-    write_hosts(cleaned)
+        print(f"backup: {backup}")
+    try:
+        write_hosts(cleaned)
+    except OSError as e:
+        restore(backup)
+        print(f"writing hosts failed: {e}", file=sys.stderr)
+        return 1
     for line in removed:
         print(f"removed an old entry outside the block: {line}")
     print("TurboRivals redirect removed - hosts restored")

@@ -36,9 +36,36 @@ ones), the firewall rules, your name and picture, and finding the career save yo
 It also shows who is online and streams the server log. It is the easy path; the console
 commands below still work and remain the reference.
 
+It is laid out like any current desktop app: a sidebar with *Host a session*, *Join a session*,
+*Server log*, *Settings* and *Report a problem*, and the page next to it. A session page holds:
+
+- **Setup** — one row per check (administrator rights, EA App, certificate, `hosts` redirect,
+  firewall rules, server ports), each with its own fix button, and *Fix all*. The checks fill in
+  as they finish and run again when you come back to the window, so starting the EA App or a VPN
+  later is noticed. A port another program holds is named, with the program. With everything
+  green the card folds to a progress bar, and it opens again when something breaks.
+- **You** — your name (with how the others will see it: the game shows plain ASCII) and picture;
+  as the host, the address the others connect to, with *Copy*; as a joining player, the host's
+  address (tested as you type), recent hosts and your career save.
+- **Server** or **Connection** — your server's address, uptime and log, with the reasons it
+  cannot start yet; or the checklist of what *Connect & play* does. The button itself sits at the
+  top right, next to *Launch game*.
+- **Online now** with pictures, and **Activity** — who joined or left, and the server's hints,
+  such as a player whose game never logged in.
+
+*Server log* (`Ctrl+L`) filters the log to key events, the usual traffic, everything, or only
+problems, searches it, and has a second tab listing every change the launcher made. Every server
+run is also saved to `%LOCALAPPDATA%\TurboRivals\logs` (the last ten). *Report a problem* gathers
+a ready-made bug report. *Settings* say what to do with the redirect when you close the launcher
+and whether the server keeps protocol captures (off by default: a session used to leave hundreds of
+files behind).
+
 ```powershell
 venv\Scripts\pythonw.exe launcher\app.py      # pythonw = no console window
 ```
+
+How the launcher is built, and how to work on it without Windows (a browser preview with a
+stand-in backend, and the tests): [docs/launcher.md](docs/launcher.md).
 
 ### Building the standalone version
 
@@ -46,7 +73,8 @@ No Python, no repository and no `openssl` on the target machine — for handing 
 you play with.
 
 ```powershell
-venv\Scripts\python.exe -m pip install pyinstaller pywebview cryptography
+python -m venv venv
+venv\Scripts\python.exe -m pip install -r requirements.txt
 winget install JRSoftware.InnoSetup      # once, for the installer
 .\build.ps1
 ```
@@ -55,8 +83,8 @@ Two things come out of `dist\`:
 
 | | |
 | --- | --- |
-| `TurboRivals\` | 35 MB folder — a local copy; see the warning below before zipping it |
-| `TurboRivalsSetup-<version>.exe` | 14 MB installer — Start Menu entry, uninstaller, no UAC prompt |
+| `TurboRivals\` | 25 MB folder — a local copy; see the warning below before zipping it |
+| `TurboRivalsSetup-<version>.exe` | 12 MB installer — Start Menu entry, uninstaller, no UAC prompt |
 
 **Hand people the installer, not a zip of the folder.** Every file extracted from a
 downloaded archive inherits Mark-of-the-Web, and .NET then refuses to load
@@ -76,6 +104,13 @@ auth code from every login. It also deletes any that a version before 1.0.7 left
 [TurboRivals.spec](TurboRivals.spec) and [installer/TurboRivals.iss](installer/TurboRivals.iss)
 document what goes in and why.
 
+GitHub Actions builds the installer the same way on every push (`windows build + installer`),
+installs it silently and runs [tests/smoke_build.py](tests/smoke_build.py) against the installed
+exe: the certificate, the server with a stand-in game logging in, `--hosts-off`, and
+`--self-test`, which opens the window and checks that the page and both directions of the bridge
+work. Then it uninstalls again. The job summary lists the window's start and close times and the
+package size.
+
 **One folder, not one file.** A one-file build unpacks ~30 MB into `%TEMP%` on every start
 and deletes it on exit; when anything still holds a file there, it reports
 `Failed to remove temporary directory`, which looks like a crash but is only failed cleanup.
@@ -87,12 +122,15 @@ Two more things make this work, and both matter if you change the code:
   not a Python interpreter, so `commands.build_command` emits `TurboRivals.exe --run-server …`
   and `app.py` dispatches on that flag before it imports the GUI. `--make-cert` and
   `--cleanup` (`hosts` + firewall; `--hosts-off` for `hosts` only) do the same for the
-  certificate and for the uninstaller, which is also how the
-  packaged build gets tested without driving the UI. The server mode switches its output to
+  certificate and for the uninstaller, and `--self-test` opens the window, checks it and closes
+  it again - that is how the packaged build gets tested without anyone clicking through it. The
+  server mode switches its output to
   line buffering, or the log panel would sit empty while a session runs.
-- **Nothing needs `openssl` any more.** `make_stub_cert.py` builds the certificate with
-  `cryptography`, and `tls_terminator.load_rsa_priv` reads the key with its own DER parser
-  instead of shelling out to `openssl rsa -text` on every start.
+- **Nothing needs `openssl` or `cryptography`.** `make_stub_cert.py` builds the RSA keys, the
+  certificate and its patched signature in plain Python - byte for byte what the earlier
+  `cryptography` version made, which a test checks - and `tls_terminator.load_rsa_priv` reads the
+  key with its own DER parser instead of shelling out to `openssl rsa -text` on every start.
+  Leaving the library out took the build from 35 to 25 MB (the installer from 14 to 12 MB).
 
 Everything the program writes goes to `%LOCALAPPDATA%\TurboRivals`, never next to the exe,
 so an installed copy and the portable one share the same config, certificate and progress.
@@ -104,21 +142,24 @@ so an installed copy and the portable one share the same config, certificate and
 Every player installs the same version and runs the launcher (it asks for administrator rights
 when it needs them).
 
-**Host:** *HOST A SESSION*.
-1. Enter your name and pick a picture.
-2. Choose the address the others reach you on (the Radmin `26.x.x.x` one over a VPN).
-3. Add the firewall rules. They open the ports on the chosen address only, not on every
-   network the PC is on, so after you switch to another address press *REMOVE* and *ADD*
-   again. *REMOVE* also closes the ports when you are done playing.
-4. *START SERVER*, then start the game.
+**Host:** *Host a session* in the sidebar.
+1. *Fix all* under *Setup* (restart as administrator when it asks).
+2. Your name and picture; pick the address the others reach you on (the Radmin `26.x.x.x` one
+   over a VPN) and send it to them with *Copy*.
+3. The firewall rules open the ports on the chosen address only, not on every network the PC is
+   on. After you switch to another address, *Setup* shows them as outdated: *Update* fixes it.
+   When all rules are in place, *Remove* closes the ports again when you are done playing.
+4. *Start server*, then start the game.
 
-**Everyone else:** *JOIN A SESSION*.
-1. Enter the host's address, your name and a picture.
-2. Check that *YOUR CAREER SAVE* is not orange.
-3. *REDIRECT AND PLAY*.
+**Everyone else:** *Join a session*.
+1. The host's address, your name and a picture. The launcher tells you straight away whether a
+   TurboRivals server answers there.
+2. Check that *Career save* is not orange (*Guessed*).
+3. *Connect & play*.
 
-The launcher fixes up `hosts`, tells the host which save your game loads and what you are called,
-then starts the game. *ONLINE NOW* shows who is in.
+*Connect & play* fixes up `hosts`, checks that the name now really leads to the host, tells the
+host which save your game loads and what you are called, sends your picture and starts the game -
+each step ticked off or explained in the checklist. *Online now* shows who is in.
 
 The rest of this section is the same thing done by hand from a console.
 
@@ -282,14 +323,14 @@ game by itself.
 
 The server has no way to learn your EA name: at login the client sends nothing but an opaque
 Origin token, which only EA's own service could resolve. So every player names themselves in
-their own launcher, in *YOUR NAME*. The field starts out with your EA nickname when the EA App
-has it. A joining player's launcher sends the name to the host on *REDIRECT AND PLAY*, and the
+their own launcher, in *Name in the session*. The field starts out with your EA nickname when
+the EA App has it. A joining player's launcher sends the name to the host on *Connect & play*, and the
 server keeps it with that player's career save id, so it stays the same over LAN or a VPN and
 across restarts.
 
-Next to the name is your picture. Click the square and pick any photo. The launcher shrinks it to
+Next to the name is your picture. Click it and pick any photo. The launcher shrinks it to
 a small PNG and sends it to the host's server, and every launcher in the session shows who is
-logged in under *ONLINE NOW*, with pictures. The host keeps them in `avatars\` next to
+logged in under *Online now*, with pictures. The host keeps them in `avatars\` next to
 `players.json`. The game shows the picture too. It asks the server for each player's profile
 picture (ByteVault `GET .../categories/Pictures/records/<id>`), and the server answers with the
 launcher's 256 px JPEG as raw bytes (`Content-Type: image/jpeg`). Confirmed on 30.09 with the
@@ -326,7 +367,7 @@ persona id the EA App gives the game on start. The launcher takes it from the EA
 (`%LOCALAPPDATA%\Electronic Arts\EA Desktop\Logs\EADesktopVerbose.log`) when the id is written
 there in full. The EA App usually masks it as `####`, so the launcher falls back to the save
 files: a save ending in the same five digits as the EA account, or else the only EA save on the
-PC. If none of that works, the id is only a guess and *YOUR CAREER SAVE* turns orange. That
+PC. If none of that works, the id is only a guess and *Career save* turns orange. That
 happens when Rivals has never been played on that PC, or when several EA accounts played it
 there. For the first case, start Rivals once through the EA App without TurboRivals, play until
 it saves, close it, then connect. The game then makes its own save, which the launcher finds.
@@ -337,8 +378,8 @@ save. In both cases a changed paint job stuck.
 
 - **the host** — found automatically through the EA App on the server's machine
   (`--local-id <id>` overrides it);
-- **everyone else** — their launcher sends it to the host on *REDIRECT AND PLAY* (the client
-  panel shows it as *YOUR CAREER SAVE*). Without the launcher, the host passes
+- **everyone else** — their launcher sends it to the host on *Connect & play* (*Join a
+  session* shows it under *Career save*). Without the launcher, the host passes
   `--player-id <their address>=<id>`.
 
 The server checks each id against the login token, so nobody can load someone else's save.
@@ -379,8 +420,8 @@ Select-String gosredirector "$env:SystemRoot\System32\drivers\etc\hosts"
 ```
 
 Windows returns the first matching line, so a stale `127.0.0.1` above the launcher's block sends
-the game back to its own machine. The launcher flags such a line on the HOSTS row and removes it
-on *TURN ON* and *REDIRECT AND PLAY*.
+the game back to its own machine. The launcher flags such a line on the *Hosts redirect* row and
+removes it on *Fix* and *Connect & play*.
 
 **Another player looks like an ordinary racer: icon and name only up close.** The game ties
 every car to a player by the owner's EA career save id. A player logged in under some other id
@@ -394,16 +435,19 @@ launcher.
 
 [Open an issue](https://github.com/Turbotoster7/TurboRivals/issues/new/choose). The form asks
 for the launcher version, which side hit the problem, how the players are connected, and the
-`PRE-FLIGHT CHECK` panel — a screenshot of the window covers most of that at once.
+checks under *Setup*. *Report a problem* in the launcher's sidebar gathers all of that into one
+text to paste - including your career save and the last lines of the server log, with
+paths shortened so your Windows user name stays out of it.
 
-What helps most is the **server log**. Since 1.0.9 every server run is saved whole, one file
-per run, in `%LOCALAPPDATA%\TurboRivals\logs` (the last 20). *LOGS* above the log panel opens
-that folder, so attach the newest file. The window itself keeps only the last 1500 lines. Look
-in particular at the lines naming a component and a
-command (`Fire2 comp=… cmd=…`): they say exactly how far the client got. A session that
-stops after `Util.preAuth` without an `Authentication.login` almost always means the EA App
-was not running on that machine. If progress does not stick, include what *YOUR CAREER SAVE*
-showed, and the `[identity]` lines from the host's log.
+What helps most is the **server log**, in particular the lines naming a component and a
+command (`Fire2 comp=… cmd=…`): they say exactly how far the client got. Every server run is
+saved whole, one file per run, in `%LOCALAPPDATA%\TurboRivals\logs` (the last 20, since 1.0.9),
+starting with the version and the command line; attach the newest file. The *Everything* view
+of *Server log* shows the same lines. A session that stops after `Util.preAuth` without an
+`Authentication.login` almost always means the EA App was not running on that machine - the
+server says so itself, with a `[hint]` line that the launcher shows under *Activity*. If
+progress does not stick, include what *Career save* showed, and the `[identity]` lines from the
+host's log.
 
 Read the section above first — the three most common reports are not bugs.
 
@@ -425,8 +469,9 @@ Read the section above first — the three most common reports are not bugs.
 launcher/     the windowed launcher (pywebview UI + the system plumbing)
 tools/       recon tooling (binary analysis, hosts switcher)
 proto-lab/   the server and the protocol decoders
-tests/       offline tests: matchmaking, the server on loopback, hosts file, firewall rules,
-             the launcher's server command line
+tests/       launcher and server tests, with a fake game client (python -m unittest discover -s tests):
+             matchmaking, Autolog, the server on loopback, hosts file, firewall rules, the
+             launcher's server command line; smoke_build.py for a built exe
 docs/        protocol notes, decision log, raw recon output
 ```
 

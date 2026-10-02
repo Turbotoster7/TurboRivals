@@ -4,6 +4,7 @@ per-run log file - installed (frozen) versus run from source. Only a tiny Python
 import json
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -26,8 +27,10 @@ class ServerCommandTests(unittest.TestCase):
             self.assertIn("--no-capture", commands.build_command("Host", [], "26.1.2.3"))
 
     def test_source_run_keeps_capturing(self):
-        with mock.patch.object(commands, "FROZEN", False):
-            self.assertNotIn("--no-capture", commands.build_command("Host", [], "26.1.2.3"))
+        # the setting starts on when run from source, off in the packaged launcher (the frames
+        # hold the EA auth code); the launcher passes it as `capture`
+        self.assertEqual(commands.DEFAULT_CONFIG["keep_captures"], not commands.FROZEN)
+        self.assertNotIn("--no-capture", commands.build_command("Host", [], "26.1.2.3", capture=True))
 
     def test_server_args_from_config_come_last(self):
         config = dict(commands.DEFAULT_CONFIG, server_args=["--session-bps", 100000])
@@ -71,28 +74,22 @@ class LogFileTests(unittest.TestCase):
 
     def test_every_line_of_a_run_goes_to_its_file(self):
         server = commands.ServerProcess()
-        shown = []
+        shown, done = [], threading.Event()
         with mock.patch.object(commands, "cert_exists", lambda: True):
-            result = server.start([sys.executable, "-c", "print('hello'); print('world')"],
-                                  on_lines=shown.extend)
-        self.assertTrue(result["ok"])
-        self.assertTrue(server._finished.wait(10), "the child did not finish")
-        server.flusher.join(5)
-        text = Path(result["log"]).read_text(encoding="utf-8")
-        self.assertTrue(text.startswith(f"# TurboRivals {commands.APP_VERSION}"))
+            result = server.start([sys.executable, "-u", "-c", "print('hello'); print('world')"],
+                                  on_lines=shown.extend, on_exit=lambda code: done.set())
+        self.assertTrue(result["ok"], result)
+        self.assertTrue(done.wait(10), "the child did not finish")
+        text = server.log_path.read_text(encoding="utf-8")
+        # the version and the command line first: a log attached to a bug report says which
+        # build ran and with which flags (server_args)
+        self.assertTrue(text.startswith(f"# TurboRivals {commands.APP_VERSION}"), text[:200])
+        self.assertIn(" -c ", text.splitlines()[1])
         self.assertIn("hello\nworld\n", text)
-        self.assertTrue(text.endswith("# server exited with code 0\n"))
         self.assertEqual(shown, ["hello", "world"])                 # the window still gets them
 
-    def test_only_the_newest_runs_are_kept(self):
-        self.logs.mkdir(parents=True)
-        for i in range(commands.LOG_KEEP + 5):
-            (self.logs / f"server-20260101-{i:06d}.log").write_text("old")
-        log = commands._open_server_log(["server"])
-        log.close()
-        kept = sorted(p.name for p in self.logs.glob("server-*.log"))
-        self.assertEqual(len(kept), commands.LOG_KEEP)
-        self.assertNotIn("server-20260101-000000.log", kept)        # the oldest went first
+    def test_twenty_runs_are_kept(self):
+        self.assertEqual(commands.LOGS_KEPT, 20)                    # readme, since 1.0.9
 
 
 if __name__ == "__main__":

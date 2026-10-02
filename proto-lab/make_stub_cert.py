@@ -39,10 +39,13 @@ authorityKeyIdentifier - all non-critical. An earlier version of this file
 claimed in a comment that AKI was deliberately omitted, but openssl 3.x added it
 by itself and the resulting cert passed; the cert is the reference, not the comment.
 
-Does not require `openssl` in PATH - uses the `cryptography` library, so the same
-code works in the packaged launcher for someone who has neither Python nor
-openssl. The output goes to proto-lab/pki/, which is in .gitignore - the private
-key goes neither into the repository nor into the distributed .exe.
+Plain Python, no `openssl` and no `cryptography`: the RSA keys, the DER and the
+signatures are built here (a few dozen lines), so the packaged launcher does not
+carry a 10 MB library for a file it makes once per machine. The output is byte
+for byte what the earlier `cryptography` version produced from the same keys and
+times - tests/test_stub_cert.py builds both and compares them. The output goes to
+proto-lab/pki/, which is in .gitignore - the private key goes neither into the
+repository nor into the distributed .exe.
 
 Usage:
     python proto-lab/make_stub_cert.py
@@ -52,26 +55,29 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import base64
 import datetime as dt
-import sys
+import hashlib
+import math
+import secrets
+import textwrap
+from dataclasses import dataclass
 from pathlib import Path
 
-from cryptography import x509
-from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import rsa
-from cryptography.x509.name import _ASN1Type
-from cryptography.x509.oid import NameOID
+OID_C, OID_ST, OID_L = "2.5.4.6", "2.5.4.8", "2.5.4.7"
+OID_O, OID_OU, OID_CN = "2.5.4.10", "2.5.4.11", "2.5.4.3"
+OID_EMAIL = "1.2.840.113549.1.9.1"
 
 # Subject fields mirrored from the original EA cert (docs/protocol.md, section
 # 5). The original had a 1024-bit RSA key and a CN without "online" - one cert for
 # the whole environment table. The client does not validate these fields; we keep
 # them for consistency with what the game "saw" on the live service.
 SUBJECT = [
-    (NameOID.COUNTRY_NAME, "US"),
-    (NameOID.STATE_OR_PROVINCE_NAME, "California"),
-    (NameOID.ORGANIZATION_NAME, "Electronic Arts, Inc."),
-    (NameOID.ORGANIZATIONAL_UNIT_NAME, "Global Online Studio"),
-    (NameOID.COMMON_NAME, "gosredirector.ea.com"),
+    (OID_C, "US"),
+    (OID_ST, "California"),
+    (OID_O, "Electronic Arts, Inc."),
+    (OID_OU, "Global Online Studio"),
+    (OID_CN, "gosredirector.ea.com"),
 ]
 
 # Issuer DN EXACTLY as in the original EA cert - the client matches its built-in
@@ -79,13 +85,13 @@ SUBJECT = [
 # mirrors the original (docs/recon/capture/120822-003-server-cert0.der). This DN
 # becomes the subject of our throwaway CA, so leaf.issuer = this DN.
 ISSUER_OTG3 = [
-    (NameOID.COMMON_NAME, "OTG3 Certificate Authority"),
-    (NameOID.COUNTRY_NAME, "US"),
-    (NameOID.STATE_OR_PROVINCE_NAME, "California"),
-    (NameOID.LOCALITY_NAME, "Redwood City"),
-    (NameOID.ORGANIZATION_NAME, "Electronic Arts, Inc."),
-    (NameOID.ORGANIZATIONAL_UNIT_NAME, "Online Technology Group"),
-    (NameOID.EMAIL_ADDRESS, "dirtysock-contact@ea.com"),
+    (OID_CN, "OTG3 Certificate Authority"),
+    (OID_C, "US"),
+    (OID_ST, "California"),
+    (OID_L, "Redwood City"),
+    (OID_O, "Electronic Arts, Inc."),
+    (OID_OU, "Online Technology Group"),
+    (OID_EMAIL, "dirtysock-contact@ea.com"),
 ]
 
 SERIAL = 962          # 0x3C2, like the original (cosmetic)
@@ -101,19 +107,158 @@ SIG_OIDS = {
     "md5WithRSA":    bytes.fromhex("2a864886f70d010104"),
 }
 
+OID_BASIC_CONSTRAINTS, OID_SKI, OID_AKI = "2.5.29.19", "2.5.29.14", "2.5.29.35"
+DER_NULL = b"\x05\x00"
+DIGEST_INFO_SHA256 = bytes.fromhex("3031300d060960864801650304020105000420")   # RFC 8017 9.2
 
-def build_name(pairs: list[tuple[x509.ObjectIdentifier, str]]) -> x509.Name:
-    """DN with forced PrintableString (email: IA5String) - like the EA original.
 
-    By default `cryptography` encodes most fields as UTF8String. A different tag
-    means different DN bytes, and DirtySDK compares the issuer byte by byte.
-    """
-    attrs = []
-    for oid, value in pairs:
-        asn1 = (_ASN1Type.IA5String if oid == NameOID.EMAIL_ADDRESS
-                else _ASN1Type.PrintableString)
-        attrs.append(x509.NameAttribute(oid, value, _type=asn1))
-    return x509.Name(attrs)
+# ------------------------------------------------------------------------------- DER
+
+def _tlv(tag: int, body: bytes) -> bytes:
+    size = len(body)
+    if size < 0x80:
+        head = bytes([size])
+    else:
+        raw = size.to_bytes((size.bit_length() + 7) // 8, "big")
+        head = bytes([0x80 | len(raw)]) + raw
+    return bytes([tag]) + head + body
+
+
+def _seq(*parts: bytes) -> bytes:
+    return _tlv(0x30, b"".join(parts))
+
+
+def _int(value: int) -> bytes:
+    return _tlv(0x02, value.to_bytes(value.bit_length() // 8 + 1, "big"))   # room for the sign bit
+
+
+def _oid(dotted: str) -> bytes:
+    first, second, *rest = (int(part) for part in dotted.split("."))
+    body = bytearray([40 * first + second])
+    for arc in rest:
+        chunk = [arc & 0x7F]
+        while arc > 0x7F:
+            arc >>= 7
+            chunk.append(0x80 | (arc & 0x7F))
+        body += bytes(reversed(chunk))
+    return _tlv(0x06, bytes(body))
+
+
+def _name(pairs: list[tuple[str, str]]) -> bytes:
+    """DN with PrintableString (email: IA5String) - like the EA original, one attribute per RDN."""
+    return _seq(*(_tlv(0x31, _seq(_oid(oid), _tlv(0x16 if oid == OID_EMAIL else 0x13,
+                                                    value.encode("ascii"))))
+                  for oid, value in pairs))
+
+
+def _time(moment: dt.datetime) -> bytes:
+    """UTCTime up to 2049, GeneralizedTime after (RFC 5280 4.1.2.5), whole seconds."""
+    if moment.year < 2050:
+        return _tlv(0x17, moment.strftime("%y%m%d%H%M%SZ").encode("ascii"))
+    return _tlv(0x18, moment.strftime("%Y%m%d%H%M%SZ").encode("ascii"))
+
+
+def _pem(label: str, der: bytes) -> bytes:
+    body = "\n".join(textwrap.wrap(base64.b64encode(der).decode("ascii"), 64))
+    return f"-----BEGIN {label}-----\n{body}\n-----END {label}-----\n".encode("ascii")
+
+
+def der_to_pem(der: bytes) -> bytes:
+    return _pem("CERTIFICATE", der)
+
+
+# ------------------------------------------------------------------------------- RSA
+
+@dataclass(frozen=True)
+class RsaKey:
+    n: int
+    e: int
+    d: int
+    p: int
+    q: int
+
+    def public_der(self) -> bytes:
+        """RSAPublicKey - the value of subjectPublicKeyInfo's BIT STRING."""
+        return _seq(_int(self.n), _int(self.e))
+
+    def key_id(self) -> bytes:
+        """SHA-1 of the public key BIT STRING's value (RFC 5280 4.2.1.2, method 1)."""
+        return hashlib.sha1(self.public_der()).digest()
+
+    def sign_sha256(self, data: bytes) -> bytes:
+        """RSASSA-PKCS1-v1_5 with SHA-256 - deterministic, which is what makes the output testable."""
+        size = (self.n.bit_length() + 7) // 8
+        digest = DIGEST_INFO_SHA256 + hashlib.sha256(data).digest()
+        block = b"\x00\x01" + b"\xff" * (size - len(digest) - 3) + b"\x00" + digest
+        return pow(int.from_bytes(block, "big"), self.d, self.n).to_bytes(size, "big")
+
+    def pkcs8_pem(self) -> bytes:
+        private = _seq(_int(0), _int(self.n), _int(self.e), _int(self.d), _int(self.p), _int(self.q),
+                       _int(self.d % (self.p - 1)), _int(self.d % (self.q - 1)),
+                       _int(pow(self.q, -1, self.p)))
+        return _pem("PRIVATE KEY", _seq(_int(0), _seq(_oid("1.2.840.113549.1.1.1"), DER_NULL),
+                                        _tlv(0x04, private)))
+
+
+_SMALL_PRIMES = [n for n in range(3, 2000, 2) if all(n % k for k in range(3, math.isqrt(n) + 1, 2))]
+
+
+def _probably_prime(n: int, rounds: int = 40) -> bool:
+    for small in _SMALL_PRIMES:
+        if n % small == 0:
+            return n == small
+    d, s = n - 1, 0
+    while d % 2 == 0:
+        d //= 2
+        s += 1
+    for _ in range(rounds):                       # Miller-Rabin
+        x = pow(secrets.randbelow(n - 3) + 2, d, n)
+        if x in (1, n - 1):
+            continue
+        for _ in range(s - 1):
+            x = pow(x, 2, n)
+            if x == n - 1:
+                break
+        else:
+            return False
+    return True
+
+
+def _prime(bits: int, e: int) -> int:
+    while True:
+        # the top two bits set, so that two of these multiply to exactly 2 * bits bits
+        candidate = secrets.randbits(bits) | (3 << (bits - 2)) | 1
+        if math.gcd(e, candidate - 1) == 1 and _probably_prime(candidate):
+            return candidate
+
+
+def generate_key(bits: int = 1024, e: int = 65537) -> RsaKey:
+    while True:
+        p, q = _prime(bits - bits // 2, e), _prime(bits // 2, e)
+        if p != q and (p * q).bit_length() == bits:
+            p, q = max(p, q), min(p, q)
+            return RsaKey(p * q, e, pow(e, -1, math.lcm(p - 1, q - 1)), p, q)
+
+
+# ------------------------------------------------------------------------------ X.509
+
+SHA256_WITH_RSA = _seq(_oid("1.2.840.113549.1.1.11"), DER_NULL)
+
+
+def _extension(oid: str, value: bytes, critical: bool = False) -> bytes:
+    return _seq(_oid(oid), b"\x01\x01\xff" if critical else b"", _tlv(0x04, value))
+
+
+def _certificate(serial: int, issuer: bytes, subject: bytes, subject_key: RsaKey,
+                 not_before: dt.datetime, not_after: dt.datetime,
+                 extensions: list[bytes], signer: RsaKey) -> bytes:
+    spki = _seq(_seq(_oid("1.2.840.113549.1.1.1"), DER_NULL),
+                _tlv(0x03, b"\x00" + subject_key.public_der()))
+    tbs = _seq(b"\xa0\x03\x02\x01\x02",              # [0] version: v3
+               _int(serial), SHA256_WITH_RSA, issuer,
+               _seq(_time(not_before), _time(not_after)), subject, spki,
+               _tlv(0xA3, _seq(*extensions)))
+    return _seq(tbs, SHA256_WITH_RSA, _tlv(0x03, b"\x00" + signer.sign_sha256(tbs)))
 
 
 def patch_sig_oid(der: bytes) -> bytes:
@@ -141,61 +286,36 @@ def patch_sig_oid(der: bytes) -> bytes:
     return der
 
 
-def der_to_pem(der: bytes) -> bytes:
-    import base64
-    import textwrap
-    b64 = base64.b64encode(der).decode("ascii")
-    body = "\n".join(textwrap.wrap(b64, 64))
-    return f"-----BEGIN CERTIFICATE-----\n{body}\n-----END CERTIFICATE-----\n".encode("ascii")
-
-
 def generate(out: Path, cn: str = "gosredirector.ea.com", bits: int = 1024,
-             days: int = 7300) -> dict:
-    """Creates pki/ with the leaf key and the patched cert. Returns the paths."""
+             days: int = 7300, *, now: dt.datetime | None = None,
+             keys: tuple[RsaKey, RsaKey] | None = None, ca_serial: int | None = None) -> dict:
+    """Creates pki/ with the leaf key and the patched cert. Returns the paths.
+    now, keys (leaf, CA) and ca_serial are for the test that compares this with its reference."""
     out.mkdir(parents=True, exist_ok=True)
-
-    subject = build_name([(oid, cn if oid == NameOID.COMMON_NAME else val)
-                          for oid, val in SUBJECT])
-    issuer = build_name(ISSUER_OTG3)
-
-    now = dt.datetime.now(dt.timezone.utc)
+    now = (now or dt.datetime.now(dt.timezone.utc)).replace(microsecond=0)
     not_after = now + dt.timedelta(days=days)
+    key, ca_key = keys or (generate_key(bits), generate_key(1024))
+    issuer = _name(ISSUER_OTG3)
+    subject = _name([(oid, cn if oid == OID_CN else value) for oid, value in SUBJECT])
 
     # 1. Throwaway CA. Only its SUBJECT (= the OTG3 DN) matters, because it becomes
     #    the leaf's issuer. The key does not matter - the signature is not verified.
-    ca_key = rsa.generate_private_key(public_exponent=65537, key_size=1024)
-    ca_cert = (x509.CertificateBuilder()
-               .subject_name(issuer)
-               .issuer_name(issuer)
-               .public_key(ca_key.public_key())
-               .serial_number(x509.random_serial_number())
-               .not_valid_before(now)
-               .not_valid_after(not_after)
-               .add_extension(x509.BasicConstraints(ca=True, path_length=None),
-                              critical=True)
-               .sign(ca_key, hashes.SHA256()))
+    ca_cert = _certificate(
+        ca_serial if ca_serial is not None else secrets.randbits(160) >> 1, issuer, issuer, ca_key,
+        now, not_after, [_extension(OID_BASIC_CONSTRAINTS, _seq(b"\x01\x01\xff"), critical=True)],
+        ca_key)
 
     # 2. Leaf: our own key, subject like the EA original, issuer = the OTG3 DN.
-    key = rsa.generate_private_key(public_exponent=65537, key_size=bits)
-    cert = (x509.CertificateBuilder()
-            .subject_name(subject)
-            .issuer_name(issuer)
-            .public_key(key.public_key())
-            .serial_number(SERIAL)
-            .not_valid_before(now)
-            .not_valid_after(not_after)
-            .add_extension(x509.BasicConstraints(ca=False, path_length=None),
-                           critical=False)
-            .add_extension(x509.SubjectKeyIdentifier.from_public_key(key.public_key()),
-                           critical=False)
-            .add_extension(
-                x509.AuthorityKeyIdentifier.from_issuer_public_key(ca_key.public_key()),
-                critical=False)
-            .sign(ca_key, hashes.SHA256()))
+    cert = _certificate(
+        SERIAL, issuer, subject, key, now, not_after,
+        [_extension(OID_BASIC_CONSTRAINTS, _seq()),
+         _extension(OID_SKI, _tlv(0x04, key.key_id())),
+         _extension(OID_AKI, _seq(_tlv(0x80, ca_key.key_id())))],
+        ca_key)
 
     # 3. Patch the signature OID -> rsaEncryption (ProtoSSL bug). Without it the old
     #    client would reject the cert, because it verifies the signature.
-    patched = patch_sig_oid(cert.public_bytes(serialization.Encoding.DER))
+    patched = patch_sig_oid(cert)
 
     paths = {
         "key": out / "server.key",
@@ -204,14 +324,11 @@ def generate(out: Path, cn: str = "gosredirector.ea.com", bits: int = 1024,
         "pem": out / "server.pem",
         "ca_crt": out / "ca.crt",
     }
-    paths["key"].write_bytes(key.private_bytes(
-        serialization.Encoding.PEM,
-        serialization.PrivateFormat.PKCS8,
-        serialization.NoEncryption()))
+    paths["key"].write_bytes(key.pkcs8_pem())
     paths["der"].write_bytes(patched)
     paths["crt"].write_bytes(der_to_pem(patched))
     paths["pem"].write_bytes(paths["key"].read_bytes() + paths["crt"].read_bytes())
-    paths["ca_crt"].write_bytes(ca_cert.public_bytes(serialization.Encoding.PEM))
+    paths["ca_crt"].write_bytes(_pem("CERTIFICATE", ca_cert))
     return paths
 
 
@@ -233,19 +350,14 @@ def main() -> int:
 
     print(f"generating stand-in cert: CN={args.cn}, RSA-{args.bits}, {args.days} days")
     paths = generate(args.out, args.cn, args.bits, args.days)
-
-    cert = x509.load_der_x509_certificate(paths["der"].read_bytes())
+    der = paths["der"].read_bytes()
     print(f"\n  leaf key:   {paths['key']}")
     print(f"  cert (PEM): {paths['crt']}")
     print(f"  cert (DER): {paths['der']}")
     print(f"  combined:   {paths['pem']}")
     print("\n--- verification ---")
-    print(f"  subject: {cert.subject.rfc4514_string()}")
-    print(f"  issuer:  {cert.issuer.rfc4514_string()}")
-    print(f"  serial:  {cert.serial_number}")
-    print(f"  valid:   {cert.not_valid_before_utc.date()} -> {cert.not_valid_after_utc.date()}")
-    print(f"  sig OID: {cert.signature_algorithm_oid.dotted_string} "
-          f"({'OK - rsaEncryption' if cert.signature_algorithm_oid.dotted_string == '1.2.840.113549.1.1.1' else 'ERROR'})")
+    print(f"  issuer is the OTG3 DN: {_name(ISSUER_OTG3) in der}")
+    print(f"  signature OID rsaEncryption in both places: {der.count(OID_RSA_ENCRYPTION) >= 2}")
     print("  ^ issuer MUST be the OTG3 DN (CN=OTG3 Certificate Authority ...), "
           "otherwise the client will drop the connection after Certificate.")
     print("\nDone. The stand-in TLS-terminating server will present this cert.")

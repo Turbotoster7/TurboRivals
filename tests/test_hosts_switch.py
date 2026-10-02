@@ -37,6 +37,8 @@ class HostsFileTests(unittest.TestCase):
         for target in (mock.patch.object(hosts_switch, "HOSTS", self.hosts),
                        mock.patch.object(commands, "HOSTS", self.hosts),
                        mock.patch.object(commands, "is_admin", lambda: True),
+                       # off the system path the file's mode would decide - here admin does
+                       mock.patch.object(commands, "can_edit_hosts", lambda: commands.is_admin()),
                        mock.patch.object(commands, "flush_dns", lambda: True)):
             target.start()
             self.addCleanup(target.stop)
@@ -107,6 +109,65 @@ class HostsFileTests(unittest.TestCase):
             self.hosts.write_bytes(ORIGINAL + b"1.2.3.4 gosredirector.ea.com\r\n")
             self.assertFalse(commands.hosts_off()["ok"])
         self.assertTrue(self.hosts.read_bytes().endswith(b"1.2.3.4 gosredirector.ea.com\r\n"))
+
+
+class HostsLinesTests(unittest.TestCase):
+    """Pure line handling - from PR #1 (Sonic0810)."""
+
+    def test_block_and_foreign_lines_go_other_names_stay(self):
+        lines = [
+            "127.0.0.1 gosredirector.ea.com",                 # stale, by hand, above the block
+            "10.0.0.5 nas.local",
+            "127.0.0.1 gosredirector.ea.com other.example",   # shares a line with another name
+            hosts_switch.BEGIN, "26.48.21.54\tgosredirector.ea.com", hosts_switch.END,
+        ]
+        cleaned, removed = hosts_switch.strip_redirects(lines)
+        self.assertEqual(cleaned, ["10.0.0.5 nas.local", "127.0.0.1\tother.example"])
+        self.assertEqual(removed, ["127.0.0.1 gosredirector.ea.com",
+                                   "127.0.0.1 gosredirector.ea.com other.example"])
+
+    def test_effective_address_is_the_first_mapping(self):
+        lines = ["# 1.2.3.4 gosredirector.ea.com", "127.0.0.1 GOSREDIRECTOR.EA.COM",
+                 hosts_switch.BEGIN, "26.48.21.54 gosredirector.ea.com", hosts_switch.END]
+        self.assertEqual(hosts_switch.effective_address(lines, "gosredirector.ea.com"), "127.0.0.1")
+        self.assertIsNone(hosts_switch.effective_address(["10.0.0.5 nas.local"], "gosredirector.ea.com"))
+
+    def test_valid_and_invalid_addresses(self):
+        for ip in ("127.0.0.1", "26.48.21.54", " 192.168.1.10 "):
+            self.assertTrue(hosts_switch.valid_address(ip), ip)
+        for ip in ("", "localhost", "192.168.1", "192.168.1.300", "192.168.001.5", "::1",
+                   "0.0.0.0", "255.255.255.255", "224.0.0.1", "26.48.21.54:42127", "1.2.3.4 x"):
+            self.assertFalse(hosts_switch.valid_address(ip), ip)
+
+
+class HostsBackupTests(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory(prefix="turborivals-hosts-")
+        self.addCleanup(tmp.cleanup)
+        self.hosts = Path(tmp.name) / "hosts"
+        self.hosts.write_bytes(ORIGINAL)
+
+    def test_backups_are_capped(self):
+        for i in range(hosts_switch.BACKUPS_KEPT + 3):
+            (self.hosts.parent / f"hosts.turborivals-20260101-0000{i:02d}.bak").write_text("x")
+        made = hosts_switch.backup_hosts(self.hosts)
+        left = sorted(self.hosts.parent.glob(hosts_switch.BACKUP_GLOB))
+        self.assertEqual(len(left), hosts_switch.BACKUPS_KEPT)
+        self.assertIn(made, left)
+
+    def test_restore_puts_the_copy_back(self):
+        copy = hosts_switch.backup_hosts(self.hosts)
+        self.hosts.write_bytes(b"garbage\r\n")
+        self.assertTrue(hosts_switch.restore(copy, self.hosts))
+        self.assertEqual(self.hosts.read_bytes(), ORIGINAL)
+        self.assertFalse(hosts_switch.restore(None, self.hosts))     # there was no file before
+
+    def test_a_write_that_does_not_stick_raises(self):
+        real = Path.write_bytes
+        # something holding the file lets the write through and puts its own text back
+        with mock.patch.object(Path, "write_bytes", lambda path, data: real(path, b"# held\r\n")):
+            with self.assertRaises(OSError):
+                hosts_switch.write_hosts(["10.0.0.5 nas.local"], self.hosts)
 
 
 if __name__ == "__main__":

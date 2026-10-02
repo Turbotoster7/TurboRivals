@@ -38,22 +38,57 @@ class FirewallRuleTests(unittest.TestCase):
         self.assertFalse(any(arg.startswith("localip=") for arg in command))
 
 
+def netsh_show(name, proto, ports, local="Any"):
+    """`netsh advfirewall firewall show rule` for one rule (the labels are translated on other
+    Windows languages; the values never are)."""
+    return (f"\nRule Name:                            {name}\n"
+            f"----------------------------------------------------------------------\n"
+            f"Enabled:                              Yes\nDirection:                            In\n"
+            f"LocalIP:                              {local}\nRemoteIP:                             Any\n"
+            f"Protocol:                             {proto}\nLocalPort:                            {ports}\n"
+            f"Action:                               Allow\nOk.\n")
+
+
+@unittest.skipUnless(commands.IS_WINDOWS, "the status reads netsh")
 class FirewallStatusTests(unittest.TestCase):
-    def status_with(self, present):
-        with mock.patch.object(commands, "_rule_exists", side_effect=lambda name: name in present):
-            return commands.firewall_status()
+    def status_with(self, rules, mode, local_ip=""):
+        """rules: name -> the LocalIP netsh prints for it ("Any", "26.1.2.3/255.255.255.255")."""
+        spec = {name: (proto, ports) for rs in commands.FIREWALL_RULES.values()
+                for name, proto, ports in rs}
+        show = lambda name: (netsh_show(name, *spec[name], rules[name]) if name in rules  # noqa: E731
+                             else "No rules match the specified criteria.")
+        with mock.patch.object(commands, "_show_rule", side_effect=show), \
+                mock.patch.object(commands, "local_addresses", lambda: [{"ip": ip} for ip in OWN]):
+            return commands.firewall_status(mode, local_ip)
 
     def test_client_rule_alone_does_not_count_as_host(self):
         # The P2P rule is shared, so a guest's rules must not light up the host's row.
-        self.assertEqual(self.status_with({"NFS Rivals P2P"}),
-                         {"host": False, "client": True, "any": True})
+        self.assertFalse(self.status_with({"NFS Rivals P2P": "Any"}, "host")["ok"])
+        self.assertTrue(self.status_with({"NFS Rivals P2P": "Any"}, "client")["ok"])
 
     def test_all_host_rules(self):
-        names = {name for name, _proto, _ports in commands.FIREWALL_RULES["host"]}
-        self.assertEqual(self.status_with(names), {"host": True, "client": True, "any": True})
+        names = {name: "Any" for name, _proto, _ports in commands.FIREWALL_RULES["host"]}
+        self.assertTrue(self.status_with(names, "host")["ok"])
 
     def test_none(self):
-        self.assertEqual(self.status_with(set()), {"host": False, "client": False, "any": False})
+        status = self.status_with({}, "host")
+        self.assertFalse(status["ok"])
+        self.assertEqual({r["state"] for r in status["rules"]}, {"missing"})
+
+    def test_a_rule_for_another_address_is_outdated(self):
+        # 1.0.7 scopes a host's rules to its address: moving to another VPN must update them,
+        # and rules open to every address are not what a host with an address asked for
+        scoped = {name: "26.1.2.3/255.255.255.255" for name, _p, _q in commands.FIREWALL_RULES["host"]}
+        self.assertTrue(self.status_with(scoped, "host", "26.1.2.3")["ok"])
+        self.assertFalse(self.status_with(scoped, "host", "192.168.1.20")["ok"])
+        self.assertFalse(self.status_with(scoped, "host")["ok"])
+        anywhere = {name: "Any" for name in scoped}
+        self.assertFalse(self.status_with(anywhere, "host", "26.1.2.3")["ok"])
+
+    def test_off_with_no_rules_needs_no_admin(self):
+        with mock.patch.object(commands, "_show_rule", lambda name: "No rules match."), \
+                mock.patch.object(commands, "is_admin", lambda: False):
+            self.assertEqual(commands.firewall_off(), {"ok": True, "removed": []})
 
 
 if __name__ == "__main__":

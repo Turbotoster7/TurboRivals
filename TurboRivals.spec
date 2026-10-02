@@ -27,7 +27,9 @@ What goes in and why:
                        listed as hidden imports because nothing imports them at
                        module level in the launcher.
   * tools/hosts_switch.py - the hosts file block, shared with the console tool.
-  * cryptography     - certificate generation, so the user needs no openssl.
+
+Not in it: `cryptography`. make_stub_cert.py builds the certificate in plain
+Python, and the library was 10 MB of the 35 MB folder.
 
 Anything the program writes lives in %LOCALAPPDATA%\\TurboRivals (see
 commands.py): the bundle itself is unpacked to a temp directory and wiped on
@@ -42,7 +44,8 @@ from PyInstaller.utils.win32.versioninfo import (
 # running launcher can show it, stamped into the exe's Windows version resource,
 # and read again by installer/TurboRivals.iss for the setup file name.
 APP_VERSION = open('VERSION', encoding='utf-8').read().strip()
-_v = tuple(int(part) for part in (APP_VERSION.split('.') + ['0', '0', '0'])[:3]) + (0,)
+# all four parts: with three, 1.0.12.6 and 1.0.12.7 both came out as 1.0.12.0
+_v = tuple(int(part) for part in (APP_VERSION.split('.') + ['0', '0', '0', '0'])[:4])
 
 version_resource = VSVersionInfo(
     ffi=FixedFileInfo(filevers=_v, prodvers=_v, mask=0x3F, flags=0x0,
@@ -83,6 +86,8 @@ a = Analysis(
         # the launcher used customtkinter before the move to pywebview; Pillow
         # came with it. Neither is referenced any more.
         'tkinter', 'customtkinter', 'PIL',
+        # installed for the tests' certificate reference, never imported by the launcher
+        'cryptography',
     ],
     noarchive=False,
     optimize=0,

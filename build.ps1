@@ -5,8 +5,9 @@
         .\build.ps1 -SkipInstaller # just the one-folder build
 
     Produces:
-        dist\TurboRivals\          portable build - zip it and hand it over as is
-        dist\TurboRivalsSetup.exe  installer (Start Menu entry, uninstaller)
+        dist\TurboRivals\          the one-folder build - hand out the installer, not a zip of
+                                   this (Mark-of-the-Web, see the readme)
+        dist\TurboRivalsSetup-<version>.exe  installer (Start Menu entry, uninstaller)
 
     Inno Setup is needed only for the second step:
         winget install JRSoftware.InnoSetup
@@ -22,7 +23,7 @@ Set-Location -Path $PSScriptRoot
 
 $python = Join-Path $PSScriptRoot 'venv\Scripts\pyinstaller.exe'
 if (-not (Test-Path $python)) {
-    throw "PyInstaller is missing from the venv. Run: venv\Scripts\python.exe -m pip install pyinstaller pywebview cryptography"
+    throw "PyInstaller is missing from the venv. Run: venv\Scripts\python.exe -m pip install -r requirements.txt"
 }
 
 $version = (Get-Content (Join-Path $PSScriptRoot 'VERSION') -Raw).Trim()
