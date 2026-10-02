@@ -330,6 +330,15 @@ body[data-live="true"] .edit-while-stopped { display: none !important; }
 .save-id { font-size: 17px; letter-spacing: .3px; user-select: text; }
 .save[data-state="guessed"] { border-color: rgba(255, 157, 0, 0.35); }
 .save[data-state="missing"] { border-color: rgba(255, 51, 51, 0.35); }
+.save-pick { margin-top: 6px; background: var(--card); }
+.save-pick > .options, .save-pick > .save-others { margin-bottom: 8px; }
+.save-pick > .save-others:empty { display: none; }
+.save-option .option-name { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; white-space: normal; }
+.save-option .option-name .mono { font-size: 13.5px; }
+.save-option .tag { height: 18px; font-size: 10.5px; padding: 0 6px; }
+.save-others { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--text-3); }
+.save-others b { font-weight: 600; color: var(--text-2); }
+.save-others .mono { color: var(--text-2); }
 
 /* server status */
 .state-pill { display: inline-flex; align-items: center; gap: 7px; height: 24px; padding: 0 10px; border-radius: 12px; font-size: 12px; font-weight: 600; background: var(--card-2); color: var(--text-2); }

@@ -308,6 +308,12 @@ class Api:
                                 recent_servers=commands.remember_server(config, server_ip.strip()))
         return result
 
+    def choose_save(self, save_id=0) -> dict:
+        """Career save > Change: the save the game loads, or 0 for automatic. Used on the next
+        connect (guest) or server start (host, as --local-id)."""
+        with self._lock:
+            return commands.choose_save(save_id)
+
     def test_host(self, server_ip: str) -> dict:
         return commands.test_host(server_ip)
 

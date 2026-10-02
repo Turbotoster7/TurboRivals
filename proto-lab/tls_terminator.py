@@ -899,9 +899,10 @@ def _identify(req: bytes, args, peer) -> tuple[bytes, bytes] | None:
         if name:
             _lobby(args).names[peer[0]] = name    # the name still counts
         return b"400 Bad Request", b"no usable save id"
+    # A save picked by hand is the player's word, not the EA App's: unconfirmed like a guess
     _lobby(args).register(peer[0], int(uid), name=name,
                           user=int(user) if user.isdigit() else 0,
-                          guess=src == ea_identity.SOURCE_GUESS)
+                          guess=src in (ea_identity.SOURCE_GUESS, ea_identity.SOURCE_CHOSEN))
     return b"200 OK", b"ok"
 
 
@@ -1092,14 +1093,23 @@ EVENT_RECOMMENDATIONS_PER_RIVAL = 10  # of which events at most; the speed walls
 def _autolog_players(args, lb, me: int) -> tuple[set[int], set[int]]:
     """Whose results Autolog and the speed walls show the asker: (shown, left out).
 
-    Lobby.ranked_uids (and --autolog-rival), less any OTHER player online whose identity is not
-    confirmed (Lobby.unconfirmed_uids: EA save id unknown, guessed, or not the PersonaId its game
-    reports). The asker's game cannot tie such a player's car to his Blaze user, so his results
-    from the session leave his rows empty there. On 02.10 (Player_15: no launcher, a cracked
-    game) that crashed the host's rival card, and the cameras he had just driven ahead of the
-    host showed nobody - he led most of them. Offline such a player is not ranked anyway.
-    --autolog-unconfirmed-rivals shows them as up to 1.0.12.6 (A/B)."""
-    shown = lb.ranked_uids() | set(getattr(args, "autolog_rival", None) or [])
+    The asker and the players in its game (Lobby.game_mates) - the people it drives with now
+    (1.1.2, the players' wish). Up to 1.1.1 it was everyone with a known career save
+    (Lobby.ranked_uids), which filled the walls with people from other days and other sessions,
+    and the asker's own older identities; --autolog-everyone brings that back. --autolog-rival
+    adds a stored player as if he were here (tests only).
+
+    Less any OTHER player online whose identity is not confirmed (Lobby.unconfirmed_uids: EA save
+    id unknown, guessed or picked, or not the PersonaId its game reports). The asker's game cannot
+    tie such a player's car to his Blaze user, so his results from the session leave his rows
+    empty there. On 02.10 (Player_15: no launcher, a cracked game) that crashed the host's rival
+    card, and the cameras he had just driven ahead of the host showed nobody - he led most of
+    them. --autolog-unconfirmed-rivals shows them as up to 1.0.12.6 (A/B)."""
+    extra = set(getattr(args, "autolog_rival", None) or [])
+    if getattr(args, "autolog_everyone", False):
+        shown = lb.ranked_uids() | extra
+    else:
+        shown = {me} | lb.game_mates(me) | extra
     if getattr(args, "autolog_unconfirmed_rivals", False):
         return shown, set()
     out = (lb.unconfirmed_uids() - {me}) & shown
@@ -1112,10 +1122,11 @@ def _autolog_recommendations(fr, args, sess) -> bytes:
     The game asks this after login and now and then (3x in a session). It used to get an empty
     acknowledgement, and the speed walls showed no rival although getInGameSpeedWalls carried
     their rows: InGameRecommendationsResponse::mSpeedWallIDToSpeedWallMap says the rivals' walls
-    come from here. A rival = every other player with a known career save or online
-    (Lobby.ranked_uids) who has a speed wall result; PLSC/RISC = on how many shared walls the asker /
-    the rival leads. The map holds every wall a rival has a result on, shared ones first, as many
-    as fit in a Fire2 frame.
+    come from here. A rival = another player in the asker's game (_autolog_players) who has a
+    speed wall result; PLSC/RISC = on how many shared walls the asker / the rival leads. The map
+    holds the walls of the "beat you" entries first, then every wall a rival has a result on,
+    shared ones first, as many as fit in a Fire2 frame - and an entry whose wall did not fit is
+    left out (blaze.build_in_game_recommendations_response).
 
     RECM = "X beat you": the shared walls the rival leads. Events (races, pursuits ...) come first,
     up to 10, and cameras, zones and jumps fill the rest up to 20, newest first in each group. The
@@ -1199,8 +1210,8 @@ def _autolog_recommendations(fr, args, sess) -> bytes:
                     # the rival is ahead here: "X beat you" - a target to go and beat
                     beaten.append({"swid": swid, "blaze_id": pid, "persona": persona,
                                    "type": beat_type, "row": shown(rows(swid)[pid]),
-                                   "title": blaze.RECOMMENDATION_TITLES.get(beat_type,
-                                                                            "ID_REC_TITLE_BEAT")})
+                                   "title": blaze.RECOMMENDATION_TITLES.get(
+                                       beat_type, blaze.RECOMMENDATION_TITLES[blaze.RECOMMENDATION_BEAT_YOU])})
         if not beaten and not getattr(args, "autolog_empty_rivals", False):
             left_out.append(persona)
             continue
@@ -1222,8 +1233,21 @@ def _autolog_recommendations(fr, args, sess) -> bytes:
     for swid in sorted(theirs_all & mine) + sorted(theirs_all - mine):
         walls.append((swid, [{**shown(r), "persona": lb.persona_of(r["blaze_id"])}
                              for r in rows(swid).values()]))
+    report: dict = {}
     frame, sent = blaze.build_in_game_recommendations_response(
-        fr.seq, rivals, walls, local_id=me, rival_relation=args.speedwall_relation, msg_type=mt)
+        fr.seq, rivals, walls, local_id=me, rival_relation=args.speedwall_relation, msg_type=mt,
+        report=report, legacy_trim=getattr(args, "autolog_legacy_trim", False))
+    if report.get("without_wall"):
+        print(f"  [autolog] --autolog-legacy-trim: {report['without_wall']} \"beat you\" sent "
+              f"WITHOUT their wall (the 1.1.1 way)")
+    if rivals and len(report.get("rivals_dropped", [])) == len(rivals):
+        print(f"  [autolog] {lb.persona_of(me)}: no rival whose \"beat you\" walls fit in one reply"
+              f" ({', '.join(report['rivals_dropped'])}) - bare acknowledgement")
+        return blaze.build_empty_reply(2050, 21, fr.seq, msg_type=mt)
+    if report.get("dropped"):
+        print(f"  [autolog] {report['dropped']} \"beat you\" left out: their walls did not fit"
+              + (f", rival(s) without one left out: {', '.join(report['rivals_dropped'])}"
+                 if report["rivals_dropped"] else ""))
     print(f"  [autolog] {lb.persona_of(me)}: {len(rivals)} rival(s)"
           + (" (" + "; ".join(f"{r['persona']}: you lead {r['player_score']}, they lead "
                               f"{r['rival_score']}, {len(r['recommendations'])} \"beat you\" "
@@ -1352,6 +1376,23 @@ def _lookup_users(fr, args, sess) -> bytes:
     return blaze.build_lookup_users_response(fr.seq, found, msg_type=args.reply_msgtype)
 
 
+def _note_persona_id(sess, buid: int) -> None:
+    """The BUID of listUserEntitlements2. In log-40 it held the PersonaId the game goes by - the
+    save it loads (ea_identity) - while the uid was the EA App user id. On 02.10 it never differed
+    from the uid, not even for a synthetic one, so it may well be an echo of the login. It only
+    ever refutes a uid (Lobby._unconfirmed). Logged once per session with how it compares, so the
+    logs settle the question; a mismatch is also a [hint] the host's launcher shows."""
+    if sess.uid and buid != sess.persona_id:
+        same = buid == sess.uid
+        print(f"  [identity] {sess.persona}: listUserEntitlements2 BUID {buid} "
+              f"({'= its uid' if same else f'differs from its uid {sess.uid}'})")
+        if not same:
+            print(f"  [hint] {sess.persona}: the game goes by {buid} but is logged in as "
+                  f"{sess.uid} - its progress goes to a save it never loads. On that player's PC "
+                  f"pick {buid} under Career save")
+    sess.persona_id = buid
+
+
 def _dispatch_blaze(fr, args, sess):
     """Returns the Fire2 reply bytes for a known request, or None (no handler).
     `sess` = this connection's lobby.Session (player identity, address, games)."""
@@ -1465,7 +1506,7 @@ def _dispatch_blaze(fr, args, sess):
         # BUID = the EA persona id for this game (e.g. 1006431274704) - stored in the session. Entitlements
         # are empty by default (Steam Complete Edition: DLC works locally), so a generic reply.
         if req.get("BUID"):
-            sess.persona_id = int(req["BUID"])
+            _note_persona_id(sess, int(req["BUID"]))
         if getattr(args, "entitlements", "none") == "online":
             # A/B 15.09: the joiner leaves someone else's game ~230 ms after these queries (log-30..32).
             # Hypothesis: it waits for an ONLINE_ACCESS entitlement in the game's group. Only NFS14PC - the
@@ -1625,11 +1666,15 @@ def _lobby(args) -> lobby.Lobby:
             player_ids = {ip: int(uid) for ip, uid in (
                 p.split("=", 1) for p in (getattr(args, "player_id", None) or []) if "=" in p)}
             local_id, source = getattr(args, "local_id", 0), "--local-id"
+            confirmed = not (local_id and getattr(args, "local_id_chosen", False))
+            if not confirmed:
+                source = f"--local-id, {ea_identity.SOURCE_CHOSEN}"
             if not local_id:
                 # The save this machine's game loads, found through its EA App (ea_identity.py)
                 found = ea_identity.resolve()
                 local_id = found["id"] or 0
                 source = f"local-auto, {found['source']}" if local_id else "local-auto"
+                confirmed = found["source"] != ea_identity.SOURCE_GUESS
                 print(f"[identity] local player: EA App user {found['user'] or '-'}, saves "
                       f"{', '.join(map(str, found['saves'])) or '-'} -> uid "
                       f"{local_id or 'unknown, keeping the stored one'}"
@@ -1637,14 +1682,16 @@ def _lobby(args) -> lobby.Lobby:
             _LOBBY["lobby"] = lobby.Lobby(
                 root / "players.json", forced,
                 player_state_notify=getattr(args, "player_state_notify", True),
-                local_id=local_id, local_id_source=source, player_ids=player_ids,
+                local_id=local_id, local_id_source=source, local_id_confirmed=confirmed,
+                player_ids=player_ids,
                 local_persona=getattr(args, "local_persona", ""),
                 host_migration=getattr(args, "host_migration", True),
                 migration_player_removed=getattr(args, "migration_player_removed", True),
                 migration_type=getattr(args, "migration_type", 2),
                 platform_host_init=getattr(args, "platform_host_init", True),
                 admin_tracking=getattr(args, "admin_tracking", True),
-                join_migrated=getattr(args, "join_migrated", False))
+                join_migrated=getattr(args, "join_migrated", False),
+                lone_host_removal=getattr(args, "lone_host_removal", False))
         return _LOBBY["lobby"]
 
 
@@ -1663,6 +1710,12 @@ def _arm_migrations(lb, args) -> None:
             continue
         print(f"  [migration] game {gid:#x}: host {lb.persona_of(g.migrating_from)} left -> "
               f"new host {lb.persona_of(g.host_uid)} (slot {g.players[g.host_uid]['slot']})")
+        if len(g.players) == 1:
+            # 02.10: the one left waited in it while the others' searches made new games
+            alone = lb.persona_of(g.host_uid)
+            print(f"  [hint] {alone} is alone in game {gid:#x} after the host left - other "
+                  f"players' searches skip a game after a host migration, so {alone} should use "
+                  f"'Find new session' in the game's menu")
         old = _MIGRATION_TIMERS.pop(gid, None)
         if old is not None:
             old.cancel()
@@ -2260,7 +2313,10 @@ def _drain_alert(rtype: int, body: bytes) -> None:
         print(f"    ALERT {level}: desc {body[1]}")
 
 
-def main() -> int:
+def build_arg_parser() -> argparse.ArgumentParser:
+    """The server's command line, as a function of its own: the launcher's tests parse what
+    commands.build_command makes with it (02.10: a host named -Heat-The_Zephyr could not start
+    the server, argparse took the name for an option)."""
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("-p", "--port", type=int, default=42127)
@@ -2374,6 +2430,11 @@ def main() -> int:
                          "the game loads (Documents\\Ghost Games\\...\\settings\\<id>.sav), or "
                          "progress is written to a file the game never reads. By default found "
                          "through this machine's EA App (proto-lab/ea_identity.py)")
+    ap.add_argument("--local-id-chosen", action="store_true",
+                    help="--local-id is a save the host picked by hand in the launcher (Career "
+                         "save): used, but the host stays out of the others' Autolog until its "
+                         "game's listUserEntitlements2 BUID matches it - a wrong pick would be a "
+                         "rival the other games cannot tie to a car")
     ap.add_argument("--player-id", action="append", default=[], metavar="IP=UID",
                     help="EA save id of the player at an address (repeatable) - for a guest "
                          "without the launcher, whose launcher would otherwise report it. Checked "
@@ -2405,6 +2466,12 @@ def main() -> int:
                          "sent game traffic to such a joiner, who left after ~50 s. With it off, "
                          "a returning player gets a fresh session and the players who stayed "
                          "regroup with 'Search session' (A/B)")
+    ap.add_argument("--lone-host-removal", action="store_true",
+                    help="experiment: when the host leaves a game with ONE other player in it, "
+                         "remove the game (that player gets NotifyGameRemoved) instead of a host "
+                         "migration - a migrated game is joined by nobody and its last player's "
+                         "game does not search by itself (02.10). Untested live: watch whether "
+                         "that player's game searches (startMatchmaking) or crashes")
     ap.add_argument("--no-admin-tracking", dest="admin_tracking", action="store_false",
                     help="keep no server-side admin list: NotifyGameSetup carries ADMN = [host] "
                          "and nobody is told when an admin leaves - behaviour up to test 59, where "
@@ -2453,6 +2520,13 @@ def main() -> int:
                          "guessed career save) in the others' Autolog - rival list and speed walls - "
                          "as up to 1.0.12.6. Clicking such a rival after he drove through one of his "
                          "cameras in your session CRASHED the game (02.10); tests only")
+    ap.add_argument("--autolog-legacy-trim", action="store_true",
+                    help="fill Autolog's speed wall map by id until the reply is full, as up to "
+                         "1.1.1, even when \"beat you\" entries point at walls left out - suspected "
+                         "of the crash at the end of an event (02.10); to reproduce it only")
+    ap.add_argument("--autolog-everyone", action="store_true",
+                    help="Autolog rivals and speed wall rows from everyone with a known career "
+                         "save, online or not, as up to 1.1.1 - not only the players in your game")
     ap.add_argument("--autolog-no-session-rivals", action="store_true",
                     help="leave everyone in your game off the Autolog rival list (they stay on the "
                          "walls) - should the 02.10 crash ever come back with a confirmed player")
@@ -2516,7 +2590,11 @@ def main() -> int:
     ap.add_argument("--reply-msgtype", type=lambda x: int(x, 0), default=0x10,
                     help="msgType byte in the Fire2 reply header. 0x10 = REPLY (confirmed: the "
                          "game decodes ServerInstanceInfo)")
-    args = ap.parse_args()
+    return ap
+
+
+def main() -> int:
+    args = build_arg_parser().parse_args()
     _install_line_print()
 
     if not args.cert.exists() or not args.key.exists():

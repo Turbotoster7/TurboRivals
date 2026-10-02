@@ -1483,3 +1483,141 @@ Since cyan needs dark text, primary buttons use `--accent-ink`. Ported from main
 the installer's smoke test runs the installed launcher on a throwaway hosts file. A variable set
 in the user's environment could point an elevated launcher at another file. The risk is low: it
 takes control of that environment, and only the launcher's block is written.
+
+## 2026-10-02 - picking the career save by hand (1.1.1)
+
+**What happened.** A friend hosting with 1.1.0 had an orange *Career save*. His save folder
+held:
+- two EA-era saves: `1803135129.sav` (2013) and `1803135130.sav` (01.10);
+- `1100112342094.sav` and `1100944155289.sav`, our synthetic ids;
+- `1003772287105.sav`, his EA App user id, written while the launcher guessed it.
+
+Two EA-era saves defeat rules 2 and 3 of `ea_identity.resolve`, and the EA App's log had the
+PersonaId masked, so the launcher guessed again. Nothing on that PC said which save the game
+loads. The player took `1100944155289` for his save, which is an id the game never loads. The
+launcher (1.0.12.7 included) only showed the id, so the only ways out were moving a file out of
+the folder or a hand-written `--local-id`.
+
+**Decision. A list, not a typed number.** *Career save > Pick your save*, in both modes, shows
+`ea_identity.save_files()`.
+- **"career" files** can be picked. Each is marked with what is known about it: the EA App's
+  answer, the account's suffix, the one written last, another account's suffix.
+- **"server" files** (synthetic ids) and **"account" files** (EA App user ids) are listed apart
+  with the reason, and `choose_save` refuses them.
+- **The pick** is stored as `career_save` and applied by `resolve(chosen=)` while the file is on
+  disk. When the file is gone, the rules apply again and the card says so (`chosen_missing`).
+- **A guest's pick** goes out through `identify` with the source `chosen in the launcher`.
+- **A host's pick** goes to its own server as `--local-id <id> --local-id-chosen`.
+
+**A pick is not trusted for Autolog.** A wrong pick is a uid the other games cannot tie to the
+car, which is the Player_15 case that crashed Autolog (1.0.12.7 entry).
+- **What counts as unconfirmed** (`Lobby._unconfirmed`):
+  - a guest's pick, like a guess;
+  - the host's pick (`local_id_confirmed=False`);
+  - the host's own guessed id, which until now counted as confirmed: a gap the same as the
+    guest's.
+- **The BUID decides when it comes.** If `listUserEntitlements2` sends one, it is the game's own
+  word and settles the question both ways. A matching BUID confirms a pick or a guess, and a
+  different one refutes any id.
+- **The progress is not affected.** The picked save gets the player's progress either way. Only
+  the rival row waits.
+
+**The game says which save it loads.** When the BUID differs from the uid, the server logs once:
+`[hint] <name>: the game goes by <BUID> but is logged in as <uid> ... pick <BUID> under Career
+save`. The host's launcher shows it under *Activity*. It is a hint, not a mechanism: the 30.09
+sessions held no such query at all.
+
+## 2026-10-02 - "String not on Autolog Yet" at a speed camera (1.1.1)
+
+**What happened.** In a session hosted by a friend, after a host migration, the banner at a speed
+camera read "STRING NOT ON AUTOLOG YET" above a correct story about the camera. A memory dump was
+taken at that moment (18:27).
+
+**What the code says.** The placeholder has one user: `0x93afd0`.
+- `0x93afd0` looks the key up in a static table of 11 Autolog story templates at `0x1415807e0`
+  (`0x93af50`, strcmp over 0x20-byte entries). On a miss it prints the placeholder.
+- Its three callers each find the recommendation for a speed wall id and pass one field:
+  - `0x93be80` passes `TITL` (`+0x118`);
+  - `0x93bdd0` passes `STOT` (`+0x128`);
+  - `0x93bd20` passes `STOB` (`+0x138`).
+- The table holds `ID_<BEAT_YOU|HOT|POPULAR>_TITLE`, the six story ids and
+  `ID_REC_PE_RECOMMENDATION_BEATEN`/`_NOT_BEATEN`.
+- We sent `TITL = ID_REC_TITLE_BEAT`, so the title missed while the stories (fixed in 1.0.12.7)
+  hit.
+- `ID_REC_TITLE_BEAT` is what the game itself uses for the card's title: `0x93bf30` maps `RETY`
+  0/1/2 to `ID_REC_TITLE_BEAT/_HOT/_POP`. That also confirms the `RETY` values, which were only
+  assumed until now.
+
+**Decision.** `TITL = ID_BEAT_YOU_TITLE` (`ID_HOT_TITLE`, `ID_POPULAR_TITLE`). A test checks that
+every key we send is in `blaze.AUTOLOG_STORY_TEMPLATES`. The host migration only got the player
+to a camera: the banner shows whenever a recommendation targets the camera in front of you.
+
+**Open.** Confirm in game on a camera with a "beat you" entry. The host's server must be 1.1.1.
+
+## 2026-10-02 - the crash at the end of an event, rivals from the session (1.1.2)
+
+**What happened.** Friends hosting on 1.1.0 and 1.1.1 lost games at the end of events. There are
+three server logs from the evening: HOST, XARREK twice.
+- **Seven crashes**, each right after the asker's `getInGameRecommendations` reply. The
+  connection dropped with 10054 and no other request came in between. DrTroll crashed 3x,
+  -Heat-The_Zephyr 2x, XARREK 2x.
+- **The player who did not crash** (Turbotoster) got replies of the same size, ~59.8 KB, three
+  times.
+- **With `--no-autolog`** nobody crashed (the players, the same evening).
+
+The difference is in the `[autolog]` lines:
+
+| | crashed | did not crash |
+|---|---|---|
+| shared walls with the rival | ~441 | 33-34 |
+| walls sent (map limit) | 139-234 | all shared |
+| "beat you" on events per rival | 10 | 3-4 |
+
+**Cause, from the code.**
+- `blaze.build_in_game_recommendations_response` filled the speed wall map in id order until
+  ~60 KB. Events have the highest ids, so with ~441 shared walls they fell out, while the RECM
+  entries listed events first and still pointed at them.
+- `0x9d5660` takes each entry's wall with `0x842cd0(swid)`. It sets `rsi = 0` when the wall is
+  not found and then reads `[rsi+0xe8]` at `0x9d5903`, with no NULL check.
+- `0x842cd0` has 18 callers, among them the Autolog functions around `0x93b000`.
+
+**Decisions.**
+- **Every entry ships with its wall.**
+  - The walls of the entries go first, then the shared walls, then the rest.
+  - An entry whose wall still does not fit is dropped, and a rival with none left goes too: an
+    empty RECM crashes. If no rival is left, the reply is the bare acknowledgement.
+  - The log says what was dropped. `--autolog-legacy-trim` keeps the old way, to reproduce the
+    crash.
+  - Test: 600 walls with the 20 entries on the highest ids.
+- **Rivals and wall rows from the session (the players' wish).** They come from the asker plus
+  `Lobby.game_mates`. Up to 1.1.1 it was everyone with a known save:
+  - people from other days;
+  - the asker's own older identities: DrTroll saw "DrTrolls0000" and "DrTroll", both with his own
+    results;
+  - two different "Turbotoster" entries, because `persona_of` names an offline entry after the
+    last name its address reported.
+
+  `--autolog-everyone` brings the old list back. A big session can still need more than one
+  reply: XARREK and Heat share ~441 walls, and about half fit.
+- **A BUID only refutes.**
+  - Player_65, a synthetic uid, sent `listUserEntitlements2` three times per login without one
+    `[hint]`, so the BUID equalled the uid.
+  - In 1.1.1 that confirmed DrTroll's hand-picked save. He was "not shown, identity not
+    confirmed" before his entitlements (l. 7352 of the HOST log) and a rival on Turbotoster's list
+    after them (l. 9539).
+  - Now a matching BUID changes nothing, and one log line per session records how it compares.
+- **The host's name.** `--local-persona=<name>` goes as one item, since a host named
+  `-Heat-The_Zephyr` could not start the server: argparse took the name for an option. The
+  server's parser is now `tls_terminator.build_arg_parser()`, and a test parses what
+  `commands.build_command` makes.
+- **A lone player after a host migration.**
+  - Nobody is put into a migrated game (test 62), and the player left in it does not search by
+    itself, so the players split until both use *Find new session*.
+  - A `[hint]` now says so.
+  - `--lone-host-removal` (experiment, off) removes such a game instead (`NotifyGameRemoved`
+    only). It is untested live: watch for the player's `startMatchmaking`, or a crash.
+
+**Open.**
+- **More walls than one reply holds.** The real server must have sent more: is there a jumbo
+  Fire2 frame? The header byte 9 is unused by us; the binary holds no "jumbo" string.
+- **What the BUID is.** The next logs carry `[identity] ... BUID ... (= its uid | differs)`.

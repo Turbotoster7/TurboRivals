@@ -1522,15 +1522,24 @@ def f_map_int_struct(tag: str, items: dict[int, list[Field]]) -> Field:
 #                                  TITL mTitleStringID}
 # The map's values are the same InGameSpeedWallResponseSpeedWall as in getInGameSpeedWalls.
 RECOMMENDATIONS_MAX_PAYLOAD = 60000     # Fire2 carries a 16-bit length
-# RecommendationType: the names come in this order - BEAT_YOU, HOT, POPULAR - and the VALUES are
-# ASSUMED to follow it (the table is built at run time); title string ids from the binary.
+# RecommendationType: BEAT_YOU, HOT, POPULAR = 0, 1, 2 - confirmed in the code: 0x93bf30 turns
+# RETY into the card's own title, 0 -> ID_REC_TITLE_BEAT, 1 -> _HOT, 2 -> _POP (else _BEAT).
 RECOMMENDATION_BEAT_YOU, RECOMMENDATION_HOT, RECOMMENDATION_POPULAR = 0, 1, 2
-RECOMMENDATION_TITLES = {RECOMMENDATION_BEAT_YOU: "ID_REC_TITLE_BEAT",
-                         RECOMMENDATION_HOT: "ID_REC_TITLE_HOT",
-                         RECOMMENDATION_POPULAR: "ID_REC_TITLE_POP"}
-# STOT mStoryStringTopID / STOB mStoryStringBottomID: the story string ids next to the titles in
-# the binary. Left empty until 1.0.12.7, the rival card showed the placeholder "String not on
-# Autolog Yet" (02.10).
+# TITL mTitleStringID, STOT mStoryStringTopID, STOB mStoryStringBottomID are NOT plain string ids:
+# 0x93be80 / 0x93bdd0 / 0x93bd20 (the recommendation for a speed wall id, fields +0x118/+0x128/
+# +0x138) hand each to 0x93afd0, which looks it up in the game's table of 11 Autolog story
+# templates @0x1415807e0 (0x93af50, strcmp). A key that is not there shows "String not on Autolog
+# Yet". Until 1.1.1 TITL was ID_REC_TITLE_BEAT - the card's title, not a template - so the banner
+# at a speed camera read "String not on Autolog Yet" above a correct story (02.10, after a host
+# migration). STOT/STOB were empty until 1.0.12.7, with the same placeholder on the rival card.
+AUTOLOG_STORY_TEMPLATES = (                          # the table @0x1415807e0, in its order
+    "ID_HOT_TITLE", "ID_HOT_STORY_TOP", "ID_HOT_STORY_BOTTOM",
+    "ID_POPULAR_TITLE", "ID_POPULAR_STORY_TOP", "ID_POPULAR_STORY_BOTTOM",
+    "ID_BEAT_YOU_TITLE", "ID_BEAT_YOU_STORY_ONE_TOP", "ID_BEAT_YOU_STORY_ONE_BOTTOM",
+    "ID_REC_PE_RECOMMENDATION_BEATEN", "ID_REC_PE_RECOMMENDATION_NOT_BEATEN")
+RECOMMENDATION_TITLES = {RECOMMENDATION_BEAT_YOU: "ID_BEAT_YOU_TITLE",
+                         RECOMMENDATION_HOT: "ID_HOT_TITLE",
+                         RECOMMENDATION_POPULAR: "ID_POPULAR_TITLE"}
 RECOMMENDATION_STORIES = {RECOMMENDATION_BEAT_YOU: ("ID_BEAT_YOU_STORY_ONE_TOP",
                                                     "ID_BEAT_YOU_STORY_ONE_BOTTOM"),
                           RECOMMENDATION_HOT: ("ID_HOT_STORY_TOP", "ID_HOT_STORY_BOTTOM"),
@@ -1560,28 +1569,78 @@ def build_in_game_recommendations_response(seq: int, rivals: list[dict],
                                            walls: list[tuple[int, list[dict]]], *,
                                            local_id: int, rival_relation: int = RELATION_FRIEND,
                                            max_payload: int = RECOMMENDATIONS_MAX_PAYLOAD,
-                                           msg_type: int = MSG_REPLY) -> tuple[bytes, int]:
+                                           msg_type: int = MSG_REPLY,
+                                           report: dict | None = None,
+                                           legacy_trim: bool = False) -> tuple[bytes, int]:
     """rivals = [{blaze_id, persona, player_score, rival_score, recommendations=[rec]}] (rec: see
-    _recommendation_fields), walls = [(id, rows)] in priority order. Speed walls go in until the
-    payload would pass max_payload. Returns (frame, how many walls went in)."""
-    rili = f_list_struct("RILI", [[
-        f_blaze_user("BLUS", r["blaze_id"], r["persona"], rival_relation),
-        f_str("PENA", r["persona"]),
-        f_int("PLSC", r["player_score"]),
-        f_list_struct("RECM", [_recommendation_fields(rec, rival_relation)
-                               for rec in r.get("recommendations", [])]),
-        f_int("RIBL", r["blaze_id"]),
-        f_int("RISC", r["rival_score"]),
-    ] for r in rivals])
-    base = len(rili.encode()) + 16
-    chosen, size = {}, base
-    for swid, rows in walls:
-        fields = _speed_wall_fields(swid, rows, local_id, rival_relation)
-        entry = len(enc_int(swid)) + sum(len(f.encode()) for f in fields) + 1
-        if size + entry > max_payload:
-            break
-        chosen[swid] = fields
-        size += entry
+    _recommendation_fields), walls = [(id, rows)] in priority order. Returns (frame, how many
+    walls went in); `report` gets "dropped" (entries) and "rivals_dropped" (personas).
+
+    Every "beat you" entry goes out WITH its speed wall: the game takes the wall by id for each
+    entry (0x9d5660 for the card). The walls a rival's entries point at come first; the rest go
+    in while the payload stays under max_payload; an entry whose wall still did not fit is
+    dropped, and a rival left with none goes too (an empty RECM crashes the game). Up to 1.1.1
+    the walls went in by id until the frame was full, so with ~450 shared walls the events (high
+    ids) fell out while their entries stayed - and 7 of 7 games crashed right after such a reply
+    at the end of an event (02.10, three hosts); with every wall in, none did. legacy_trim
+    (--autolog-legacy-trim) is the 1.1.1 way, kept to reproduce that crash."""
+    rec_walls = {rec["swid"] for r in rivals for rec in r.get("recommendations", [])}
+    ordered = ([w for w in walls if w[0] in rec_walls] + [w for w in walls if w[0] not in rec_walls])
+
+    def rili_of(rs: list[dict]) -> Field:
+        return f_list_struct("RILI", [[
+            f_blaze_user("BLUS", r["blaze_id"], r["persona"], rival_relation),
+            f_str("PENA", r["persona"]),
+            f_int("PLSC", r["player_score"]),
+            f_list_struct("RECM", [_recommendation_fields(rec, rival_relation)
+                                   for rec in r.get("recommendations", [])]),
+            f_int("RIBL", r["blaze_id"]),
+            f_int("RISC", r["rival_score"]),
+        ] for r in rs])
+
+    def fill(chosen: dict, size: int) -> int:
+        for swid, rows in ordered:
+            if swid in chosen:
+                continue
+            fields = _speed_wall_fields(swid, rows, local_id, rival_relation)
+            entry = len(enc_int(swid)) + sum(len(f.encode()) for f in fields) + 1
+            if size + entry <= max_payload:
+                chosen[swid] = fields
+                size += entry
+        return size
+
+    chosen: dict[int, list[Field]] = {}
+    if legacy_trim:
+        size = len(rili_of(rivals).encode()) + 16
+        for swid, rows in walls:                     # by the given order, up to the first misfit
+            fields = _speed_wall_fields(swid, rows, local_id, rival_relation)
+            entry = len(enc_int(swid)) + sum(len(f.encode()) for f in fields) + 1
+            if size + entry > max_payload:
+                break
+            chosen[swid] = fields
+            size += entry
+        missing = sum(rec["swid"] not in chosen for r in rivals for rec in r.get("recommendations", []))
+        if report is not None:
+            report.update(dropped=0, rivals_dropped=[], without_wall=missing)
+        payload = encode_tdf([rili_of(rivals), f_map_int_struct("SPWA", chosen)])
+        return Fire2(component=2050, command=21, payload=payload, error=0, seq=seq,
+                     msg_type=msg_type).encode(), len(chosen)
+    fill(chosen, len(rili_of(rivals).encode()) + 16)
+    kept, dropped, gone = [], 0, []
+    for r in rivals:
+        had = r.get("recommendations", [])
+        recs = [rec for rec in had if rec["swid"] in chosen]
+        dropped += len(had) - len(recs)
+        if recs or not had:            # one sent without entries on purpose stays (tests only)
+            kept.append({**r, "recommendations": recs})
+        else:
+            gone.append(r["persona"])
+    rili = rili_of(kept)
+    # the list only shrank: what went in still fits, and the room it left takes more walls
+    fill(chosen, len(rili.encode()) + 16 + sum(
+        len(enc_int(s)) + sum(len(f.encode()) for f in fs) + 1 for s, fs in chosen.items()))
+    if report is not None:
+        report.update(dropped=dropped, rivals_dropped=gone)
     payload = encode_tdf([rili, f_map_int_struct("SPWA", chosen)])
     return Fire2(component=2050, command=21, payload=payload, error=0, seq=seq,
                  msg_type=msg_type).encode(), len(chosen)

@@ -3,6 +3,7 @@ import support  # noqa: F401  (throw-away TURBORIVALS_HOME and hosts file, set b
 import base64
 import json
 import os
+import shutil
 import socket
 import struct
 import sys
@@ -10,6 +11,7 @@ import threading
 import time
 import unittest
 import zlib
+from pathlib import Path
 from unittest import mock
 
 import commands
@@ -280,10 +282,20 @@ class Command(unittest.TestCase):
         command = commands.build_command("Host", [("26.11.40.7", "Kowal PL")], "26.48.21.54")
         self.assertEqual(command[1:3], ["-u", str(commands.ROOT / "proto-lab" / "tls_terminator.py")])
         joined = " ".join(command)
-        for part in ("--entitlements online", "--public-ip 26.48.21.54", "--local-persona Host",
+        for part in ("--entitlements online", "--public-ip 26.48.21.54", "--local-persona=Host",
                      "--data-dir"):
             self.assertIn(part, joined)
         self.assertEqual(command[command.index("--player") + 1], "26.11.40.7=Kowal PL")
+
+    def test_the_server_parses_any_name(self):
+        # 02.10: a host named -Heat-The_Zephyr - "argument --local-persona: expected one argument"
+        import tls_terminator
+        for name in ("-Heat-The_Zephyr", "--x", "Host"):
+            with self.subTest(name=name):
+                command = commands.build_command(name, [("26.11.40.7", "-Guest")], "26.48.21.54")
+                args = tls_terminator.build_arg_parser().parse_args(command[3:])   # past the script
+                self.assertEqual(args.local_persona, name)
+                self.assertEqual(args.player, ["26.11.40.7=-Guest"])
         self.assertIn("--no-capture", command)                       # captures are opt-in
         self.assertNotIn("--no-capture", commands.build_command("Host", [], "", capture=True))
 
@@ -320,6 +332,12 @@ class Config(unittest.TestCase):
         commands.CONFIG_PATH.write_text("{not json")
         self.assertEqual(commands.load_config(), commands.DEFAULT_CONFIG)
 
+    def test_career_save_is_a_save_id_or_automatic(self):
+        for stored, expected in ((1803135130, 1803135130), (-5, 0), (True, 0), ("1803135130", 0)):
+            with self.subTest(stored=stored):
+                commands.CONFIG_PATH.write_text(json.dumps({"career_save": stored}))
+                self.assertEqual(commands.load_config()["career_save"], expected)
+
     def test_recent_servers(self):
         config = {"recent_servers": ["1.1.1.1", "2.2.2.2", "3.3.3.3", "4.4.4.4", "5.5.5.5", "6.6.6.6"]}
         recent = commands.remember_server(config, "3.3.3.3")
@@ -336,7 +354,7 @@ class Identity(unittest.TestCase):
         commands._identity_cache.update(signature=None, value=None)
         calls = []
 
-        def fake_resolve():
+        def fake_resolve(chosen=0):
             calls.append(1)
             return {"id": 1006400012345, "source": "EA App profile", "user": 1012900012345,
                     "persona": "Tester", "saves": []}
@@ -350,6 +368,60 @@ class Identity(unittest.TestCase):
             log.write_text("nothing yet\n<GetProfileResponse UserId=\"1\"/>\n")
             commands.save_identity()
             self.assertEqual(len(calls), 2)
+            commands.save_config({"career_save": 1006400012345})     # a pick is part of the answer
+            commands.save_identity()
+            self.assertEqual(len(calls), 3)
+        commands.CONFIG_PATH.unlink(missing_ok=True)
+
+
+class SavePick(unittest.TestCase):
+    """Career save > Pick your save on a friend's PC (02.10): two EA-era saves, so automatic is
+    only a guess; our synthetic id and the EA App user id are files the game never loads."""
+    USER, OLD, NEW, SERVER = 1003772287105, 1803135129, 1803135130, 1100944155289
+
+    def setUp(self):
+        commands.CONFIG_PATH.unlink(missing_ok=True)
+        folder = Path(support.HOME) / "saves-pick"
+        folder.mkdir(exist_ok=True)
+        for uid in (self.OLD, self.NEW, self.SERVER, self.USER):
+            (folder / f"{uid}.sav").write_bytes(b"x")
+        ini = commands.ea_identity.EA_DESKTOP_DIR / "user_pick.ini"
+        ini.parent.mkdir(parents=True, exist_ok=True)
+        ini.write_text(f"user.userid={self.USER}\n")
+        patch = mock.patch.object(commands.ea_identity, "saves_dir", return_value=folder)
+        patch.start()
+        commands._identity_cache.update(signature=None, value=None)
+        self.addCleanup(patch.stop)
+        self.addCleanup(shutil.rmtree, folder, True)
+        self.addCleanup(ini.unlink)
+        self.addCleanup(commands._identity_cache.update, signature=None, value=None)
+        self.addCleanup(commands.CONFIG_PATH.unlink, missing_ok=True)
+
+    def test_automatic_is_a_guess_here(self):
+        save = commands.save_identity()
+        self.assertEqual((save["id"], save["source"]), (self.USER, commands.ea_identity.SOURCE_GUESS))
+        self.assertNotIn("--local-id", commands.build_command("Host", [], ""))
+
+    def test_only_a_career_save_can_be_picked(self):
+        for wrong, why in ((self.SERVER, "made up"), (self.USER, "account number"),
+                           (4242, "no 4242.sav"), ("abc", "not a save id")):
+            with self.subTest(wrong=wrong):
+                result = commands.choose_save(wrong)
+                self.assertFalse(result["ok"])
+                self.assertIn(why, result["error"])
+        self.assertEqual(commands.load_config()["career_save"], 0)
+
+    def test_a_pick_is_kept_and_reaches_the_host_s_server(self):
+        result = commands.choose_save(self.NEW)
+        self.assertTrue(result["ok"])
+        self.assertEqual((result["save"]["id"], result["save"]["source"]),
+                         (self.NEW, commands.ea_identity.SOURCE_CHOSEN))
+        self.assertEqual(commands.load_config()["career_save"], self.NEW)
+        command = commands.build_command("Host", [], "")
+        at = command.index("--local-id")
+        self.assertEqual(command[at:at + 3], ["--local-id", str(self.NEW), "--local-id-chosen"])
+        self.assertTrue(commands.choose_save(0)["ok"])                   # back to automatic
+        self.assertNotIn("--local-id", commands.build_command("Host", [], ""))
 
 
 class Avatar(unittest.TestCase):

@@ -104,7 +104,7 @@
         const quote = (v) => (/\s/.test(v) ? `"${v}"` : v);
         const parts = ['TurboRivals', '--run-server', '--entitlements', 'online'];
         if (publicIp) parts.push('--public-ip', publicIp);
-        if (cleanName(name)) parts.push('--local-persona', quote(cleanName(name)));
+        if (cleanName(name)) parts.push(`--local-persona=${quote(cleanName(name))}`);   // a name may start with "-"
         (players || []).forEach(([ip, nick]) => parts.push('--player', quote(`${ip}=${nick}`)));
         return parts.join(' ');
     }
@@ -113,6 +113,7 @@
        The setup checklist for the current mode. Each check: {id, status, ...} with status
        ok / warn / error / pending (not known yet) / na (does not apply on this system). */
     const SAVE_GUESS = 'EA App user id (guess)';
+    const SAVE_CHOSEN = 'chosen in the launcher';           // ea_identity.SOURCE_CHOSEN
 
     function checks(s) {
         const host = s.mode === 'host';
@@ -171,7 +172,7 @@
     function saveState(save) {
         if (!save) return 'pending';
         if (!save.id) return 'missing';
-        return save.source === SAVE_GUESS ? 'guessed' : 'found';
+        return save.source === SAVE_GUESS ? 'guessed' : save.source === SAVE_CHOSEN ? 'chosen' : 'found';
     }
 
     /* --- the bug report: the fields of .github/ISSUE_TEMPLATE/bug_report.yml ------------- */
@@ -218,7 +219,10 @@
         const save = diag.save || {};
         const state = saveState(save);
         lines.push(state === 'missing' ? '- not found (no EA App account on this PC)'
-            : `- ${save.id} - ${state === 'guessed' ? 'GUESSED' : 'found'} (${save.source}), EA App user ${save.user || '-'}, saves: ${(save.saves || []).join(', ') || '-'}`);
+            : `- ${save.id} - ${{ guessed: 'GUESSED', chosen: 'PICKED by the player' }[state] || 'found'} (${save.source}), EA App user ${save.user || '-'}, saves: ${(save.saves || []).join(', ') || '-'}`);
+        if (save.files && save.files.length) {
+            lines.push(`- Save files: ${save.files.map((f) => `${f.id} ${f.kind}`).join(', ')}${save.auto && save.auto.id !== save.id ? `; automatic would be ${save.auto.id} (${save.auto.source})` : ''}`);
+        }
         const game = diag.game || {};
         lines.push('', '#### Game', `- Install folder found: ${yes(game.found)}${game.offers && game.offers.length ? `, EA offer ${game.offers[0]}` : ''}`);
         const server = diag.server || {};
@@ -237,7 +241,7 @@
     }
 
     return {
-        NAME_MAX, LEVELS, LOG_VIEWS, SAVE_GUESS,
+        NAME_MAX, LEVELS, LOG_VIEWS, SAVE_GUESS, SAVE_CHOSEN,
         cleanName, validIPv4, classifyLine, inView, insightFrom, rosterDiff, formatUptime,
         commandPreview, checks, summary, blockers, saveState, networkGuess, buildReport,
     };

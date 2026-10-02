@@ -125,11 +125,16 @@ class Lobby:
                  player_state_notify: bool = True,
                  local_id: int = 0, local_persona: str = "",
                  local_id_source: str = "--local-id",
+                 local_id_confirmed: bool = True,
                  player_ids: dict[str, int] | None = None,
                  host_migration: bool = True,
                  migration_player_removed: bool = True,
                  migration_type: int = 2, platform_host_init: bool = True,
-                 admin_tracking: bool = True, join_migrated: bool = False) -> None:
+                 admin_tracking: bool = True, join_migrated: bool = False,
+                 lone_host_removal: bool = False) -> None:
+        # --lone-host-removal (experiment): the host leaves a game with one other player in it ->
+        # NotifyGameRemoved for that player instead of a host migration (remove_player)
+        self.lone_host_removal = lone_host_removal
         # --join-migrated-games (A/B): let matchmaking put players into a game after a host
         # migration - behaviour up to test 62, where such a joiner waited ~50 s and left
         self.join_migrated = join_migrated
@@ -148,13 +153,16 @@ class Lobby:
         self.migrations_started: list[int] = []          # gids, collected by the terminator
         self.local_id = int(local_id or 0)               # --local-id or local-auto: overrides the generated uid
         self.local_id_source = local_id_source
+        # False: local_id is the EA App user id guessed by local-auto, or a save picked by hand in
+        # the launcher (--local-id-chosen) - _unconfirmed for good (a BUID only refutes)
+        self.local_id_confirmed = local_id_confirmed
         self.local_persona = str(local_persona or "")    # --local-persona: overrides the nickname from GNAM
         # ip -> (EA save id, source): from a guest's launcher (register) or --player-id IP=ID
         self.registered: dict[str, tuple[int, str]] = {
             ip: (int(uid), "--player-id") for ip, uid in (player_ids or {}).items()}
         self.registered_user: dict[str, int] = {}        # ip -> EA App user id its launcher reported
         self.names: dict[str, str] = {}                  # ip -> nickname its launcher reported
-        self.guessed: set[str] = set()                   # ips whose launcher only guessed the save id
+        self.guessed: set[str] = set()                   # ips whose save id is a guess or a pick (register)
         self.aliases: dict[int, int] = {}                # id a game asked about (lookupUsers) -> uid
         self.left_at: dict[tuple[int, int], float] = {}  # (uid, gid) -> monotonic time it left itself
         self._key_ip: dict[str, str] = {}                # players.json key -> address of its last login
@@ -200,7 +208,8 @@ class Lobby:
         """The EA save id (and nickname, EA App user id) a player's launcher reported before
         starting the game. Used on that address's next login, once the token confirms the id
         (_identity); the nickname then goes into players.json under the player's id. guess: the
-        launcher found no save and sent the EA App user id instead (shown orange there)."""
+        launcher found no save and sent the EA App user id instead (shown orange there), or the
+        player picked the save by hand - both _unconfirmed (a matching BUID does not change it)."""
         with self.lock:
             self.registered[ip] = (int(uid), source)
             if guess:
@@ -501,10 +510,20 @@ class Lobby:
 
     def _unconfirmed(self, s: Session) -> bool:
         """Whether a player's uid may not be the PersonaId its game goes by: a synthetic uid, an
-        id its launcher only guessed, or a listUserEntitlements2 BUID that differs from it."""
+        id its launcher only guessed or the player picked by hand, the same for the player at the
+        server (local_id_confirmed), or a listUserEntitlements2 BUID that differs from it.
+
+        A BUID that differs from the uid refutes it. One that matches confirms nothing: on 02.10
+        (a friend's server, 1.1.1) a synthetic Player_65 sent listUserEntitlements2 three times
+        per login without a single mismatch, so the game most likely echoes the uid it was given -
+        and 1.1.1, which let a matching BUID confirm, put a hand-picked save back into the others'
+        Autolog. A save picked by hand is the player's word: a wrong pick is a uid the other games
+        cannot tie to the car, and Autolog crashed on exactly such a rival (02.10, Player_15)."""
+        if s.persona_id and s.persona_id != s.uid:
+            return True
         return (s.id_source == SYNTHETIC
                 or (s.ip in self.guessed and self.registered.get(s.ip, (0, ""))[0] == s.uid)
-                or bool(s.persona_id and s.persona_id != s.uid))
+                or (s.is_local and not self.local_id_confirmed and s.uid == self.local_id))
 
     def resolve(self, requester: Session, blaze_id: int) -> dict | None:
         """The player behind a BlazeId a game asks about (UserSessions.lookupUsers), as
@@ -668,7 +687,11 @@ class Lobby:
             if not g.players:
                 self.games.pop(g.gid, None)
                 return []
-            if uid == g.host_uid and self.host_migration and others:
+            # --lone-host-removal: with one player left there is nobody to migrate for, and a
+            # migrated game is a dead end - matchmaking puts nobody into it (test 62) and the
+            # player's game does not search by itself (02.10). Removing it is the experiment.
+            lone = self.lone_host_removal and len(others) == 1
+            if uid == g.host_uid and self.host_migration and others and not lone:
                 return self._start_migration(g, uid, others, reason, was_admin)
             if uid == g.host_uid:
                 gone = blaze.build_notify_game_removed(

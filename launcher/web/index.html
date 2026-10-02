@@ -229,14 +229,22 @@
                             <div class="chips" id="recentList"></div>
                             <div class="hint" id="hostNote">&nbsp;</div>
                         </div>
-                        <div class="save" id="saveCard" data-state="pending">
-                            <div class="save-row">
-                                <span class="save-label">Career save</span>
-                                <span class="tag" id="savePill">Checking</span>
-                            </div>
-                            <div class="save-id mono" id="saveId">&mdash;</div>
-                            <p class="hint" id="saveText">&nbsp;</p>
+                    </div>
+
+                    <!-- both modes: a guest sends it on connect, the host's server logs in under it -->
+                    <div class="save" id="saveCard" data-state="pending">
+                        <div class="save-row">
+                            <span class="save-label">Career save</span>
+                            <span class="tag" id="savePill">Checking</span>
                         </div>
+                        <div class="save-id mono" id="saveId">&mdash;</div>
+                        <p class="hint" id="saveText">&nbsp;</p>
+                        <details class="disclosure save-pick" id="saveFold" hidden>
+                            <summary><svg class="ico disclosure-chevron"><use href="#i-chevron"/></svg><span>Pick your save</span><span class="tag" id="saveCount">0</span></summary>
+                            <div class="options" id="saveList" role="radiogroup" aria-label="Career saves on this PC"></div>
+                            <div class="save-others" id="saveOthers"></div>
+                            <p class="hint">Pick the save your game loads. Not sure? Turn the hosts redirect off, start Rivals through the EA App, drive until it saves, close it - then pick the one written last. A wrong pick gets your career written over it (the launcher keeps a copy of the folder in save-backups). A picked save keeps you out of the others' Autolog, as the server cannot confirm it.</p>
+                        </details>
                     </div>
                 </article>
 

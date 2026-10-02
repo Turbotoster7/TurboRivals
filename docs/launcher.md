@@ -26,7 +26,7 @@ that is quick to know (config, `hosts`, certificate, server status, picture) - a
 | --- | --- | --- |
 | `processes` | the process list straight from Windows (`CreateToolhelp32Snapshot`, `tasklist` as the fallback), for the EA App and the game | start, every 8 s while the window is visible, window focus |
 | `addresses` | one `ipconfig` (link-local 169.254.x.x left out) | start, window focus |
-| `save` | `ea_identity.resolve()`, cached until one of its files changes | start |
+| `save` | `ea_identity.resolve()` with the pick from *Career save* (`career_save`), cached until one of its files or the pick changes | start |
 | `firewall` | `netsh advfirewall firewall show rule`, per rule, read for the values (the labels are translated) | start, mode change |
 | `ports` | a bind test like the server's own; the owner from `netstat -ano` + the process list | start, before a server start |
 
@@ -47,6 +47,14 @@ The player list for guests without the launcher lives in Python (saved on every 
 `save_config` from the page only carries the fields typed there. `server_args` in config.json -
 extra server flags for A/B tests, written by hand (readme) - is kept through every save and goes
 last on the server's command line.
+
+*Career save* is in both modes since 1.1.1. *Pick your save* lists `ea_identity.save_files()`:
+"career" files can be picked (`Api.choose_save`, which refuses anything else and stores the id as
+`career_save`, 0 = automatic); the server's synthetic ids and the EA App user id are shown apart
+with the reason, since the game never loads them. A guest's pick goes to the host through
+`identify` with the source `chosen in the launcher`; a host's goes to its own server as
+`--local-id <id> --local-id-chosen`, ahead of `server_args`. Either way the server counts it as
+unconfirmed (out of the others' Autolog) until the game's BUID matches - see decisions, 02.10.
 
 ## What it keeps where
 

@@ -477,27 +477,38 @@ guessing numbers from other games' emulators.
 
 ### NFS.getInGameRecommendations (2050/21) - Autolog rivals
 
-Request `{BLID}`, asked after login and now and then. Reply (since 1.0.12.2)
+Request `{BLID}`, asked after login, after every event and now and then. The rivals are the
+players in the asker's game (since 1.1.2; `--autolog-everyone`: everyone with a known save). Reply
+(since 1.0.12.2)
 `InGameRecommendationsResponse` @`0x1416b7490 {RILI mRivalList, SPWA mSpeedWallIDToSpeedWallMap}`:
 - rival @`0x1416b5d20` `{BLUS mRivalBlazeUser, PENA mRivalName, PLSC mPlayerScore, RECM
   mRecommendationsList, RIBL mRivalBlazeId, RISC mRivalScore}`, where PLSC/RISC = shared speed
   walls on which the asker / the rival leads (less is better only for `eventTime`);
 - map speed wall id -> `InGameSpeedWallResponseSpeedWall {ROWS, SWID}`, as in
-  getInGameSpeedWalls, for every wall a rival has a result on, shared ones first, trimmed to
-  ~60 KB (Fire2's 16-bit length);
+  getInGameSpeedWalls, for every wall a rival has a result on: since 1.1.2 the walls of the
+  `RECM` entries first, then the shared ones, then the rest, trimmed to ~60 KB (Fire2's 16-bit
+  length). **Every `RECM` entry's wall must be in the map**: `0x9d5660` looks it up by id
+  (`0x842cd0`) and reads `[wall+0xe8]` at `0x9d5903` with no NULL check, so an entry whose wall is
+  missing crashes the game (02.10: 7 of 7 games right after the reply that follows an event, while
+  up to 1.1.1 the map was cut by id and the events, with the highest ids, fell out). An entry whose
+  wall does not fit is left out, a rival left with none too;
 - `RECM` (since 1.0.12.3): one recommendation @`0x141a2c160` `{BLUS mTargetBlazeUser, RETY,
   STAF/STAI/STAS mMisc*, STOB/STOT mStoryString*ID, SWID, TABL mTargetBlazeId, TANA mTargetName,
   TITL mTitleStringID}` per shared wall the rival leads. At most 20 per rival, newest result
   first.
-  - `RETY = 0` is `RECOMMENDATION_TYPE_BEAT_YOU`, ASSUMED from the order of the names (BEAT_YOU,
-    HOT, POPULAR).
-  - `TITL = "ID_REC_TITLE_BEAT"` (the binary also has `_HOT`, `_POP`, `ID_RECOMMENDS_BEAT`,
-    `ID_REC_PE_RECOMMENDATION_BEATEN/_NOT_BEATEN`).
+  - `RETY` 0/1/2 = BEAT_YOU/HOT/POPULAR, confirmed in the code (02.10): `0x93bf30` makes the
+    card's title from RETY itself, 0 -> `ID_REC_TITLE_BEAT`, 1 -> `_HOT`, 2 -> `_POP`.
+  - `TITL`, `STOT`, `STOB` are keys of the game's table of 11 Autolog story templates
+    (@`0x1415807e0`, `blaze.AUTOLOG_STORY_TEMPLATES`), not plain string ids. `0x93be80`/`0x93bdd0`/
+    `0x93bd20` take the recommendation for a speed wall id (fields `+0x118`/`+0x128`/`+0x138`) and
+    hand the key to `0x93afd0`, which finds the template with `0x93af50` (strcmp) or shows
+    "String not on Autolog Yet". `TITL = "ID_BEAT_YOU_TITLE"` since 1.1.1 (`ID_HOT_TITLE`,
+    `ID_POPULAR_TITLE`); up to 1.1.0 it was the card's `ID_REC_TITLE_BEAT`, and the banner at a
+    speed camera showed the placeholder over a correct story.
   - The misc maps carry the rival's result.
-  - `STOT`/`STOB` (since 1.0.12.7) are the story string ids that sit next to the titles in the
-    binary: `ID_BEAT_YOU_STORY_ONE_TOP`/`_BOTTOM` (also `ID_HOT_STORY_TOP`/`_BOTTOM` and
-    `ID_POPULAR_STORY_TOP`/`_BOTTOM`). Left empty, the rival card showed the placeholder
-    "String not on Autolog Yet" (next to "CANT FIND NAME" in `.rdata`).
+  - `STOT`/`STOB` (since 1.0.12.7): `ID_BEAT_YOU_STORY_ONE_TOP`/`_BOTTOM` (also
+    `ID_HOT_STORY_TOP`/`_BOTTOM` and `ID_POPULAR_STORY_TOP`/`_BOTTOM`). Left empty, the rival card
+    showed the placeholder "String not on Autolog Yet" (next to "CANT FIND NAME" in `.rdata`).
   - `--autolog-beat-type` changes RETY.
   - **A rival with an empty `RECM` crashes the game** (confirmed 02.10 on an unmodded game,
     decisions.md), so such a rival is not sent. It stays in `SPWA`. `--autolog-empty-rivals`

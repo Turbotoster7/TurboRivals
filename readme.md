@@ -154,7 +154,8 @@ when it needs them).
 **Everyone else:** *Join a session*.
 1. The host's address, your name and a picture. The launcher tells you straight away whether a
    TurboRivals server answers there.
-2. Check that *Career save* is not orange (*Guessed*).
+2. Check that *Career save* is not orange (*Guessed*). If it is, pick yours under *Pick your
+   save* (see *Career saves*).
 3. *Connect & play*.
 
 *Connect & play* fixes up `hosts`, checks that the name now really leads to the host, tells the
@@ -216,8 +217,11 @@ still goes back into the host's game.
 
 **Autolog rivals (1.0.12.2, experimental).** The game asks the server for its Autolog rivals
 (`NFS.getInGameRecommendations`), and their results are what speed walls compare you against.
-The server answers with every other player it knows and their speed walls, and logs it as
-`[autolog] You: 2 rival(s) (Friend: you lead 18, they lead 3, 3 "beat you"; ...)`.
+Since 1.1.2 it answers with the players in your game - the session you drive in - and their
+speed walls, and logs it as
+`[autolog] You: 2 rival(s) (Friend: you lead 18, they lead 3, 3 "beat you"; ...)`. Up to 1.1.1 it
+was everyone the server had ever seen, which filled the walls with people from other days and
+with your own older identities; `--autolog-everyone` brings that back.
 
 Since 1.0.12.3 it also lists the "X beat you" recommendations: every wall where a rival is
 ahead, newest first, up to 20 per rival. Special Guest and the Autolog playlist now get proper
@@ -236,9 +240,20 @@ event, `--autolog-world-only` keeps the entries off events, as 1.0.12.4 did. A p
 rival at all, such as someone new or playing alone, gets the plain empty answer the game got
 before Autolog (since 1.0.12.6).
 
+**The crash at the end of an event (fixed in 1.1.2).** On 02.10 seven games on three servers
+went down right after the Autolog reply that follows an event; with `--no-autolog` nobody did.
+The reply fits about 60 KB, so the server sends only part of the speed walls (230 of 450 for two
+players who had raced each other a lot). Up to 1.1.1 it cut them by id, and events - which have
+the highest ids - fell out while their "beat you" entries stayed. The game looks up the wall of
+every entry and reads it without checking (`NFS14.exe+0x9d5903`), so an entry without its wall
+is a certain crash. Since 1.1.2 the walls of the "beat you" entries go in first, and an entry
+whose wall still does not fit is left out (`[autolog] N "beat you" left out: their walls did not
+fit`). `--autolog-legacy-trim` reproduces the old way, for tests only.
+
 **A player whose identity is not confirmed is left out of the others' Autolog while online
 (1.0.12.7): off the rival list and off the speed walls.** That is someone who joined without the
-launcher, or whose *YOUR CAREER SAVE* is orange. Your game cannot tie such a player's car to
+launcher, or whose *Career save* is orange (the host's own too, since 1.1.1) or picked by hand
+(since 1.1.2 for good: a picked save cannot be confirmed). Your game cannot tie such a player's car to
 them, so the results they set in your session leave their rows empty in your game:
 - On 1.0.12.6 the host clicked such a player in the rival list, right after that player drove
   through one of their own "beat you" cameras, and the host's game crashed.
@@ -252,7 +267,8 @@ confirmed: ...`).
 
 Also since 1.0.12.7, the rival card no longer shows "String not on Autolog Yet" or
 "INVALID SPEEDWALL: 12": the entries carry the game's own story texts, and Speedlists, which
-the card cannot name, get no "beat you" entries.
+the card cannot name, get no "beat you" entries. Since 1.1.1 the banner at a speed camera
+does not either: its title was the one string id still sent that is not an Autolog story.
 
 **Speed walls** show the other players' results when they drove the same camera, zone or jump.
 The log lists who drove what (`[speed wall] ...: you 45.9 AverageSpeed, Friend 50.1 ...`). The
@@ -272,7 +288,15 @@ Close the launcher, open the file in Notepad and replace the line `"server_args"
 Each flag and each value is its own quoted item. Save, start the launcher, and the log shows the
 whole command on its first line. Put `[]` back after the test. Flags for A/B tests:
 `--speedwall-relation N`, `--no-autolog`, `--strict-avoid`, `--no-resume`, `--no-lookup-users`,
-`--session-bps N`, `--autolog-no-session-rivals`.
+`--session-bps N`, `--autolog-no-session-rivals`, `--autolog-everyone` (rivals from everyone ever
+seen, as up to 1.1.1), `--autolog-world-only` (no "beat you" on events), `--lone-host-removal`.
+
+`--lone-host-removal` is an experiment (1.1.2). When the host leaves a game with one other
+player in it, the server normally hands the game to that player (a host migration). Nobody is
+ever put into a migrated game (test 62), and the player left in it does not search by itself,
+so the two of you end up in separate games until both use *Find new session*. The server says so
+in the host's *Activity*. With the flag, the server removes such a game instead, which may make
+that player's game search on its own - or crash; the log shows which (`startMatchmaking`).
 
 Firewall rules (once, as Administrator):
 
@@ -371,13 +395,32 @@ PC. If none of that works, the id is only a guess and *Career save* turns orange
 happens when Rivals has never been played on that PC, or when several EA accounts played it
 there. For the first case, start Rivals once through the EA App without TurboRivals, play until
 it saves, close it, then connect. The game then makes its own save, which the launcher finds.
+For the second case, pick the save yourself (below).
+
+**Picking the save yourself (1.1.1).** *Career save > Pick your save*, for the host and everyone
+else, lists the save files on the PC, newest first, with what the launcher knows about each:
+*EA App: your game loads this*, *your EA account* (the same last five digits), *written last*,
+*another EA account*. Pick yours and the launcher uses that one: it goes to the host on *Connect &
+play*, or to your own server as `--local-id` when you host. *Automatic* goes back to the rules
+above. Files the game never loads are listed apart, with the reason: `1100…` ids are ones a
+TurboRivals server made up, and a file named after your EA App account number is what the game
+wrote while that number was a guess.
+
+Not sure which one is yours? Turn the hosts redirect off, start Rivals through the EA App, drive
+until it saves and close it: the file written last is yours. A wrong pick costs something: the
+game writes your career over that file (the daily copy in `save-backups` still has it). It does
+not crash anyone else's game, though: the server keeps a picked save out of the others' Autolog.
+In 1.1.1 the game's `listUserEntitlements2` BUID could confirm it, but on 02.10 the BUID never
+differed from the login id, not even for a made-up one, so since 1.1.2 it only counts against
+an id. Should the game ever name another number, the host's *Activity* says which one to pick
+(`[hint] … the game goes by …`).
 
 Confirmed on 30.09 on two kinds of accounts. Newer ones share the suffix: user `…74704`, save
 `1006431274704`. Older ones do not: user `1004043460810`, save `1802434674`, found as the only EA
 save. In both cases a changed paint job stuck.
 
 - **the host** — found automatically through the EA App on the server's machine
-  (`--local-id <id>` overrides it);
+  (*Pick your save* or `--local-id <id>` overrides it);
 - **everyone else** — their launcher sends it to the host on *Connect & play* (*Join a
   session* shows it under *Career save*). Without the launcher, the host passes
   `--player-id <their address>=<id>`.
@@ -425,7 +468,7 @@ removes it on *Fix* and *Connect & play*.
 
 **Another player looks like an ordinary racer: icon and name only up close.** The game ties
 every car to a player by the owner's EA career save id. A player logged in under some other id
-(no launcher, or an orange *YOUR CAREER SAVE*) leaves the other games unable to match their car.
+(no launcher, or an orange *Career save*) leaves the other games unable to match their car.
 That was the "names disappear after a session change" bug of 1.0.0. Since 1.0.8 the server
 answers the game's question about such a car (`[lookup]` in the server log). A
 `[lookup] WARNING` names a player whose save id is wrong; fix that player's save in their

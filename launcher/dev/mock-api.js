@@ -23,13 +23,29 @@
         { ip: '192.168.1.23', adapter: 'Ethernet', kind: 'lan' },
         { ip: '172.27.96.1', adapter: 'vEthernet (WSL)', kind: 'virtual' },
     ];
+    const at = (text) => Math.round(Date.parse(text) / 1000);
+    const career = (id, written, flags = {}) => ({ id, written: at(written), kind: 'career', profile: false, suffix: false, other: false, newest: false, ...flags });
     const SAVE_FOUND = {
         id: 1006400012345, source: 'EA App profile', user: 1012900012345,
-        persona: 'NightRider', saves: [1006400012345],
+        persona: 'NightRider', saves: [1100470734847, 1006400012345],
+        auto: { id: 1006400012345, source: 'EA App profile' },
+        files: [career(1006400012345, '2026-10-01T22:14:00', { profile: true, suffix: true, newest: true }),
+                { id: 1100470734847, written: at('2026-09-29T22:22:00'), kind: 'server' }],
     };
     const SAVE_GUESS = {
         id: 1004000060810, source: 'EA App user id (guess)', user: 1004000060810,
-        persona: 'test2', saves: [],
+        persona: 'test2', saves: [], auto: { id: 1004000060810, source: 'EA App user id (guess)' }, files: [],
+    };
+    /* A friend's PC on 02.10: two EA-era saves, so the launcher could only guess. */
+    const SAVE_TWO = {
+        id: 1003772287105, source: 'EA App user id (guess)', user: 1003772287105, persona: 'DrTrolls',
+        saves: [1803135129, 1803135130, 1100112342094, 1100944155289, 1003772287105],
+        auto: { id: 1003772287105, source: 'EA App user id (guess)' },
+        files: [{ id: 1003772287105, written: at('2026-10-02T11:04:00'), kind: 'account' },
+                { id: 1100944155289, written: at('2026-10-02T10:11:00'), kind: 'server' },
+                { id: 1100112342094, written: at('2026-10-01T17:55:00'), kind: 'server' },
+                career(1803135130, '2026-10-01T16:31:00', { newest: true }),
+                career(1803135129, '2013-12-08T16:19:00')],
     };
     const ME = { uid: 1006400012345, name: 'NightRider', local: true, avatar: svgAvatar('NR', '#0bc5ea', '#1d4ed8') };
     const GUESTS = [
@@ -86,6 +102,12 @@
                 firewall: { 'NFS Rivals P2P': 'ok' },
                 config: { mode: 'client', local_persona: 'test2', public_ip: '', server_ip: '26.48.21.54',
                           entitlements: 'online', players: [], recent_servers: ['26.48.21.54', '192.168.1.23'],
+                          restore_hosts_on_exit: 'ask', onboarded: true, log_view: 'key', keep_captures: false },
+            },
+            picking: {
+                save: SAVE_TWO, avatar: '', hosts: NO_HOSTS, firewall: { 'NFS Rivals P2P': 'ok' },
+                config: { mode: 'client', local_persona: 'DrTrolls', public_ip: '', server_ip: '100.96.255.48',
+                          entitlements: 'online', players: [], recent_servers: ['100.96.255.48'],
                           restore_hosts_on_exit: 'ask', onboarded: true, log_view: 'key', keep_captures: false },
             },
             unreachable: {
@@ -259,6 +281,16 @@
         save_avatar: (png) => { S.avatar = png; return answer({ ok: true, avatar: png }); },
         upload_avatar: () => answer({ ok: true }, 300),
         clear_avatar: () => { S.avatar = ''; return answer({ ok: true, local: true }); },
+        choose_save: (id) => {               // commands.choose_save
+            id = Number(id || 0);
+            const file = S.save.files.find((f) => f.id === id);
+            if (id && !file) return answer({ ok: false, error: `there is no ${id}.sav in the save folder` });
+            if (id && file.kind !== 'career') {
+                return answer({ ok: false, error: `${id} is ${file.kind === 'server' ? 'an id a TurboRivals server made up' : 'your EA App account number, not a save'} - the game never loads that file` });
+            }
+            S.save = id ? { ...S.save, id, source: 'chosen in the launcher' } : { ...S.save, ...S.save.auto };
+            return answer({ ok: true, save: S.save }, 300);
+        },
         firewall_off: () => {
             const removed = Object.keys(S.firewall).filter((name) => S.firewall[name] !== 'missing');
             S.firewall = {};

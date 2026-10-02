@@ -43,6 +43,7 @@ SOURCE_PROFILE = "EA App profile"        # resolve(): where the save id came fro
 SOURCE_SAVES = "save files"
 SOURCE_ONLY_SAVE = "the only EA save file"
 SOURCE_GUESS = "EA App user id (guess)"
+SOURCE_CHOSEN = "chosen in the launcher"
 SUFFIX_LEN = 5
 POOL_SIZE = 1_000_000_000            # lobby.py draws a synthetic uid as base + crc32 % POOL_SIZE
 
@@ -76,6 +77,27 @@ def save_ids(folder: Path | None = None) -> list[int]:
     except OSError:
         return []
     return [int(p.stem) for p in files]
+
+
+def save_files(folder: Path | None = None, users: list[int] | None = None) -> list[dict]:
+    """Every <id>.sav in the game's settings folder, newest file first, as {"id", "written"
+    (mtime, epoch seconds), "kind"}: "career" - a save the game may load; "server" - an id one
+    of our servers made up (lobby.py pools); "account" - an EA App user id, the file the game
+    wrote while the launcher guessed that id. The game never loads the last two (02.10: a guest
+    took 1100944155289 for his save - our synthetic uid from an earlier session)."""
+    folder = folder or saves_dir()
+    accounts = set(ea_user_ids() if users is None else users)
+    found = []
+    try:
+        for p in folder.glob("*.sav"):
+            if p.stem.isdigit():
+                found.append((int(p.stem), p.stat().st_mtime))
+    except OSError:
+        return []
+    found.sort(key=lambda f: f[1], reverse=True)
+    return [{"id": uid, "written": int(written),
+             "kind": "server" if is_synthetic(uid) else "account" if uid in accounts else "career"}
+            for uid, written in found]
 
 
 def ea_user_ids(folder: Path = EA_DESKTOP_DIR) -> list[int]:
@@ -146,11 +168,22 @@ def ea_profile(user: int | None = None, log_dir: Path = EA_LOGS_DIR) -> dict | N
     return {"user": user, "persona_id": None, "persona": nickname} if nickname else None
 
 
-def resolve(saves: list[int] | None = None, user: int | None = None,
-            log_dir: Path = EA_LOGS_DIR, users: list[int] | None = None) -> dict:
-    """Which save the game loads for the account signed in to the EA App, and how we know:
-    {"id", "source", "user", "persona", "saves"}. `users`: every EA App account on this machine.
+def _kind(uid: int, accounts: set[int]) -> str:
+    return "server" if is_synthetic(uid) else "account" if uid in accounts else "career"
 
+
+def resolve(saves: list[int] | None = None, user: int | None = None,
+            log_dir: Path = EA_LOGS_DIR, users: list[int] | None = None,
+            chosen: int = 0) -> dict:
+    """Which save the game loads for the account signed in to the EA App, and how we know:
+    {"id", "source", "user", "persona", "saves", "files", "auto"}. `users`: every EA App account
+    on this machine. `saves` (tests) stands in for the folder; `files` then carries no times.
+
+    0. `chosen` - the save the player picked in the launcher, when it is a "career" file on disk
+       (save_files). Two EA-era saves defeat rules 2 and 3 (a friend's PC on 02.10:
+       1803135129 from 2013 and 1803135130), and only the player can tell which one the game
+       loads. A pick that is gone from the folder falls back to the rules below and is
+       reported as "chosen_missing". "auto" always holds what the rules alone give.
     1. The EA App's own answer (ea_profile) - no guessing, when the log has the id unmasked.
     2. The account's EA-era save: a .sav with the account's suffix that is not the user id
        itself (the persona id differs from it). Several - more than one persona - the lowest id,
@@ -161,27 +194,57 @@ def resolve(saves: list[int] | None = None, user: int | None = None,
        every account - the guest's laptop on 30.09: user 1004043460810, save 1802434674 (written
        on 15.09 while the game ran without our login, so under its own persona id).
     4. Otherwise the user id, a guess - that is what lost the guest's progress on 30.09.
-    No EA App: id None, the caller keeps its old uid."""
+    No EA App: id None, the caller keeps its old uid.
+
+    Each entry of "files" (save_files) also says why it may be the one: "profile" (the EA App
+    named it), "suffix" (it carries the account's suffix), "newest" (the career save written
+    last) - or why not: "other" (it carries another EA App account's suffix)."""
     user = ea_user_id() if user is None else user
-    saves = save_ids() if saves is None else saves
-    out = {"id": None, "source": "", "user": user, "persona": "", "saves": saves}
+    accounts = set(ea_user_ids() if users is None else users) | ({user} if user else set())
+    if saves is None:
+        files = save_files(users=list(accounts))
+        saves = [f["id"] for f in reversed(files)]          # oldest first, as save_ids()
+    else:
+        files = [{"id": s, "written": 0, "kind": _kind(s, accounts)} for s in reversed(saves)]
+    out = {"id": None, "source": "", "user": user, "persona": "", "saves": saves,
+           "files": files, "auto": {"id": None, "source": ""}}
     if not user:
         return out
     profile = ea_profile(user, log_dir)
     out["persona"] = profile["persona"] if profile else ""
+    auto = _auto(saves, user, accounts, profile)
+    suffix = str(user)[-SUFFIX_LEN:]
+    others = {str(u)[-SUFFIX_LEN:] for u in accounts if u != user}
+    newest = next((f["id"] for f in files if f["kind"] == "career"), None)
+    for f in files:
+        career = f["kind"] == "career"
+        f["profile"] = auto["source"] == SOURCE_PROFILE and f["id"] == auto["id"]
+        f["suffix"] = career and same_account(f["id"], suffix)
+        f["other"] = career and any(same_account(f["id"], o) for o in others)
+        f["newest"] = f["id"] == newest
+    out.update(auto, auto=dict(auto))
+    if chosen:
+        if any(f["id"] == chosen and f["kind"] == "career" for f in files):
+            out.update(id=chosen, source=SOURCE_CHOSEN)
+        else:
+            out["chosen_missing"] = chosen
+    return out
+
+
+def _auto(saves: list[int], user: int, accounts: set[int], profile: dict | None) -> dict:
+    """Rules 1-4 of resolve: {"id", "source"}."""
     if profile and profile["persona_id"]:
-        return {**out, "id": profile["persona_id"], "source": SOURCE_PROFILE}
+        return {"id": profile["persona_id"], "source": SOURCE_PROFILE}
     suffix = str(user)[-SUFFIX_LEN:]
     own = [s for s in saves if not is_synthetic(s) and s != user and same_account(s, suffix)]
     if own:
-        return {**out, "id": min(own), "source": SOURCE_SAVES}
-    accounts = set(ea_user_ids() if users is None else users) | {user}
+        return {"id": min(own), "source": SOURCE_SAVES}
     others = {str(u)[-SUFFIX_LEN:] for u in accounts if u != user}
     only = [s for s in saves if not is_synthetic(s) and s not in accounts
             and not any(same_account(s, f) for f in others)]
     if len(only) == 1:
-        return {**out, "id": only[0], "source": SOURCE_ONLY_SAVE}
-    return {**out, "id": user, "source": SOURCE_GUESS}
+        return {"id": only[0], "source": SOURCE_ONLY_SAVE}
+    return {"id": user, "source": SOURCE_GUESS}
 
 
 def profile_id(saves: list[int] | None = None, user: int | None = None,
@@ -206,11 +269,15 @@ def token_suffix(auth: str | bytes | None) -> str:
 
 
 if __name__ == "__main__":
-    user = ea_user_id()
-    saves = save_ids()
+    import time
+
+    found = resolve()
     print(f"saves folder : {saves_dir()}")
-    print(f"saves        : {', '.join(map(str, saves)) or '-'}")
-    print(f"ea_user_id   : {user}")
-    found = resolve(saves, user)
+    print(f"ea_user_id   : {found['user']}")
     print(f"profile_id   : {found['id']} ({found['source'] or '-'})")
     print(f"EA nickname  : {found['persona'] or '-'}")
+    print("save files   :" + ("" if found["files"] else " -"))
+    for f in found["files"]:
+        notes = [n for n in ("profile", "suffix", "other", "newest") if f.get(n)]
+        print(f"  {f['id']:>15}  {time.strftime('%Y-%m-%d %H:%M', time.localtime(f['written']))}"
+              f"  {f['kind']:<7} {' '.join(notes)}")

@@ -13,6 +13,7 @@ Query parameters pick the situation the mock pretends to be in, e.g.
     /?scenario=ready&mode=host  everything green, server not started
     /?scenario=hosting          server running, players online
     /?scenario=joining          guest with a host address and a guessed career save
+    /?scenario=picking          two saves that could be the player's: Career save > Pick your save
 (see SCENARIOS in mock-api.js for the full list).
 
 Nothing here is bundled: TurboRivals.spec ships launcher/web only.

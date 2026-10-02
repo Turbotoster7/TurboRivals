@@ -15,6 +15,7 @@ returns a dict with "ok" and an "error" a player can act on.
 from __future__ import annotations
 
 import base64
+import copy
 import csv
 import datetime as dt
 import errno
@@ -907,11 +908,18 @@ def build_command(local_name: str, players: list[tuple[str, str]], public_ip: st
     if public_ip:
         command += ["--public-ip", public_ip]
     if local_name:
-        command += ["--local-persona", local_name]
+        # one item with "=": a name starting with "-" (-Heat-The_Zephyr, 02.10) is otherwise
+        # taken for an option and the server exits with "expected one argument"
+        command += [f"--local-persona={local_name}"]
     for ip, nick in players:
         command += ["--player", f"{ip}={nick}"]
     if extra:
         command += extra
+    # The server finds the host's save by itself (ea_identity.resolve); one picked under Career
+    # save it cannot know about. --local-id-chosen: a pick is not trusted for Autolog (lobby)
+    ident = save_identity()
+    if ident["source"] == ea_identity.SOURCE_CHOSEN:
+        command += ["--local-id", str(ident["id"]), "--local-id-chosen"]
     # server_args from config.json, last so they can override anything above (A/B tests
     # without a new build - readme, "Other server flags")
     command += [str(a) for a in load_config().get("server_args", [])]
@@ -1337,16 +1345,42 @@ def save_identity() -> dict:
     """This machine's EA App user, its career saves, the one the game loads and how we know it
     (source), and the EA nickname (persona) when the EA App's log has it.
 
-    Cached until one of its files changes: resolve() reads the EA App's verbose log, which grows
-    to tens of megabytes, and the launcher asks on start, on every refresh and on connect."""
-    signature = _identity_signature()
+    The save picked under Career save (config career_save) wins when it is still on disk.
+
+    Cached until one of its files or the pick changes: resolve() reads the EA App's verbose log,
+    which grows to tens of megabytes, and the launcher asks on start, on every refresh and on
+    connect."""
+    chosen = load_config()["career_save"]
+    signature = _identity_signature() + (("career_save", chosen),)
     with _identity_lock:
         if _identity_cache["signature"] == signature and _identity_cache["value"] is not None:
-            return dict(_identity_cache["value"])
-    value = ea_identity.resolve()
+            return copy.deepcopy(_identity_cache["value"])
+    value = ea_identity.resolve(chosen=chosen)
     with _identity_lock:
         _identity_cache.update(signature=signature, value=value)
-    return dict(value)
+    return copy.deepcopy(value)
+
+
+def choose_save(save_id) -> dict:
+    """Picks the career save the game loads (Career save > Change), or 0 for automatic. Only a
+    "career" file in the save folder: an id one of our servers made up, or the EA App user id,
+    is a file the game never loads (ea_identity.save_files)."""
+    try:
+        save_id = int(save_id or 0)
+    except (TypeError, ValueError):
+        return {"ok": False, "error": f"\"{save_id}\" is not a save id"}
+    if save_id:
+        kinds = {f["id"]: f["kind"] for f in save_identity()["files"]}
+        if save_id not in kinds:
+            return {"ok": False, "error": f"there is no {save_id}.sav in the save folder"}
+        if kinds[save_id] != "career":
+            why = ("an id a TurboRivals server made up" if kinds[save_id] == "server"
+                   else "your EA App account number, not a save")
+            return {"ok": False, "error": f"{save_id} is {why} - the game never loads that file"}
+    result = save_config({"career_save": save_id})
+    if not result["ok"]:
+        return result
+    return {"ok": True, "save": save_identity()}
 
 
 def backup_saves() -> dict:
@@ -1642,6 +1676,7 @@ DEFAULT_CONFIG = {
     # the packaged launcher (the frames hold the EA auth code of every login)
     "keep_captures": not FROZEN,
     "server_args": [],           # extra server flags, appended last (A/B tests, readme)
+    "career_save": 0,            # the save picked under Career save; 0 = found automatically
 }
 
 
@@ -1666,6 +1701,8 @@ def _sanitize(config: dict) -> dict:
     for key in ("local_persona", "public_ip", "server_ip"):
         out[key] = out[key].strip()
     out["server_args"] = [str(a) for a in out["server_args"] if isinstance(a, (str, int, float))]
+    if isinstance(config.get("career_save"), bool) or out["career_save"] < 0:
+        out["career_save"] = 0
     return out
 
 

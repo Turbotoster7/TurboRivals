@@ -54,9 +54,12 @@ class AutologTests(unittest.TestCase):
         patch = mock.patch.dict(tls_terminator._LOBBY, {"lobby": self.lb})
         patch.start()
         self.addCleanup(patch.stop)
+        # autolog_everyone: most tests here are about stored rivals; the session-only default
+        # (1.1.2) has tests of its own below
         self.args = SimpleNamespace(reply_msgtype=0x10, data_dir=str(root), speedwall_relation=2,
                                     autolog_beat_type=blaze.RECOMMENDATION_BEAT_YOU,
-                                    autolog_world_only=False, autolog_empty_rivals=False)
+                                    autolog_world_only=False, autolog_empty_rivals=False,
+                                    autolog_everyone=True)
         self.sess = lobby.Session("127.0.0.1", lambda _frame: None)
         self.lb.login(self.sess)
 
@@ -89,12 +92,21 @@ class AutologTests(unittest.TestCase):
         self.assertEqual([r["SWID"] for r in recs], [222])                # 45 > 40 AverageSpeed
         rec = recs[0]
         self.assertEqual((rec["RETY"], rec["TITL"], rec["TABL"], rec["TANA"]),
-                         (blaze.RECOMMENDATION_BEAT_YOU, "ID_REC_TITLE_BEAT", RIVAL, "CustomNickname2"))
+                         (blaze.RECOMMENDATION_BEAT_YOU, "ID_BEAT_YOU_TITLE", RIVAL, "CustomNickname2"))
         self.assertEqual(rec["STAF"], {"AverageSpeed": 45.0})              # the score to beat
         self.assertEqual(fields(rec["BLUS"])["BLIS"], RIVAL)
         # empty, the card showed "String not on Autolog Yet"
         self.assertEqual((rec["STOT"], rec["STOB"]),
                          ("ID_BEAT_YOU_STORY_ONE_TOP", "ID_BEAT_YOU_STORY_ONE_BOTTOM"))
+
+    def test_title_and_stories_are_story_templates(self):
+        # The game looks TITL/STOT/STOB up in its table of Autolog story templates (0x93af50);
+        # anything else reads "String not on Autolog Yet" - TITL did at a speed camera (02.10).
+        for rec_type in (blaze.RECOMMENDATION_BEAT_YOU, blaze.RECOMMENDATION_HOT,
+                         blaze.RECOMMENDATION_POPULAR):
+            keys = (blaze.RECOMMENDATION_TITLES[rec_type], *blaze.RECOMMENDATION_STORIES[rec_type])
+            for key in keys:
+                self.assertIn(key, blaze.AUTOLOG_STORY_TEMPLATES)
 
     def test_no_beat_you_on_a_speedlist(self):
         # the rival leads on a Speedlist too: it counts in the score, but the card cannot name a
@@ -297,6 +309,67 @@ class AutologTests(unittest.TestCase):
         self.assertEqual((playlist["BLID"], playlist["PLAY"], playlist["ROWS"]), (ME, [], []))
         walls = reply(41, [blaze.f_list_int("SWIS", [111, 222])])
         self.assertEqual([fields(w)["SWID"] for w in walls["ROWS"]], [111, 222])
+
+    def in_my_game(self, *uids):
+        game = lobby.Game(0x10000001, ME, {})
+        game.players = {uid: {} for uid in (ME, *uids)}
+        self.lb.games[game.gid] = game
+        self.sess.games.add(game.gid)
+
+    def test_by_default_only_the_players_in_my_game(self):
+        # 1.1.2, the players' wish: the walls and the rival list are the session, not everyone
+        # who ever played on this server
+        self.args.autolog_everyone = False
+        self.add_xarrek()                                       # stored, offline
+        self.assertEqual(self.ask(), {})                        # nobody in my game: bare ack
+        self.assertEqual(self.walls(222), {222: {ME}})
+        self.rival_online("launcher")
+        self.assertEqual(self.ask(), {})                        # online, but in no game of mine
+        self.in_my_game(RIVAL)
+        self.assertEqual([fields(r)["RIBL"] for r in self.ask()["RILI"]], [RIVAL])
+        self.assertEqual(self.walls(222), {222: {ME, RIVAL}})
+
+    def beat_you(self, rival: int, swids, row: dict) -> dict:
+        recs = [{"swid": s, "blaze_id": rival, "persona": f"P{rival}", "type": 0,
+                 "title": "ID_BEAT_YOU_TITLE", "row": row} for s in swids]
+        return {"blaze_id": rival, "persona": f"P{rival}", "player_score": 0,
+                "rival_score": len(recs), "recommendations": recs}
+
+    def decoded(self, frame: bytes) -> dict:
+        self.assertLessEqual(len(frame) - blaze.FIRE2_HDR, blaze.RECOMMENDATIONS_MAX_PAYLOAD)
+        return fields(blaze.decode_tdf(blaze.Fire2.decode(frame).payload))
+
+    def test_every_beat_you_goes_out_with_its_wall(self):
+        # 02.10: ~450 shared walls, the events (high ids) fell out of the map while their entries
+        # stayed - 7 of 7 games crashed right after such a reply at the end of an event
+        rows = [{"blaze_id": n, "persona": "P" * 30, "float": {"eventTime": 1.0}} for n in range(3)]
+        walls = [(1000 + n, rows) for n in range(600)]
+        rival = self.beat_you(1, range(1580, 1600), rows[1])        # the 20 highest ids
+        report = {}
+        frame, sent = blaze.build_in_game_recommendations_response(
+            1, [rival], walls, local_id=0, report=report)
+        reply = self.decoded(frame)
+        self.assertLess(sent, 600)
+        recm = [fields(r)["SWID"] for r in fields(reply["RILI"][0])["RECM"]]
+        self.assertEqual(recm, list(range(1580, 1600)))
+        self.assertLessEqual(set(recm), set(reply["SPWA"]))
+        self.assertEqual(report, {"dropped": 0, "rivals_dropped": []})
+
+    def test_an_entry_whose_wall_does_not_fit_is_left_out(self):
+        rows = [{"blaze_id": n, "persona": "P" * 30, "float": {"speed": 1.0}} for n in range(60)]
+        walls = [(1000 + n, rows) for n in range(40)]                 # ~3 KB a wall: ~19 fit
+        report = {}
+        frame, sent = blaze.build_in_game_recommendations_response(
+            1, [self.beat_you(1, range(1000, 1020), rows[1]), self.beat_you(2, [1035], rows[2])],
+            walls, local_id=0, report=report)
+        reply = self.decoded(frame)
+        spwa = set(reply["SPWA"])
+        recm = [fields(e)["SWID"] for r in reply["RILI"] for e in fields(r)["RECM"]]
+        self.assertTrue(recm)
+        self.assertLessEqual(set(recm), spwa)                         # never a wall it lacks
+        self.assertGreater(report["dropped"], 0)
+        self.assertEqual(report["rivals_dropped"], ["P2"])            # its only wall did not fit
+        self.assertEqual([fields(r)["RIBL"] for r in reply["RILI"]], [1])
 
     def test_the_map_stops_before_the_fire2_limit(self):
         rows = [{"blaze_id": n, "persona": "P" * 30, "float": {"speed": 1.0}} for n in range(50)]

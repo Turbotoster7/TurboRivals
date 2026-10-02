@@ -180,6 +180,45 @@ class MatchmakingTests(unittest.TestCase):
         self.assertNotIn(guest.uid, game.players)
         self.assertEqual(len(lb.games), 2)
 
+    def host_leaves(self, lb, guests: int) -> tuple:
+        host, game = self.running_game(lb)
+        others = [self.session(lb, f"192.0.2.{n + 2}") for n in range(guests)]
+        for guest in others:
+            lb.join(guest, game)
+        notes = lb.remove_player(game, host.uid, blaze.PLAYER_REMOVED_REASON["PLAYER_CONN_LOST"])
+        return game, others, [blaze.Fire2.decode(frame).command for _to, frame in notes]
+
+    def test_the_last_player_gets_a_migration_by_default(self):
+        lb = lobby.Lobby(local_id=10001)
+        game, _others, commands = self.host_leaves(lb, 1)
+        self.assertIn(blaze.GM_NOTIFY_HOST_MIGRATION_START, commands)
+        self.assertTrue(game.migrated)
+        self.assertIn(game.gid, lb.games)
+
+    def test_lone_host_removal_removes_the_game_instead(self):
+        # 02.10: after a migration the one left sat alone - nobody is put into a migrated game and
+        # its game did not search; --lone-host-removal tries the game's own way out
+        lb = lobby.Lobby(local_id=10001, lone_host_removal=True)
+        game, (guest,), commands = self.host_leaves(lb, 1)
+        self.assertEqual(commands, [blaze.GM_NOTIFY_GAME_REMOVED])
+        self.assertNotIn(game.gid, lb.games)
+        self.assertNotIn(game.gid, guest.games)
+
+    def test_lone_host_removal_still_migrates_for_two(self):
+        lb = lobby.Lobby(local_id=10001, lone_host_removal=True)
+        game, _others, commands = self.host_leaves(lb, 2)
+        self.assertIn(blaze.GM_NOTIFY_HOST_MIGRATION_START, commands)
+        self.assertIn(game.gid, lb.games)
+
+    def test_a_lone_player_after_a_migration_gets_a_hint(self):
+        lb = lobby.Lobby(local_id=10001)
+        self.host_leaves(lb, 1)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            tls_terminator._arm_migrations(lb, SimpleNamespace(migration_timeout=0))
+        self.assertIn("[hint]", out.getvalue())
+        self.assertIn("'Find new session'", out.getvalue())
+
 
 if __name__ == "__main__":
     unittest.main()

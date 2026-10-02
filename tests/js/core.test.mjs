@@ -106,7 +106,7 @@ test('blockers name what stops the big button', () => {
 
 test('command preview mirrors build_command without paths', () => {
   assert.equal(core.commandPreview({ name: 'Łukasz', publicIp: '26.48.21.54', players: [['26.11.40.7', 'Kowal PL']] }),
-    'TurboRivals --run-server --entitlements online --public-ip 26.48.21.54 --local-persona Lukasz --player "26.11.40.7=Kowal PL"');
+    'TurboRivals --run-server --entitlements online --public-ip 26.48.21.54 --local-persona=Lukasz --player "26.11.40.7=Kowal PL"');
 });
 
 test('uptime and save state', () => {
@@ -115,6 +115,8 @@ test('uptime and save state', () => {
   assert.equal(core.saveState({ id: 1, source: core.SAVE_GUESS }), 'guessed');
   assert.equal(core.saveState({ id: null }), 'missing');
   assert.equal(core.saveState({ id: 5, source: 'EA App profile' }), 'found');
+  assert.equal(core.saveState({ id: 1803135130, source: core.SAVE_CHOSEN }), 'chosen');
+  assert.equal(core.SAVE_CHOSEN, 'chosen in the launcher');      // ea_identity.SOURCE_CHOSEN
 });
 
 test('the bug report carries the issue form fields', () => {
@@ -131,6 +133,20 @@ test('the bug report carries the issue form fields', () => {
   for (const part of ['Launcher version:** 1.1.0', 'Joining player', 'Radmin VPN (26.48.21.54)',
     '#### Setup', '#### Career save', 'EA App running: no', 'OLD ENTRIES OUTSIDE THE BLOCK', '1004000060810 - GUESSED', 'EA offer 1004776',
     '21:04:10 hosts redirect']) {
+    assert.ok(report.includes(part), part);
+  }
+});
+
+test('the bug report says when the save was picked by hand, and what was on the PC', () => {
+  const report = core.buildReport({
+    version: '1.1.1', mode: 'host', processes: {}, hosts: {}, firewall: { supported: false }, addresses: [],
+    save: { id: 1803135130, source: core.SAVE_CHOSEN, user: 1003772287105, saves: [1803135129, 1803135130],
+            auto: { id: 1003772287105, source: core.SAVE_GUESS },
+            files: [{ id: 1803135130, kind: 'career' }, { id: 1100944155289, kind: 'server' }] },
+    game: {}, server: { running: false },
+  }, { activity: [], log: [] });
+  for (const part of ['1803135130 - PICKED by the player', '1100944155289 server',
+    'automatic would be 1003772287105 (EA App user id (guess))']) {
     assert.ok(report.includes(part), part);
   }
 });

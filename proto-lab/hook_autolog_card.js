@@ -91,4 +91,26 @@ Interceptor.attach(at(0x96b960), {
     console.log(`${ts()}     crash prevented: "${name17(this.context.rdx)}" read from no stats`);
   }
 });
+// A crash this guard does not cover (02.10 evening: games quit at the end of an event, right after
+// the Autolog reply): where it happened, as NFS14.exe+RVA with the stack. Not handled - the game
+// goes down as it would anyway, the log keeps the address. First-chance exceptions of other types
+// are frequent and harmless, so only access violations, at most 5.
+const inMod = (a) => { try { return a.compare(base) >= 0 && a.compare(base.add(0x20bd000)) < 0; } catch (e) { return false; } };
+const where = (a) => a + (inMod(a) ? `  (NFS14.exe+0x${a.sub(base).toString(16)})` : "");
+let avLogged = 0;
+Process.setExceptionHandler((details) => {
+  if (details.type !== "access-violation" || avLogged++ >= 5) return false;
+  console.log(`\n${ts()} ########## ACCESS VIOLATION #${avLogged} ##########`);
+  console.log(`  at ${where(details.address)}`);
+  if (details.memory) console.log(`  ${details.memory.operation} of ${details.memory.address}`);
+  try {
+    const c = details.context;
+    console.log(`  rax=${c.rax} rbx=${c.rbx} rcx=${c.rcx} rdx=${c.rdx}`);
+    console.log(`  rsi=${c.rsi} rdi=${c.rdi} r8=${c.r8} r9=${c.r9} r14=${c.r14}`);
+    const bt = Thread.backtrace(c, Backtracer.ACCURATE).map(where).join("\n     ");
+    console.log(`  STACK:\n     ${bt}`);
+  } catch (e) { console.log(`  (no stack: ${e})`); }
+  if (current) console.log(`  last card entry: #${entry} ${current.name} (${current.id}) on wall ${current.wall}`);
+  return false;
+});
 console.log("[*] Autolog card hooks in place - click rivals in Autolog");

@@ -36,7 +36,8 @@ const state = {
     processes: null,               // {known, ea_app, game}
     addresses: null,               // [{ip, adapter, kind}]
     suggested: '',
-    save: null,                    // ea_identity.resolve()
+    save: null,                    // ea_identity.resolve(), with the pick from Career save
+    savePicking: false,            // a choose_save call is out
     firewall: null,                // {supported, ok, rules}
     ports: null,                   // {ok, ports, server?}
     hosts: {},
@@ -579,8 +580,8 @@ function renderSession() {
     } else {
         renderRecent();
         renderHostNote();
-        renderSave();
     }
+    renderSave();
 }
 
 const KIND_ICON = { vpn: 'lock', lan: 'lan', virtual: 'ghost' };
@@ -693,18 +694,117 @@ function renderHostNote() {
 function renderSave() {
     const card = $('#saveCard');
     const save = state.save;
+    const host = state.mode === 'host';
     const kind = C.saveState(save);
     card.dataset.state = kind;
     const pill = $('#savePill');
-    pill.textContent = { pending: 'Checking', missing: 'Not found', guessed: 'Guessed', found: 'Found' }[kind];
-    pill.dataset.tone = { pending: '', missing: 'error', guessed: 'warn', found: 'ok' }[kind];
+    pill.textContent = { pending: 'Checking', missing: 'Not found', guessed: 'Guessed', chosen: 'Picked', found: 'Found' }[kind];
+    pill.dataset.tone = { pending: '', missing: 'error', guessed: 'warn', chosen: 'ok', found: 'ok' }[kind];
     $('#saveId').textContent = kind === 'pending' ? '\u2014' : save.id ? String(save.id) : 'none';
-    $('#saveText').textContent = {
+    const used = host ? 'your server logs you in under it' : 'sent to the host when you connect';
+    const careers = ((save && save.files) || []).filter((f) => f.kind === 'career').length;
+    let text = {
         pending: 'Looking for the EA account on this PC\u2026',
-        missing: 'No EA App account found on this PC - the host cannot save your progress.',
-        guessed: 'No save of this EA account found, so this is a guess and your progress may not stick. Start the game once through the EA App, close it, then connect again.',
-        found: save && save.id ? `Found (${save.source}) and sent to the host when you connect, so your progress sticks. EA account ${save.user}.` : '',
+        missing: `No EA App account found on this PC - ${host ? 'your server' : 'the host'} cannot save your progress.`,
+        guessed: careers > 1
+            ? 'More than one save here could be yours, so this is a guess and your progress may not stick. Pick yours below.'
+            : 'No save of this EA account found, so this is a guess and your progress may not stick. Start the game once through the EA App, close it, then check again.',
+        chosen: `Picked by you - ${used}. The others' Autolog leaves you out: the server cannot confirm a picked save.`,
+        found: save && save.id ? `Found (${save.source}) - ${used}, so your progress sticks. EA account ${save.user}.` : '',
     }[kind];
+    if (save && save.chosen_missing) {
+        text = `The save you picked (${save.chosen_missing}) is no longer in the folder - back to automatic. ${text}`;
+    }
+    /* A host's pick goes to the server as --local-id when it starts, a guest's on connect. */
+    if (kind !== 'pending' && (host ? state.server.running : state.joinedIp)) {
+        text += host ? ' A change applies the next time you start the server.' : ' A change applies the next time you connect.';
+    }
+    $('#saveText').textContent = text;
+    renderSaveList();
+}
+
+const SAVE_TAGS = [
+    ['profile', 'EA App: your game loads this', 'ok'],
+    ['suffix', 'your EA account', 'ok'],
+    ['newest', 'written last', 'accent'],
+    ['other', 'another EA account', 'warn'],
+];
+const NOT_A_SAVE = {
+    server: 'made up by a TurboRivals server - the game never loads it',
+    account: 'your EA App account number, written while it was guessed - the game never loads it',
+};
+
+/* "1 Oct, 16:31" - with the year when it is not this one (a save from 2013 is a different story). */
+function writtenAt(epoch) {
+    if (!epoch) return '';
+    const date = new Date(epoch * 1000);
+    const year = date.getFullYear() !== new Date().getFullYear() ? { year: 'numeric' } : { hour: '2-digit', minute: '2-digit' };
+    return date.toLocaleString('en-GB', { day: 'numeric', month: 'short', ...year });
+}
+
+function saveOption(id, picked, name, detail, tags) {
+    return el('button', {
+        class: 'option save-option' + (picked ? ' selected' : ''), type: 'button', role: 'radio',
+        'aria-checked': String(picked), disabled: state.savePicking || undefined,
+        html: svg(id ? 'folder' : 'wand'),
+        onclick: () => { if (!picked) chooseSave(id); },
+    }, el('span', { class: 'option-name' }, name, ...tags), el('span', { class: 'option-ip' }, detail), el('span', { class: 'option-radio' }));
+}
+
+/* Career save > Pick your save: the files in the game's settings folder (ea_identity.save_files).
+   Only "career" files can be picked; the rest are named with the reason, because a file like
+   1100944155289.sav looks just as much like a save (02.10). */
+function renderSaveList() {
+    const save = state.save;
+    const fold = $('#saveFold');
+    fold.hidden = !save || !save.user;              // no EA App account: there is nothing to pick for
+    if (fold.hidden) return;
+    const files = save.files || [];
+    const key = JSON.stringify([files, save.id, save.source, save.auto, state.savePicking]);
+    if (fold.dataset.key === key) return;
+    fold.dataset.key = key;
+    const picked = save.source === C.SAVE_CHOSEN ? save.id : 0;
+    const careers = files.filter((f) => f.kind === 'career');
+    /* Guessed with several candidates: open it, that is what the player has to do. */
+    if (C.saveState(save) === 'guessed' && careers.length > 1 && !fold.dataset.opened) {
+        fold.open = true;
+        fold.dataset.opened = '1';
+    }
+    $('#saveCount').textContent = String(careers.length);
+    const auto = save.auto || {};
+    const autoDetail = auto.id ? `${auto.id}${auto.source === C.SAVE_GUESS ? ' (a guess)' : ''}` : 'none';
+    const options = [saveOption(0, !picked, 'Automatic', autoDetail, [])];
+    careers.forEach((f) => options.push(saveOption(
+        f.id, f.id === picked, el('span', { class: 'mono' }, String(f.id)),
+        f.written ? `last written ${writtenAt(f.written)}` : '',
+        SAVE_TAGS.filter(([flag]) => f[flag]).map(([, label, tone]) => el('span', { class: 'tag', 'data-tone': tone }, label)))));
+    if (!careers.length) {
+        options.push(el('div', { class: 'options-empty' }, 'No career save of your own on this PC yet - start Rivals once through the EA App with the hosts redirect off, drive until it saves, close it.'));
+    }
+    $('#saveList').replaceChildren(...options);
+    const others = files.filter((f) => NOT_A_SAVE[f.kind]);
+    $('#saveOthers').replaceChildren(...(others.length ? [el('b', {}, 'Not career saves:')] : []),
+        ...others.map((f) => el('div', {}, el('span', { class: 'mono' }, `${f.id}.sav`), ` - ${NOT_A_SAVE[f.kind]}`)));
+}
+
+async function chooseSave(id) {
+    if (state.savePicking) return;
+    state.savePicking = true;
+    render();
+    try {
+        const result = await api('choose_save', id);
+        if (!result || !result.ok) {
+            toast((result && result.error) || 'could not pick that save', 'error');
+            return;
+        }
+        state.save = result.save;
+        const when = state.mode === 'host' ? 'next server start' : 'next connect';
+        logActivity('ok', id ? `career save ${id} picked - used from the ${when}` : 'career save back to automatic');
+        toast(id ? `Save ${id} picked` : 'Career save: automatic', 'ok');
+    } finally {
+        state.savePicking = false;
+        render();
+    }
 }
 
 /* --- server / connection --------------------------------------------- */
@@ -1335,7 +1435,8 @@ async function connect() {
         step('identify', 'run');
         const ident = await api('identify', ip, name);
         if (ident.id !== undefined) {
-            state.save = { id: ident.id, user: ident.user, saves: ident.saves, source: ident.source, persona: ident.persona };
+            const { ok, error, reason, backup, ...save } = ident;     // the rest is save_identity()
+            state.save = save;
         }
         if (ident.ok) {
             step('identify', 'ok', `Save ${ident.id} as ${C.cleanName(name)}`);
