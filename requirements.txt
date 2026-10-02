@@ -1,0 +1,5 @@
+# What the launcher runs on (Windows, Python 3.10+) and what build.ps1 builds it with - the same
+# versions CI builds and smoke-tests the installer with.
+#   venv\Scripts\python.exe -m pip install -r requirements.txt
+pywebview==6.2.1
+pyinstaller==6.22.3

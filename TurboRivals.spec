@@ -27,7 +27,9 @@ What goes in and why:
                        listed as hidden imports because nothing imports them at
                        module level in the launcher.
   * tools/hosts_switch.py - the hosts file block, shared with the console tool.
-  * cryptography     - certificate generation, so the user needs no openssl.
+
+Not in it: `cryptography`. make_stub_cert.py builds the certificate in plain
+Python, and the library was 10 MB of the 35 MB folder.
 
 Anything the program writes lives in %LOCALAPPDATA%\\TurboRivals (see
 commands.py): the bundle itself is unpacked to a temp directory and wiped on
@@ -83,6 +85,8 @@ a = Analysis(
         # the launcher used customtkinter before the move to pywebview; Pillow
         # came with it. Neither is referenced any more.
         'tkinter', 'customtkinter', 'PIL',
+        # installed for the tests' certificate reference, never imported by the launcher
+        'cryptography',
     ],
     noarchive=False,
     optimize=0,

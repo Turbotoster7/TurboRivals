@@ -1,12 +1,12 @@
 ; TurboRivals - Inno Setup script
 ;
-; Builds dist\TurboRivalsSetup.exe out of the one-folder PyInstaller build in
+; Builds dist\TurboRivalsSetup-<version>.exe out of the one-folder PyInstaller build in
 ; dist\TurboRivals. Run it through ..\build.ps1, which makes that folder first.
 ;
 ; Per-user on purpose: PrivilegesRequired=lowest installs into
 ; %LOCALAPPDATA%\Programs without a UAC prompt. The launcher needs
 ; administrator rights only at runtime, for the hosts file and the firewall,
-; and it asks for them itself with its own ELEVATE button.
+; and it asks for them itself ("Restart as admin" in its Setup list).
 
 #define AppName      "TurboRivals"
 ; Read from ..\VERSION so the setup, the exe resource and the launcher window

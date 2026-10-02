@@ -5,26 +5,31 @@ body:
   - type: markdown
     attributes:
       value: |
+        **The quickest way to fill this in:** *Report a problem* in the launcher's sidebar (1.1 and
+        later) gathers the version, Windows, role, network, the setup checks, your career save and the
+        end of the server log into one text. Paste it into *What happened*.
+
         **Please check these first — they are the most common reports and none of them is a bug:**
 
         - **"Windows protected your PC"** — the build is not signed. Choose *More info* → *Run anyway*.
         - **`Failed to resolve Python.Runtime.Loader.Initialize`** — you ran it from a folder
           extracted out of a downloaded archive. Install with `TurboRivalsSetup-x.y.z.exe` instead.
         - **A player connects and is dropped straight away** — their EA App is not running or not
-          signed in, so the game never gets an Origin token. The launcher's `EA APP` row shows this.
+          signed in, so the game never gets an Origin token. The launcher's *EA App* row shows this,
+          and since 1.1 the host's server says so too (a `[hint]` line, shown under *Activity*).
         - **A joining player's game "cannot connect" and the host's log shows nothing from them** —
           an old `gosredirector.ea.com` line in that player's `hosts` file. Launcher 1.0.2 and later
           removes it; on older versions see *Known issues* in the readme.
-        - **Progress (paint, cars) does not stick** — check *YOUR CAREER SAVE* in *JOIN A SESSION*.
-          Orange means the launcher had to guess which save the game loads; the readme's
-          *Career saves* section says what to do.
+        - **Progress (paint, cars) does not stick** — check *Career save* on the *Join a session*
+          page (*YOUR CAREER SAVE* in 1.0.x). Orange means the launcher had to guess which save the
+          game loads; the readme's *Career saves* section says what to do.
 
   - type: input
     id: version
     attributes:
       label: Launcher version
-      description: Shown in the window header, next to "NFS RIVALS // ALLDRIVE".
-      placeholder: "1.0.6"
+      description: Shown in the title bar next to "TurboRivals" (1.0.x - in the header, next to "NFS Rivals · AllDrive").
+      placeholder: "1.1.0"
     validations:
       required: true
 
@@ -62,10 +67,10 @@ body:
   - type: textarea
     id: preflight
     attributes:
-      label: PRE-FLIGHT CHECK
+      label: Setup checks (PRE-FLIGHT CHECK in 1.0.x)
       description: >
-        A screenshot of the launcher window is ideal — it shows every check at once.
-        Otherwise say which rows were green and which were not.
+        A screenshot of the launcher window is ideal — it shows every check at once — or the
+        report from *Report a problem*. Otherwise say which rows were green and which were not.
     validations:
       required: true
 
@@ -74,7 +79,9 @@ body:
     attributes:
       label: Server log
       description: >
-        From the SERVER LOG panel, the part around the failure. The lines naming a
+        The part around the failure, from the launcher's *Server log* page (its *Everything*
+        view; 1.0.x shows the log at the bottom of the window) or from the file in
+        %LOCALAPPDATA%\TurboRivals\logs. The lines naming a
         component and command (`Fire2 comp=… cmd=…`) are the useful ones. Paste them as
         text rather than a screenshot if you can.
       render: text
@@ -82,10 +89,10 @@ body:
   - type: input
     id: career-save
     attributes:
-      label: YOUR CAREER SAVE (only if progress does not stick)
+      label: Your career save (only if progress does not stick)
       description: >
-        The number and the note under it in *JOIN A SESSION* on the affected machine, e.g.
-        "1802434674 — Found (the only EA save file)".
+        The number and the note under *Career save* on the *Join a session* page of the
+        affected machine, e.g. "1802434674 — Found (the only EA save file)".
 
   - type: input
     id: windows

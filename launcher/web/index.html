@@ -3,226 +3,394 @@
 <head>
     <meta charset="UTF-8">
     <title>TurboRivals Launcher</title>
+    <meta name="color-scheme" content="dark">
+    <link rel="icon" href="icon.ico">
     <!-- Fonts are served from web/fonts/, never from a CDN: pywebview only injects
          its JS bridge on NavigationCompleted, so a blocking cross-origin request
          would hold the whole UI hostage (and break the launcher offline). -->
     <link rel="stylesheet" href="css/style.css">
 </head>
-<body>
+<body class="booting" data-mode="host" data-page="session">
 
-<div class="loader-screen" id="loader">
-    <div class="hud-circle"></div>
-    <div class="loader-content">
-        <div class="loader-text">
-            <div class="log-line">&gt; BOOT SEQUENCE... <span class="ok">INIT</span></div>
-            <div class="log-line">&gt; CHECKING HOSTS... <span class="ok">OK</span></div>
-            <div class="log-line">&gt; ARMING BLAZE... <span class="blink">READY</span></div>
-        </div>
-        <div class="loader-bar-bg"><div class="loader-bar-fill" id="loaderBar"></div></div>
-        <div class="loader-percent" id="loaderPercent">0%</div>
+<svg class="sprite" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3l7 3v5.2c0 4.4-2.9 8.3-7 9.8-4.1-1.5-7-5.4-7-9.8V6l7-3z"/></symbol>
+    <symbol id="i-app" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><path d="M3.5 9h17"/></symbol>
+    <symbol id="i-key" viewBox="0 0 24 24"><circle cx="8" cy="12" r="3.6"/><path d="M11.6 12H21M17.5 12v3M20.5 12v2.2"/></symbol>
+    <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.6"/><path d="M3.4 12h17.2M12 3.4c2.4 2.4 3.6 5.3 3.6 8.6s-1.2 6.2-3.6 8.6c-2.4-2.4-3.6-5.3-3.6-8.6S9.6 5.8 12 3.4z"/></symbol>
+    <symbol id="i-wall" viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="14" rx="1.5"/><path d="M3.5 9.7h17M3.5 14.3h17M9 5v4.7M15 9.7v4.6M9 14.3V19"/></symbol>
+    <symbol id="i-plug" viewBox="0 0 24 24"><path d="M9 3.5V8M15 3.5V8M7 8h10v3.2a5 5 0 0 1-10 0V8zM12 16.2v4.3"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.6l4.4 4.4L19 7.4"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 4.2l8.6 15H3.4z"/><path d="M12 10v4.2M12 16.9v.2"/></symbol>
+    <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.6"/><path d="M12 11v5.5M12 7.8v.2"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/></symbol>
+    <symbol id="i-minus" viewBox="0 0 24 24"><path d="M6.5 12h11"/></symbol>
+    <symbol id="i-help" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.6"/><path d="M9.6 9.6a2.5 2.5 0 1 1 3.5 2.3c-.7.3-1.1.9-1.1 1.6v.5M12 16.8v.2"/></symbol>
+    <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 7h9M17 7h3M4 17h3M11 17h9M15 5v4M9 15v4"/></symbol>
+    <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8.5" y="8.5" width="11" height="11" rx="2"/><path d="M15.5 8.5V6a1.5 1.5 0 0 0-1.5-1.5H6A1.5 1.5 0 0 0 4.5 6v8A1.5 1.5 0 0 0 6 15.5h2.5"/></symbol>
+    <symbol id="i-server" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="6.5" rx="1.6"/><rect x="4" y="13.5" width="16" height="6.5" rx="1.6"/><path d="M7.5 7.2h.01M7.5 16.8h.01"/></symbol>
+    <symbol id="i-users" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.4"/><path d="M2.8 19.5c.7-3.4 3.2-5.3 6.2-5.3s5.5 1.9 6.2 5.3M15.6 4.8a3.4 3.4 0 0 1 0 6.4M18 14.6c1.6.8 2.7 2.4 3.1 4.9"/></symbol>
+    <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5.5l10.5 6.5L8 18.5z"/></symbol>
+    <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6.5" y="6.5" width="11" height="11" rx="2"/></symbol>
+    <symbol id="i-gamepad" viewBox="0 0 24 24"><path d="M7.5 7.5h9a4.5 4.5 0 0 1 4.4 5.4l-.8 3.9a2.3 2.3 0 0 1-4 .9L14.5 16h-5l-1.6 1.7a2.3 2.3 0 0 1-4-.9l-.8-3.9a4.5 4.5 0 0 1 4.4-5.4z"/><path d="M8 10.5v3M6.5 12h3M15.5 11h.01M17.5 13h.01"/></symbol>
+    <symbol id="i-terminal" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><path d="M7.5 9.5l3 2.5-3 2.5M12.5 15h4"/></symbol>
+    <symbol id="i-camera" viewBox="0 0 24 24"><path d="M4 8.5h3l1.8-2.8h6.4L17 8.5h3V19H4z"/><circle cx="12" cy="13.3" r="3.3"/></symbol>
+    <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="9.5" rx="2"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/></symbol>
+    <symbol id="i-lan" viewBox="0 0 24 24"><rect x="9" y="3.5" width="6" height="4.5" rx="1"/><rect x="3" y="16" width="6" height="4.5" rx="1"/><rect x="15" y="16" width="6" height="4.5" rx="1"/><path d="M12 8v4M6 16v-4h12v4"/></symbol>
+    <symbol id="i-ghost" viewBox="0 0 24 24"><path d="M6 20V10.5a6 6 0 0 1 12 0V20l-2-1.4-2 1.4-2-1.4-2 1.4-2-1.4z"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M19.5 11.5a7.5 7.5 0 1 0-2.2 5.3"/><path d="M19.8 5v6.3h-6.3"/></symbol>
+    <symbol id="i-wand" viewBox="0 0 24 24"><path d="M4 20L15 9M14 4v3M19 9h-3M17.5 5.5l-2 2M6.5 4.5v2M5.5 5.5h2M19.5 15.5v2M18.5 16.5h2"/></symbol>
+    <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3.5 6.5A1.5 1.5 0 0 1 5 5h4l2 2.2h8A1.5 1.5 0 0 1 20.5 8.7v9.3A1.5 1.5 0 0 1 19 19.5H5A1.5 1.5 0 0 1 3.5 18z"/></symbol>
+    <symbol id="i-chevron" viewBox="0 0 24 24"><path d="M9 6.5l5.5 5.5L9 17.5"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.8" cy="10.8" r="6.3"/><path d="M15.5 15.5l4.5 4.5"/></symbol>
+    <symbol id="i-external" viewBox="0 0 24 24"><path d="M14 4.5h5.5V10M19.5 4.5l-8.5 8.5M17.5 14v5.5h-13v-13H10"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5.5v13M5.5 12h13"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24"><path d="M5 7h14M10 7V4.5h4V7M7 7l1 12.5h8L17 7"/></symbol>
+    <symbol id="i-activity" viewBox="0 0 24 24"><path d="M3.5 12h4l2.5-6 4 12 2.5-6h4"/></symbol>
+</svg>
+
+<header class="titlebar">
+    <div class="titlebar-brand pywebview-drag-region">
+        <span class="app-mark" aria-hidden="true">TR</span>
+        <span class="titlebar-name">TurboRivals</span>
+        <span class="titlebar-version" id="appVersion"></span>
     </div>
-</div>
-
-<div class="cockpit-bg"><div class="grid-overlay"></div></div>
-
-<header class="tech-header pywebview-drag-region">
-    <div class="tech-brand">
-        <div class="brand-icon-box" id="brandIcon">TR</div>
-        <div class="brand-text">
-            <span class="brand-title">TURBORIVALS<span class="highlight">.LAUNCHER</span></span>
-            <span class="brand-subtitle">NFS RIVALS // ALLDRIVE <span id="appVersion"></span></span>
-        </div>
-    </div>
-
-    <div class="nav-widgets">
-        <div class="system-status" id="adminStatus">
-            <span class="status-indicator"></span>
-            <span class="status-text">CHECKING...</span>
-        </div>
-        <button class="win-btn" id="btnMinimize" title="Minimize">&minus;</button>
-        <button class="win-btn win-close" id="btnClose" title="Close">&times;</button>
+    <div class="titlebar-fill pywebview-drag-region"></div>
+    <!-- Buttons stay outside the drag regions: pywebview starts a window drag from any
+         element inside one, child elements included. -->
+    <div class="caption-buttons">
+        <button class="caption" id="btnMinimize" title="Minimize" aria-label="Minimize"><svg class="ico"><use href="#i-minus"/></svg></button>
+        <button class="caption caption-close" id="btnClose" title="Close" aria-label="Close"><svg class="ico"><use href="#i-x"/></svg></button>
     </div>
 </header>
 
-<main class="workspace">
+<div class="shell">
+    <nav class="sidebar" aria-label="Main">
+        <div class="nav-group">
+            <button class="nav-item" data-nav="host" title="Host a session"><svg class="ico"><use href="#i-server"/></svg><span>Host a session</span></button>
+            <button class="nav-item" data-nav="client" title="Join a session"><svg class="ico"><use href="#i-users"/></svg><span>Join a session</span></button>
+        </div>
+        <div class="nav-group">
+            <button class="nav-item" data-nav="logs" title="Server log (Ctrl+L)"><svg class="ico"><use href="#i-terminal"/></svg><span>Server log</span><span class="nav-badge" id="navLogBadge" hidden></span></button>
+            <button class="nav-item" data-nav="settings" title="Settings"><svg class="ico"><use href="#i-sliders"/></svg><span>Settings</span></button>
+            <button class="nav-item" data-nav="help" title="Report a problem"><svg class="ico"><use href="#i-help"/></svg><span>Report a problem</span></button>
+        </div>
+        <div class="nav-fill"></div>
+        <button class="profile" id="profileCard" title="Your name and picture">
+            <span class="avatar avatar-sm" id="profileAvatar"></span>
+            <span class="profile-text">
+                <span class="profile-name" id="profileName">&nbsp;</span>
+                <span class="profile-status"><span class="dot" id="profileDot"></span><span id="profileStatus">Starting&hellip;</span></span>
+            </span>
+        </button>
+    </nav>
 
-    <!-- ================= LEFT COLUMN: CONFIGURATION ================= -->
-    <section class="column column-config">
+    <main class="main" id="main">
 
-        <nav class="tech-menu" id="modeMenu">
-            <button class="nav-link active" data-mode="host">
-                <span class="link-bracket">[</span> HOST A SESSION <span class="link-bracket">]</span>
+        <!-- ===================== SESSION (host / join) ===================== -->
+        <section class="page" data-page="session">
+            <header class="page-head">
+                <div class="page-titles">
+                    <h1 id="pageTitle">Host a session</h1>
+                    <p id="pageSub">&nbsp;</p>
+                </div>
+                <div class="page-actions">
+                    <button class="btn btn-secondary" id="btnGame"><svg class="ico"><use href="#i-gamepad"/></svg><span>Launch game</span></button>
+                    <button class="btn btn-primary host-only" id="btnServer"><svg class="ico ico-fill"><use href="#i-play"/></svg><span>Start server</span></button>
+                    <button class="btn btn-primary client-only" id="btnConnect"><svg class="ico ico-fill"><use href="#i-play"/></svg><span>Connect &amp; play</span></button>
+                </div>
+            </header>
+
+            <div class="banner" id="banner" hidden>
+                <svg class="ico banner-icon"><use href="#i-info"/></svg>
+                <div class="banner-text" id="bannerText"></div>
+                <button class="btn btn-secondary btn-sm" id="bannerFix" hidden><svg class="ico"><use href="#i-wand"/></svg><span>Fix all</span></button>
+            </div>
+
+            <div class="grid">
+              <div class="col col-a">
+                <!-- setup -->
+                <article class="card card-setup" id="setupCard" aria-labelledby="setupTitle">
+                    <button class="card-head card-toggle" id="setupToggle" aria-expanded="true" aria-controls="setupBody">
+                        <h2 id="setupTitle">Setup</h2>
+                        <span class="card-meta" id="setupCount">&ndash;</span>
+                        <svg class="ico toggle-chevron"><use href="#i-chevron"/></svg>
+                    </button>
+                    <div class="progress" aria-hidden="true"><span id="setupBar"></span></div>
+                    <div class="setup-body" id="setupBody">
+                    <ul class="checks" id="checkList">
+                        <li class="check" data-check="admin">
+                            <span class="check-state"></span>
+                            <div class="check-body"><span class="check-title">Administrator rights</span><span class="check-detail"></span></div>
+                            <button class="btn btn-sm btn-secondary" data-fix="admin">Restart as admin</button>
+                        </li>
+                        <li class="check" data-check="eaApp">
+                            <span class="check-state"></span>
+                            <div class="check-body"><span class="check-title">EA App</span><span class="check-detail"></span></div>
+                        </li>
+                        <li class="check" data-check="cert">
+                            <span class="check-state"></span>
+                            <div class="check-body"><span class="check-title">Server certificate</span><span class="check-detail"></span></div>
+                            <button class="btn btn-sm btn-secondary" data-fix="cert">Generate</button>
+                        </li>
+                        <li class="check" data-check="hosts">
+                            <span class="check-state"></span>
+                            <div class="check-body"><span class="check-title">Hosts redirect</span><span class="check-detail"></span></div>
+                            <button class="btn btn-sm btn-secondary" data-fix="hosts">Turn on</button>
+                        </li>
+                        <li class="check" data-check="firewall">
+                            <span class="check-state"></span>
+                            <div class="check-body"><span class="check-title">Firewall rules</span><span class="check-detail"></span></div>
+                            <button class="btn btn-sm btn-secondary" data-fix="firewall">Add rules</button>
+                        </li>
+                        <li class="check" data-check="ports">
+                            <span class="check-state"></span>
+                            <div class="check-body"><span class="check-title">Server ports</span><span class="check-detail"></span></div>
+                            <button class="btn btn-sm btn-ghost" data-fix="ports">Check again</button>
+                        </li>
+                    </ul>
+                    <footer class="card-foot">
+                        <button class="btn btn-secondary btn-sm" id="btnFixAll"><svg class="ico"><use href="#i-wand"/></svg><span>Fix all</span></button>
+                        <button class="btn btn-ghost btn-sm" id="btnRecheck"><svg class="ico"><use href="#i-refresh"/></svg><span>Check again</span></button>
+                    </footer>
+                    </div>
+                </article>
+                <!-- online now -->
+                <article class="card card-online" aria-labelledby="onlineTitle">
+                    <header class="card-head"><h2 id="onlineTitle">Online now</h2><span class="card-meta" id="onlineCount">0</span></header>
+                    <ul class="list" id="roster"></ul>
+                </article>
+
+                <!-- activity -->
+                <article class="card card-events" aria-labelledby="eventsTitle">
+                    <header class="card-head"><h2 id="eventsTitle">Activity</h2></header>
+                    <ul class="events" id="eventList"></ul>
+                </article>
+              </div>
+              <div class="col col-b">
+                <!-- your session -->
+                <article class="card card-session" aria-labelledby="sessionTitle">
+                    <header class="card-head"><h2 id="sessionTitle">You</h2></header>
+                    <div class="identity">
+                        <button class="avatar avatar-lg avatar-pick" id="avatarPick" title="Choose your picture - everyone in the session sees it">
+                            <span class="avatar-img" id="avatarImg"></span>
+                            <span class="avatar-edit"><svg class="ico"><use href="#i-camera"/></svg></span>
+                        </button>
+                        <div class="field grow">
+                            <label for="nameInput">Name in the session</label>
+                            <input id="nameInput" class="input" maxlength="40" autocomplete="off" spellcheck="false" placeholder="Nickname">
+                            <div class="hint" id="nameNote">&nbsp;</div>
+                        </div>
+                    </div>
+
+                    <div class="host-only stack edit-while-stopped">
+                        <div class="field">
+                            <label for="publicIp">Players connect to</label>
+                            <div class="options" id="adapterList" role="radiogroup" aria-label="Network adapters"></div>
+                            <div class="input-row">
+                                <input id="publicIp" class="input mono" autocomplete="off" spellcheck="false" placeholder="Or type an address">
+                                <button class="btn btn-secondary btn-sm" id="btnCopyIp" title="Copy - send it to the players"><svg class="ico"><use href="#i-copy"/></svg><span>Copy</span></button>
+                            </div>
+                            <div class="hint" id="ipNote">&nbsp;</div>
+                        </div>
+                        <details class="disclosure" id="guestFold">
+                            <summary><svg class="ico disclosure-chevron"><use href="#i-chevron"/></svg><span>Players without the launcher</span><span class="tag" id="slotsPill">0/5</span></summary>
+                            <p class="hint">Only for players who join without this launcher - with it, everyone names themselves. Use the address their VPN or network card shows.</p>
+                            <div class="input-row three">
+                                <input id="newNick" class="input" placeholder="Name" autocomplete="off" spellcheck="false">
+                                <input id="newIp" class="input mono" placeholder="Address" autocomplete="off" spellcheck="false">
+                                <button class="btn btn-secondary btn-sm" id="btnAddPlayer"><svg class="ico"><use href="#i-plus"/></svg><span>Add</span></button>
+                            </div>
+                            <ul class="list" id="guestList"></ul>
+                        </details>
+                    </div>
+
+                    <div class="client-only stack">
+                        <div class="field">
+                            <label for="serverIp">Host address</label>
+                            <div class="input-row">
+                                <input id="serverIp" class="input mono" autocomplete="off" spellcheck="false" placeholder="The address the host's launcher shows">
+                                <button class="btn btn-secondary btn-sm" id="btnTestHost" title="Is a TurboRivals server answering there?"><svg class="ico"><use href="#i-search"/></svg><span>Test</span></button>
+                            </div>
+                            <div class="chips" id="recentList"></div>
+                            <div class="hint" id="hostNote">&nbsp;</div>
+                        </div>
+                        <div class="save" id="saveCard" data-state="pending">
+                            <div class="save-row">
+                                <span class="save-label">Career save</span>
+                                <span class="tag" id="savePill">Checking</span>
+                            </div>
+                            <div class="save-id mono" id="saveId">&mdash;</div>
+                            <p class="hint" id="saveText">&nbsp;</p>
+                        </div>
+                    </div>
+                </article>
+
+                <!-- server (host) / connection (join) -->
+                <article class="card card-status" aria-labelledby="statusTitle">
+                    <header class="card-head">
+                        <h2 id="statusTitle">Server</h2>
+                        <span class="state-pill" id="serverPill"><span class="dot"></span><span id="serverState">Stopped</span></span>
+                    </header>
+                    <div class="host-only stack" id="serverCard" data-state="off">
+                        <dl class="facts">
+                            <div><dt>Players connect to</dt><dd><span class="mono" id="serverAddr">&mdash;</span><button class="btn btn-ghost btn-icon btn-xs" id="btnCopyAddr" title="Copy the address"><svg class="ico"><use href="#i-copy"/></svg></button></dd></div>
+                            <div><dt>Running for</dt><dd class="mono" id="serverUptime">&mdash;</dd></div>
+                            <div><dt>Log</dt><dd><button class="link" id="serverLogLink">Open the log folder</button></dd></div>
+                        </dl>
+                        <ul class="blockers" id="hostBlockers"></ul>
+                    </div>
+                    <div class="client-only stack" id="connectCard" data-state="off">
+                        <ol class="steps" id="connectSteps" aria-live="polite">
+                            <li data-step="redirect"><span class="step-dot"></span><div><b>Point the game at the host</b><span class="step-note"></span></div></li>
+                            <li data-step="dns"><span class="step-dot"></span><div><b>Check what the game will reach</b><span class="step-note"></span></div></li>
+                            <li data-step="identify"><span class="step-dot"></span><div><b>Register your career save</b><span class="step-note"></span></div></li>
+                            <li data-step="picture"><span class="step-dot"></span><div><b>Send your picture</b><span class="step-note"></span></div></li>
+                            <li data-step="launch"><span class="step-dot"></span><div><b>Launch the game</b><span class="step-note"></span></div></li>
+                        </ol>
+                        <ul class="blockers" id="joinBlockers"></ul>
+                    </div>
+                </article>
+
+              </div>
+            </div>
+        </section>
+
+        <!-- ===================== LOGS ===================== -->
+        <section class="page page-fill" data-page="logs">
+            <header class="page-head">
+                <div class="page-titles">
+                    <h1>Server log</h1>
+                    <p id="logsSub">&nbsp;</p>
+                </div>
+                <div class="page-actions">
+                    <button class="btn btn-secondary btn-icon" id="btnCopyLog" title="Copy the whole log"><svg class="ico"><use href="#i-copy"/></svg></button>
+                    <button class="btn btn-secondary btn-icon" id="btnLogFolder" title="Open the folder with the log files"><svg class="ico"><use href="#i-folder"/></svg></button>
+                    <button class="btn btn-secondary btn-icon" id="btnClearLog" title="Clear the window - the log file keeps everything"><svg class="ico"><use href="#i-trash"/></svg></button>
+                </div>
+            </header>
+            <div class="toolbar">
+                <div class="segmented" id="logTabs" role="tablist">
+                    <button data-tab="server" class="active">Server</button>
+                    <button data-tab="activity">Launcher</button>
+                </div>
+                <div class="segmented" id="logViews">
+                    <button data-view="key">Key events</button>
+                    <button data-view="standard">Standard</button>
+                    <button data-view="raw">Everything</button>
+                    <button data-view="problems">Problems <span class="count" id="countProblems" hidden></span></button>
+                </div>
+                <label class="search"><svg class="ico"><use href="#i-search"/></svg><input id="logSearch" placeholder="Filter" autocomplete="off" spellcheck="false"></label>
+            </div>
+            <div class="card log-card">
+                <div class="log mono" id="logView" tabindex="0"></div>
+                <div class="log mono" id="activityView" tabindex="0" hidden></div>
+                <footer class="log-foot">
+                    <code class="cmd mono" id="cmdPreview"></code>
+                    <label class="switch-line"><input type="checkbox" class="switch" id="followLog" checked><span>Follow new lines</span></label>
+                </footer>
+            </div>
+        </section>
+
+        <!-- ===================== SETTINGS ===================== -->
+        <section class="page" data-page="settings">
+            <header class="page-head">
+                <div class="page-titles">
+                    <h1>Settings</h1>
+                    <p>TurboRivals <span id="aboutVersion"></span></p>
+                </div>
+            </header>
+            <div class="settings">
+                <article class="card">
+                    <header class="card-head"><h2>When the launcher closes</h2></header>
+                    <p class="hint">The hosts redirect breaks the EA App and other EA games while it is on. Keep it only while you are still playing.</p>
+                    <div class="segmented segmented-full" id="restorePref">
+                        <button data-pref="ask">Ask me</button>
+                        <button data-pref="always">Remove it</button>
+                        <button data-pref="never">Keep it</button>
+                    </div>
+                </article>
+                <article class="card">
+                    <header class="card-head"><h2>Protocol captures</h2></header>
+                    <label class="switch-line">
+                        <input type="checkbox" class="switch" id="keepCaptures">
+                        <span>Keep a copy of every Blaze message the server receives<small>For working on the protocol. A session writes hundreds of small files into the capture folder.</small></span>
+                    </label>
+                </article>
+                <article class="card">
+                    <header class="card-head"><h2>Folders</h2></header>
+                    <div class="button-row">
+                        <button class="btn btn-secondary btn-sm" data-folder="logs"><svg class="ico"><use href="#i-folder"/></svg><span>Server logs</span></button>
+                        <button class="btn btn-secondary btn-sm" data-folder="save-backups"><svg class="ico"><use href="#i-folder"/></svg><span>Save backups</span></button>
+                        <button class="btn btn-secondary btn-sm" data-folder="saves"><svg class="ico"><use href="#i-folder"/></svg><span>Career saves</span></button>
+                        <button class="btn btn-secondary btn-sm" data-folder="data"><svg class="ico"><use href="#i-folder"/></svg><span>Launcher data</span></button>
+                    </div>
+                </article>
+                <article class="card">
+                    <header class="card-head"><h2>Help and project</h2></header>
+                    <div class="button-row">
+                        <button class="btn btn-secondary btn-sm" data-link="#how-to-play"><svg class="ico"><use href="#i-external"/></svg><span>How to play</span></button>
+                        <button class="btn btn-secondary btn-sm" data-link="/discussions"><svg class="ico"><use href="#i-external"/></svg><span>Ask a question</span></button>
+                        <button class="btn btn-secondary btn-sm" data-link=""><svg class="ico"><use href="#i-external"/></svg><span>Project page</span></button>
+                    </div>
+                </article>
+            </div>
+        </section>
+    </main>
+</div>
+
+<div class="toasts" id="toasts" aria-live="polite"></div>
+
+<!-- ===================== DIALOGS ===================== -->
+<div class="modal" id="welcomeModal" hidden role="dialog" aria-modal="true" aria-labelledby="welcomeTitle">
+    <div class="dialog dialog-wide">
+        <span class="app-mark app-mark-lg" aria-hidden="true">TR</span>
+        <h3 id="welcomeTitle">Welcome to TurboRivals</h3>
+        <p class="dialog-text">Need for Speed Rivals online again: AllDrive sessions for up to six players, over your own network or a VPN like Radmin. What will this PC do?</p>
+        <div class="choices">
+            <button class="choice" data-choose="host">
+                <svg class="ico"><use href="#i-server"/></svg>
+                <b>Host a session</b>
+                <span>Run the server on this PC. Your friends join you.</span>
             </button>
-            <button class="nav-link" data-mode="client">
-                <span class="link-bracket">[</span> JOIN A SESSION <span class="link-bracket">]</span>
+            <button class="choice" data-choose="client">
+                <svg class="ico"><use href="#i-users"/></svg>
+                <b>Join a session</b>
+                <span>Connect to a friend who hosts.</span>
             </button>
-        </nav>
-
-        <!-- --- PRE-FLIGHT --- -->
-        <div class="hud-panel">
-            <div class="panel-header">
-                <span class="panel-title">PRE-FLIGHT CHECK</span>
-                <span class="panel-tag" id="checkSummary">--</span>
-            </div>
-            <div class="panel-body">
-                <div class="check-row" id="checkAdmin">
-                    <span class="check-dot"></span>
-                    <div class="check-text">
-                        <span class="check-label">ADMINISTRATOR RIGHTS</span>
-                        <span class="check-note">required for hosts and firewall</span>
-                    </div>
-                    <button class="btn btn-mini" data-action="elevate">ELEVATE</button>
-                </div>
-
-                <div class="check-row" id="checkEaApp">
-                    <span class="check-dot"></span>
-                    <div class="check-text">
-                        <span class="check-label">EA APP</span>
-                        <span class="check-note">must be running and signed in</span>
-                    </div>
-                </div>
-
-                <div class="check-row" id="checkCert">
-                    <span class="check-dot"></span>
-                    <div class="check-text">
-                        <span class="check-label">STAND-IN CERTIFICATE</span>
-                        <span class="check-note">proto-lab/pki/server.der</span>
-                    </div>
-                    <button class="btn btn-mini" data-action="cert">GENERATE</button>
-                </div>
-
-                <div class="check-row" id="checkHosts">
-                    <span class="check-dot"></span>
-                    <div class="check-text">
-                        <span class="check-label">HOSTS REDIRECT</span>
-                        <span class="check-note" id="hostsNote">gosredirector.ea.com</span>
-                    </div>
-                    <button class="btn btn-mini" data-action="hosts-toggle" id="btnHosts">TURN ON</button>
-                </div>
-
-                <div class="check-row" id="checkFirewall">
-                    <span class="check-dot neutral"></span>
-                    <div class="check-text">
-                        <span class="check-label">FIREWALL RULES</span>
-                        <span class="check-note" id="firewallNote">server ports + P2P 3659</span>
-                    </div>
-                    <button class="btn btn-mini" data-action="firewall">ADD</button>
-                </div>
-            </div>
         </div>
+        <p class="dialog-note">You can switch at any time in the sidebar.</p>
+    </div>
+</div>
 
-        <!-- --- HOST MODE --- -->
-        <div class="hud-panel mode-panel" data-panel="host">
-            <div class="panel-header">
-                <span class="panel-title">SESSION SETUP</span>
-                <span class="panel-tag" id="slotsTag">0/5 SLOTS</span>
-            </div>
-            <div class="panel-body">
-                <div class="field">
-                    <span class="field-label">YOUR NAME &amp; PICTURE</span>
-                    <div class="name-row">
-                        <button type="button" class="avatar-pick" data-avatar-pick title="Set your picture - everyone in the session sees it"></button>
-                        <input type="text" id="persona" class="tech-input" placeholder="host" autocomplete="off">
-                    </div>
-                </div>
-
-                <div class="field">
-                    <span class="field-label">ADDRESS OTHER PLAYERS REACH YOU ON</span>
-                    <div class="addr-chips" id="addrChips"></div>
-                    <input type="text" id="publicIp" class="tech-input" placeholder="or type an address" autocomplete="off">
-                </div>
-                <p class="field-hint" id="ipHint">&nbsp;</p>
-
-                <div class="player-add">
-                    <input type="text" id="newNick" class="tech-input" placeholder="PLAYER NAME" autocomplete="off">
-                    <input type="text" id="newIp" class="tech-input" placeholder="THEIR ADDRESS" autocomplete="off">
-                    <button class="btn btn-outline btn-add" id="btnAddPlayer">+ ADD</button>
-                </div>
-
-                <ul class="player-list" id="playerList"></ul>
-
-                <div class="field online-now">
-                    <span class="field-label">ONLINE NOW</span>
-                    <ul class="online-list"></ul>
-                </div>
-            </div>
+<div class="modal" id="reportModal" hidden role="dialog" aria-modal="true" aria-labelledby="reportTitle">
+    <div class="dialog dialog-wide">
+        <h3 id="reportTitle">Report a problem</h3>
+        <p class="dialog-text">Everything the issue form asks for, gathered from this PC. Paths are shortened, so your Windows user name stays out of it. Paste it into the issue.</p>
+        <textarea class="report mono" id="reportText" readonly spellcheck="false"></textarea>
+        <div class="dialog-actions">
+            <button class="btn btn-ghost" data-close>Close</button>
+            <button class="btn btn-secondary" id="btnReportLogs"><svg class="ico"><use href="#i-folder"/></svg><span>Log files</span></button>
+            <button class="btn btn-secondary" id="btnReportIssue"><svg class="ico"><use href="#i-external"/></svg><span>Open the issue form</span></button>
+            <button class="btn btn-primary" id="btnReportCopy"><svg class="ico"><use href="#i-copy"/></svg><span>Copy report</span></button>
         </div>
+    </div>
+</div>
 
-        <!-- --- CLIENT MODE --- -->
-        <div class="hud-panel mode-panel hidden" data-panel="client">
-            <div class="panel-header">
-                <span class="panel-title">CONNECT TO HOST</span>
-                <span class="panel-tag">CLIENT</span>
-            </div>
-            <div class="panel-body">
-                <label class="field">
-                    <span class="field-label">SERVER ADDRESS (READ OUT BY THE HOST)</span>
-                    <input type="text" id="serverIp" class="tech-input" placeholder="the address the host's launcher shows" autocomplete="off">
-                </label>
-                <p class="field-hint">
-                    The launcher writes this address into <span class="mono">hosts</span> as
-                    <span class="mono">gosredirector.ea.com</span> and flushes the DNS cache.
-                    Turn the redirect off when you are done &mdash; a leftover entry breaks the EA App.
-                </p>
-                <div class="field">
-                    <span class="field-label">YOUR NAME &amp; PICTURE (SHOWN TO OTHER PLAYERS)</span>
-                    <div class="name-row">
-                        <button type="button" class="avatar-pick" data-avatar-pick title="Set your picture - everyone in the session sees it"></button>
-                        <input type="text" id="guestName" class="tech-input" maxlength="32" placeholder="your nickname" autocomplete="off">
-                    </div>
-                </div>
-                <label class="field">
-                    <span class="field-label">YOUR CAREER SAVE (SENT TO THE HOST)</span>
-                    <input type="text" id="saveId" class="tech-input mono" readonly value="--">
-                </label>
-                <p class="field-hint" id="saveHint">&nbsp;</p>
-                <div class="field online-now">
-                    <span class="field-label">ONLINE NOW</span>
-                    <ul class="online-list"></ul>
-                </div>
-                <div class="client-steps">
-                    <div class="step"><span class="step-num">01</span> EA App running in the background</div>
-                    <div class="step"><span class="step-num">02</span> same network as the host, or on their VPN</div>
-                    <div class="step"><span class="step-num">03</span> HOSTS REDIRECT = ON</div>
-                    <div class="step"><span class="step-num">04</span> in game: "Search for session"</div>
-                </div>
-            </div>
+<div class="modal" id="closeModal" hidden role="dialog" aria-modal="true" aria-labelledby="closeTitle">
+    <div class="dialog">
+        <h3 id="closeTitle">Remove the redirect before closing?</h3>
+        <p class="dialog-text" id="closeText"></p>
+        <label class="switch-line"><input type="checkbox" class="switch" id="closeRemember"><span>Remember my choice</span></label>
+        <div class="dialog-actions">
+            <button class="btn btn-ghost" data-close>Cancel</button>
+            <button class="btn btn-secondary" id="btnCloseKeep">Keep it and close</button>
+            <button class="btn btn-primary" id="btnCloseRestore">Remove and close</button>
         </div>
-
-    </section>
-
-    <!-- ================= RIGHT COLUMN: TELEMETRY ================= -->
-    <section class="column column-telemetry">
-
-        <div class="hud-panel full-height">
-            <div class="panel-header">
-                <span class="panel-title">SERVER LOG</span>
-                <div class="panel-actions">
-                    <span class="status" id="serverStatus">OFFLINE</span>
-                    <button class="btn btn-mini" id="btnClearLog">CLEAR</button>
-                </div>
-            </div>
-            <div class="panel-body log-body" id="logBody">
-                <div class="log-empty">&gt; server is down &mdash; start it to watch the Blaze traffic</div>
-            </div>
-            <div class="panel-footer">
-                <span class="cmd-preview mono" id="cmdPreview">&nbsp;</span>
-            </div>
-        </div>
-
-        <div class="action-bar">
-            <button class="btn btn-primary" id="btnServer" data-panel="host">START SERVER</button>
-            <button class="btn btn-primary" id="btnConnect" data-panel="client">REDIRECT AND PLAY</button>
-            <button class="btn btn-outline" id="btnGame">LAUNCH GAME</button>
-        </div>
-
-    </section>
-
-</main>
-
-<div class="toast-stack" id="toasts"></div>
+    </div>
+</div>
 
 <input type="file" id="avatarFile" accept="image/*" hidden>
+<script src="js/core.js"></script>
 <script src="js/app.js"></script>
 </body>
 </html>

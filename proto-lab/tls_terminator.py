@@ -34,6 +34,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import base64
+import errno
 import hashlib
 import hmac
 import json
@@ -56,6 +57,28 @@ import player_store  # noqa: E402  (progress saving from GameReporting reports)
 import lobby  # noqa: E402  (player sessions and games - multiplayer)
 import ea_identity  # noqa: E402  (which EA save id a player must log in under)
 
+
+def _install_line_print() -> None:
+    """print() as one write per call, under a lock. The built-in writes the text and the line
+    end separately, so two connection threads printing at once ran their lines together
+    ("...(QoS HTTP)[identity] local player...") - in the log, in bug reports, and for the
+    launcher, which reads the log line by line."""
+    import builtins
+
+    lock = threading.Lock()
+
+    def line_print(*args, sep=" ", end="\n", file=None, flush=False):
+        target = sys.stdout if file is None else file
+        if target is None:                       # windowed build without stdio
+            return
+        text = (" " if sep is None else sep).join(map(str, args)) + ("\n" if end is None else end)
+        with lock:
+            target.write(text)
+            if flush:
+                target.flush()
+
+    builtins.print = line_print
+
 # --- protocol constants ---
 VER_TLS11 = 0x0302
 CIPHER_RC4_SHA = 0x0005
@@ -64,6 +87,8 @@ HS_CLIENT_HELLO, HS_SERVER_HELLO, HS_CERTIFICATE = 1, 2, 11
 HS_SERVER_HELLO_DONE, HS_CLIENT_KEY_EXCHANGE, HS_FINISHED = 14, 16, 20
 MAC_LEN = 20            # HMAC-SHA1
 RC4_KEY_LEN = 16        # RC4_128
+KEEPALIVE_LOG_EVERY = 20             # keepalive PINGs logged after the first three
+HTTP_BODY_MAX = 16 * 1024 * 1024     # largest ByteVault request body accepted
 
 
 # ---------------------------------------------------------------- cryptography
@@ -327,6 +352,7 @@ def handle(conn: socket.socket, addr, args, out_dir: Path,
 
     w = Wire(conn)
     sess = None                                       # Blaze session (lobby.py) - after the handshake
+    preauth_seen = login_seen = False                 # for the hint when the connection ends
     transcript = b""                                  # handshake messages (with headers)
     try:
         # 1. ClientHello
@@ -405,7 +431,9 @@ def handle(conn: socket.socket, addr, args, out_dir: Path,
             _drain_alert(rtype, app)
             return
 
-        out_dir.mkdir(parents=True, exist_ok=True)
+        capture = not getattr(args, "no_capture", False)
+        if capture:
+            out_dir.mkdir(parents=True, exist_ok=True)
 
         # ByteVault connects to THE SAME port, but speaks HTTP (REST), not Fire2. In run-22
         # such connections hung on "tail ... waiting for the rest of the frame".
@@ -440,7 +468,8 @@ def handle(conn: socket.socket, addr, args, out_dir: Path,
                     pkt = bytes(buf[:total])
                     del buf[:total]
                     frameno += 1
-                    (out_dir / f"blaze-{tag}-{frameno:02d}.bin").write_bytes(pkt)
+                    if capture:
+                        (out_dir / f"blaze-{tag}-{frameno:02d}.bin").write_bytes(pkt)
                     try:
                         fr = blaze.Fire2.decode(pkt)
                     except Exception as e:            # noqa: BLE001
@@ -449,6 +478,8 @@ def handle(conn: socket.socket, addr, args, out_dir: Path,
                     if fr.component == GAME_REPORTING and fr.msg_type == 0:
                         _ack_game_report(sess, fr, args)
                         continue
+                    preauth_seen = preauth_seen or (fr.component, fr.command) == (9, 7)
+                    login_seen = login_seen or (fr.component, fr.command) == (1, 152)
                     name = blaze.rpc_name(fr.component, fr.command)
                     print(f"\n  <- Fire2 comp={fr.component} cmd={fr.command} "
                           f"err={fr.error} type=0x{fr.msg_type:02x} seq={fr.seq} "
@@ -505,7 +536,12 @@ def handle(conn: socket.socket, addr, args, out_dir: Path,
                         # drops the connection with error 0x800e0000 -> teardown -> crash.
                         # A server PING resets the client's activity counter.
                         sess.send(blaze.build_server_ping(ping_seq))
-                        print(f"  -> keepalive PING seq={ping_seq}")
+                        # One every keepalive seconds per player made up most of a long
+                        # session's log; the first ones prove they flow, then a sample.
+                        if ping_seq < 3 or ping_seq % KEEPALIVE_LOG_EVERY == 0:
+                            print(f"  -> keepalive PING seq={ping_seq}" + (
+                                f" (from here on every {KEEPALIVE_LOG_EVERY}th is logged)"
+                                if ping_seq == 2 else ""))
                         ping_seq += 1
                         continue
                     print(f"  ({args.idle_timeout} s of silence - connection held, waiting)")
@@ -524,6 +560,11 @@ def handle(conn: socket.socket, addr, args, out_dir: Path,
     except (ConnectionError, ValueError, struct.error) as e:
         print(f"  session error: {e}")
     finally:
+        if preauth_seen and not login_seen:
+            # The most common failed join, and silent: without the EA App the game has no Origin
+            # token, so it stops after preAuth/ping and never sends Authentication.originLogin.
+            print(f"  [hint] {addr[0]}: the game connected but never logged in - is the EA App "
+                  f"running and signed in on that machine?")
         if sess is not None:
             _cancel_matchmaking(sess)
         if sess is not None and sess.uid:
@@ -565,14 +606,150 @@ def _bind_exclusive(s: socket.socket, port: int, purpose: str) -> None:
     excl = getattr(socket, "SO_EXCLUSIVEADDRUSE", None)
     if excl is not None:
         s.setsockopt(socket.SOL_SOCKET, excl, 1)
+    elif s.type == socket.SOCK_STREAM:
+        # Outside Windows SO_REUSEADDR never lets a second listener in; all it does is allow
+        # a restart while the last run's closed connections sit in TIME_WAIT on the port.
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     try:
         s.bind(("0.0.0.0", port))
     except OSError as e:
-        sys.exit(f"\nPORT {port} ({purpose}) IS ALREADY IN USE: {e}\n"
-                 f"Most likely a terminator from an earlier run is still running "
-                 f"(and the game then talks to THAT one, not to this process).\n"
-                 f"Check:  netstat -ano | Select-String {port}\n"
-                 f"and stop that process before starting this one.")
+        sys.stdout.flush()
+        sys.stderr.write(f"\nPORT {port} ({purpose}) IS ALREADY IN USE: {e}\n"
+                         f"Most likely a terminator from an earlier run is still running "
+                         f"(and the game then talks to THAT one, not to this process).\n"
+                         f"Check:  netstat -ano | Select-String {port}\n"
+                         f"and stop that process before starting this one.\n")
+        sys.stderr.flush()
+        # Not sys.exit(): most listeners bind in their own thread, where SystemExit ends only
+        # that thread - silently - and the server ran on without the port. Half a server is
+        # worse than none.
+        os._exit(1)
+
+
+ACCEPT_RETRY_ERRNOS = {errno.EMFILE, errno.ENFILE, errno.ENOBUFS, errno.ENOMEM}
+
+
+def _accept_forever(s: socket.socket, on_connection, what: str) -> None:
+    """accept() until the listening socket is gone. A connection that dies between its handshake
+    and accept() raises there (ECONNABORTED; WSAECONNRESET on Windows) - the peer's problem, not
+    a reason to stop listening. Before, the first such error ended the listener for the rest of
+    the session: silently in a thread, and the whole server on the main thread."""
+    while True:
+        try:
+            conn, peer = s.accept()
+        except (ConnectionError, InterruptedError):
+            continue
+        except OSError as e:
+            if e.errno in ACCEPT_RETRY_ERRNOS:            # out of handles or buffers: wait, retry
+                print(f"  [{what}] accept failed: {e} - retrying")
+                time.sleep(0.5)
+                continue
+            print(f"  [{what}] stopped listening: {e}")
+            return
+        on_connection(conn, peer)
+
+
+def _serve_qos_udp(s: socket.socket, port: int, args) -> None:
+    """QoS responder over UDP.
+
+    After preAuth the Blaze client probes the ping sites from QOSS. We point them at
+    ourselves, so we have to answer - without a reply the QoS test never
+    finishes. The reply content is built by _qos_probe_reply (the client rejects a
+    bare echo: the latency path needs >= 30 B and carries the external address).
+    """
+    n = 0
+    while True:
+        try:
+            data, peer = s.recvfrom(4096)
+        except ConnectionResetError:
+            # Windows reports an earlier reply that hit a closed port (ICMP port unreachable: a
+            # game that closed its probe socket first) on the NEXT recvfrom. It says nothing about
+            # this socket - returning here ended QoS for every player, silently.
+            continue
+        except OSError as e:
+            print(f"  [QoS UDP :{port}] stopped: {e}")
+            return
+        n += 1
+        if n <= 8:                      # the first packets are shown in full
+            print(f"\n  [QoS UDP #{n}] {len(data)} B from {peer[0]}:{peer[1]}")
+            print(hexdump(data, 64))
+        elif n % 25 == 0:
+            print(f"  [QoS UDP :{port} #{n}] {len(data)} B from {peer[0]}:{peer[1]}")
+        try:
+            reply = _qos_probe_reply(data, peer, args)
+            if n <= 8:
+                kind = "latency" if len(data) == 0x14 else "bandwidth"
+                print(f"    -> replying {len(reply)} B (probe: {kind})")
+                print(hexdump(reply, 64))
+            s.sendto(reply, peer)
+        except Exception as e:                            # noqa: BLE001 - one probe, not the responder
+            print(f"  [QoS UDP :{port}] no reply to {peer[0]}:{peer[1]}: {e!r}")
+
+
+QOS_HTTP_CONCURRENT = 32         # connections answered at once; beyond that a new one is closed
+_QOS_HTTP_SLOTS = threading.BoundedSemaphore(QOS_HTTP_CONCURRENT)
+
+
+def _answer_http_async(conn: socket.socket, peer, args) -> None:
+    """Each QoS HTTP connection on a thread of its own. They used to be answered one after the
+    other on the listener's thread, so one client that connected and said nothing held up every
+    launcher (identify, pictures, ONLINE NOW) and the game's own QoS for its 5 s timeout."""
+    if not _QOS_HTTP_SLOTS.acquire(blocking=False):
+        print(f"  [QoS HTTP] {peer[0]}: too many connections at once - closed")
+        conn.close()
+        return
+
+    def run():
+        try:
+            _answer_http(conn, peer, args)
+        finally:
+            _QOS_HTTP_SLOTS.release()
+
+    threading.Thread(target=run, daemon=True).start()
+
+
+def _answer_http(conn: socket.socket, peer, args) -> None:
+    """QoS probe over TCP/HTTP, and the launchers' requests on the same port.
+
+    DirtySDK also queries the ping site over HTTP - the binary has the URL patterns
+    "%s://%s:%u/qos/qos?vers=%d", "/qos/firewall", "/qos/firetype". Until now
+    we listened on the QoS port ONLY over UDP, so such a connection was refused.
+    We log the whole request (that shows what the client wants) and answer with
+    an empty 200, so as not to leave it with nothing.
+    """
+    try:
+        conn.settimeout(5)
+        req, req_body = _read_request(conn)
+        reply = _launcher_request(req, req_body, args, peer)
+        if reply is not None:                 # a launcher, not the game
+            status, ctype, body = reply
+            conn.sendall(b"HTTP/1.1 " + status + b"\r\n"
+                         b"Content-Type: " + ctype + b"\r\n"
+                         b"Connection: close\r\n"
+                         b"Content-Length: " + str(len(body)).encode() +
+                         b"\r\n\r\n" + body)
+            return
+        print(f"\n  [QoS HTTP] from {peer[0]}:{peer[1]}, {len(req)} B")
+        try:
+            print("    " + req.decode("latin1").replace("\r\n", "\n    ").strip())
+        except Exception:                     # noqa: BLE001
+            print(hexdump(req, 128))
+        body = _qos_body(req, args, peer)
+        print(f"    -> replying: {body.decode('latin1')}")
+        conn.sendall(b"HTTP/1.1 200 OK\r\n"
+                     b"Content-Type: text/xml\r\n"
+                     b"Connection: close\r\n"
+                     b"Content-Length: " + str(len(body)).encode() +
+                     b"\r\n\r\n" + body)
+    except OSError:
+        pass
+    except Exception as e:                    # noqa: BLE001
+        print(f"  [http] {peer[0]}: request failed: {e!r}")
+    finally:
+        try:
+            conn.close()
+        except OSError:
+            pass
 
 
 def _qos_body(req: bytes, args, peer=None) -> bytes:
@@ -779,7 +956,8 @@ def _launcher_request(head: bytes, body: bytes | None, args,
         target_file = _avatar_path(args, uid).with_suffix(kind)
         try:
             target_file.parent.mkdir(parents=True, exist_ok=True)
-            tmp = target_file.with_suffix(".tmp")
+            # one temp file per request: they are answered on threads of their own now
+            tmp = target_file.with_name(f"{target_file.name}.{threading.get_ident()}.tmp")
             tmp.write_bytes(body)
             os.replace(tmp, target_file)
         except OSError as e:
@@ -1591,6 +1769,12 @@ def _serve_http(w, buf: bytearray, args) -> None:
             k, _, v = ln.partition(":")
             headers[k.strip().lower()] = v.strip()
         clen = int(headers.get("content-length", "0") or 0)
+        if clen > HTTP_BODY_MAX:
+            # the game's ByteVault writes are small; a larger body would only be buffered whole
+            print(f"  [HTTP] {method} {path}: body of {clen} B refused (limit {HTTP_BODY_MAX})")
+            w.send_record(RT_APPDATA, b"HTTP/1.1 413 Payload Too Large\r\nContent-Length: 0\r\n"
+                                      b"Connection: close\r\n\r\n")
+            return
         rest = bytearray(rest)
         while len(rest) < clen:
             rtype, _ver, rec = w.recv_record()
@@ -1739,7 +1923,11 @@ def main() -> int:
     ap.add_argument("--cert", type=Path, default=pki / "server.der",
                     help="DER certificate (patched OID); defaults to pki/server.der")
     ap.add_argument("--key", type=Path, default=pki / "server.key")
-    ap.add_argument("-o", "--out", type=Path, default=Path("docs/recon/capture"))
+    ap.add_argument("-o", "--out", type=Path, default=Path("docs/recon/capture"),
+                    help="where every Blaze frame is kept as a file, for protocol work")
+    ap.add_argument("--no-capture", action="store_true",
+                    help="keep no copy of the frames (the launcher's default: a session writes "
+                         "hundreds of them, and only protocol work reads them)")
     ap.add_argument("--redirect-ip", default="127.0.0.1",
                     help="address handed back in the getServerInstance reply (by default "
                          "ourselves, so the client comes back for the next packet)")
@@ -1924,6 +2112,7 @@ def main() -> int:
                     help="msgType byte in the Fire2 reply header. 0x10 = REPLY (confirmed: the "
                          "game decodes ServerInstanceInfo)")
     args = ap.parse_args()
+    _install_line_print()
 
     if not args.cert.exists() or not args.key.exists():
         sys.stderr.write("no pki/ - run make_stub_cert.py first\n")
@@ -1947,96 +2136,22 @@ def main() -> int:
         s.listen(16)
         role = "redirector" if port == args.port else "BLAZE"
         print(f"listening on 0.0.0.0:{port} ({role})")
-        while True:
-            conn, addr = s.accept()
-            threading.Thread(target=handle,
-                             args=(conn, addr, args, args.out, counter, lock,
-                                   rsa, cert_der),
-                             daemon=True).start()
+        _accept_forever(s, lambda conn, addr: threading.Thread(
+            target=handle, args=(conn, addr, args, args.out, counter, lock, rsa, cert_der),
+            daemon=True).start(), role)
 
     def serve_qos(port: int) -> None:
-        """QoS responder over UDP.
-
-        After preAuth the Blaze client probes the ping sites from QOSS. We point them at
-        ourselves, so we have to answer - without a reply the QoS test never
-        finishes. The reply content is built by _qos_probe_reply (the client rejects a
-        bare echo: the latency path needs >= 30 B and carries the external address).
-        """
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         _bind_exclusive(s, port, "QoS UDP probes")
         print(f"listening on UDP 0.0.0.0:{port} (QoS probes)")
-        n = 0
-        while True:
-            try:
-                data, peer = s.recvfrom(4096)
-            except OSError:
-                return
-            n += 1
-            if n <= 8:                      # the first packets are shown in full
-                print(f"\n  [QoS UDP #{n}] {len(data)} B from {peer[0]}:{peer[1]}")
-                print(hexdump(data, 64))
-            elif n % 25 == 0:
-                print(f"  [QoS UDP :{port} #{n}] {len(data)} B from {peer[0]}:{peer[1]}")
-            reply = _qos_probe_reply(data, peer, args)
-            if n <= 8:
-                kind = "latency" if len(data) == 0x14 else "bandwidth"
-                print(f"    -> replying {len(reply)} B (probe: {kind})")
-                print(hexdump(reply, 64))
-            s.sendto(reply, peer)
+        _serve_qos_udp(s, port, args)
 
     def serve_qos_http(port: int) -> None:
-        """QoS probe over TCP/HTTP.
-
-        DirtySDK also queries the ping site over HTTP - the binary has the URL patterns
-        "%s://%s:%u/qos/qos?vers=%d", "/qos/firewall", "/qos/firetype". Until now
-        we listened on the QoS port ONLY over UDP, so such a connection was refused.
-        We log the whole request (that shows what the client wants) and answer with
-        an empty 200, so as not to leave it with nothing.
-        """
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         _bind_exclusive(s, port, "QoS HTTP")
-        s.listen(8)
+        s.listen(16)
         print(f"listening on TCP 0.0.0.0:{port} (QoS HTTP)")
-        while True:
-            try:
-                conn, peer = s.accept()
-            except OSError:
-                return
-            try:
-                conn.settimeout(5)
-                req, req_body = _read_request(conn)
-                reply = _launcher_request(req, req_body, args, peer)
-                if reply is not None:                 # a launcher, not the game
-                    status, ctype, body = reply
-                    conn.sendall(b"HTTP/1.1 " + status + b"\r\n"
-                                 b"Content-Type: " + ctype + b"\r\n"
-                                 b"Connection: close\r\n"
-                                 b"Content-Length: " + str(len(body)).encode() +
-                                 b"\r\n\r\n" + body)
-                    continue
-                print(f"\n  [QoS HTTP] from {peer[0]}:{peer[1]}, {len(req)} B")
-                try:
-                    print("    " + req.decode("latin1").replace("\r\n", "\n    ").strip())
-                except Exception:                     # noqa: BLE001
-                    print(hexdump(req, 128))
-                body = _qos_body(req, args, peer)
-                print(f"    -> replying: {body.decode('latin1')}")
-                conn.sendall(b"HTTP/1.1 200 OK\r\n"
-                             b"Content-Type: text/xml\r\n"
-                             b"Connection: close\r\n"
-                             b"Content-Length: " + str(len(body)).encode() +
-                             b"\r\n\r\n" + body)
-            except OSError:
-                pass
-            except Exception as e:                    # noqa: BLE001
-                # This one thread also answers the game's QoS - a bad launcher request must not
-                # end it.
-                print(f"  [http] {peer[0]}: request failed: {e!r}")
-            finally:
-                try:
-                    conn.close()
-                except OSError:
-                    pass
+        _accept_forever(s, lambda conn, peer: _answer_http_async(conn, peer, args), "QoS HTTP")
 
     for p in ports[1:]:
         threading.Thread(target=serve, args=(p,), daemon=True).start()

@@ -27,9 +27,13 @@ frida-*.txt
 # launcher: local player nicknames and addresses
 launcher/config.json
 
-# PyInstaller
+# PyInstaller, and the virtual environment build.ps1 runs it from
 build/
 dist/
+venv/
+
+# tests/smoke_build.py results (CI)
+smoke/
 
 # leftover from the customtkinter version - the UI now lives in launcher/web/
 launcher/background.png

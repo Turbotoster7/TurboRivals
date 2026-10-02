@@ -3,350 +3,1126 @@
 
    Nothing here waits on the Python bridge to become usable. pywebview only
    injects it once navigation completes, so the UI binds and paints first, and
-   every backend call queues behind `whenReady`.
-   ========================================= */
+   every backend call queues behind `whenReady`. The first answer is a quick
+   snapshot; the slow checks (tasklist, ipconfig, netsh, the EA App's log)
+   arrive one by one as "probe" events and fill the window in as they land.
 
-const $ = (sel) => document.querySelector(sel);
-const $$ = (sel) => Array.from(document.querySelectorAll(sel));
+   Work is kept to what can be seen: renders are batched per frame, the log is
+   only drawn while its page is open, and nothing polls while the window is
+   hidden or minimized.
+   ========================================= */
+'use strict';
+
+const C = window.TRCore;
+const $ = (sel, root = document) => root.querySelector(sel);
+const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
+
+const PROCESS_POLL_MS = 8000;      // EA App / game running - players start the EA App late
+const ONLINE_POLL_MS = 3000;
+const FOCUS_REFRESH_MS = 5000;     // at most one look at processes/adapters per window focus burst
+const LOG_KEEP = 6000;             // lines held for filtering and copying
+const LOG_RENDER = 1500;           // lines in the DOM at once
+const EVENTS_KEEP = 40;
 
 const state = {
-    known: false,          // has the backend answered once?
+    ready: false,
+    version: '',
+    windows: true,
     mode: 'host',
-    admin: false,
+    page: 'session',
+    hidden: false,                 // minimized or otherwise not visible: no polling, no drawing
+    admin: null,
+    canEditHosts: false,
+    processes: null,               // {known, ea_app, game}
+    addresses: null,               // [{ip, adapter, kind}]
+    suggested: '',
+    save: null,                    // ea_identity.resolve()
+    firewall: null,                // {supported, ok, rules}
+    ports: null,                   // {ok, ports, server?}
+    hosts: {},
     cert: false,
-    hosts: { active: false, ip: null },
-    serverRunning: false,
+    server: { running: false },
+    serverStarting: false,
     players: [],
     maxGuests: 5,
-    addresses: [],
-    eaApp: false,
-    save: { id: null, user: null, saves: [] },   // commands.save_identity()
-    avatar: '',            // this player's picture, a PNG data URL
-    online: null,          // ONLINE NOW: commands.fetch_players(), null = nothing to ask
-    onlineNote: '',
-    joinedIp: '',          // the server this launcher connected a guest to
+    avatar: '',
+    config: {},
+    name: '',
+    publicIp: '',
+    serverIp: '',
+    recent: [],
+    hostTest: null,                // {ip, result, running}
+    online: null,                  // ONLINE NOW, null = nobody to ask
+    onlineError: '',
+    joinedIp: '',
+    connect: { running: false, steps: {} },
+    logView: 'key',
+    logTab: 'server',
+    logDirty: false,               // lines arrived while the log was not drawn
+    setupOpen: null,               // null: open while something needs doing; true/false: the player's choice
+    follow: true,
+    search: '',
+    counts: { warn: 0, error: 0 },
+    events: [],
+    activity: [],
+    projectUrl: 'https://github.com/Turbotoster7/TurboRivals',
 };
 
-/* --- bridge ----------------------------------------------------------
-   Resolved either straight away (the event may already have fired before
-   this script ran) or on pywebviewready. */
+/* =======================================================================
+   BRIDGE
+   ======================================================================= */
 const whenReady = new Promise((resolve) => {
     if (window.pywebview && window.pywebview.api) {
         resolve(window.pywebview.api);
     } else {
-        window.addEventListener('pywebviewready',
-            () => resolve(window.pywebview.api), { once: true });
+        window.addEventListener('pywebviewready', () => resolve(window.pywebview.api), { once: true });
     }
 });
 
-/* Every backend call goes through here, so a click landing before the bridge
-   is up queues instead of throwing on a null api. */
-async function callApi(name, ...args) {
+const lastError = { text: '', at: 0 };
+
+/* Every backend call goes through here, so a click landing before the bridge is up
+   queues instead of throwing on a null api - and a Python exception becomes a toast
+   (once: the same error from a timer every few seconds is not news). */
+async function api(name, ...args) {
     const bridge = await whenReady;
-    return bridge[name](...args);
+    try {
+        return await bridge[name](...args);
+    } catch (e) {
+        const message = (e && e.message) || String(e);
+        logActivity('error', `${name}: ${message}`);
+        const text = `Something went wrong (${name}): ${message}`;
+        if (text !== lastError.text || Date.now() - lastError.at > 30000) toast(text, 'error');
+        Object.assign(lastError, { text, at: Date.now() });
+        throw Object.assign(e instanceof Error ? e : new Error(message), { reported: true });
+    }
 }
 
-/* --- events pushed from Python: window.TR.on(event, payload) --- */
+/* The packaged launcher has no developer tools: a script error lands in the launcher log, and
+   with it in the bug report. A failed api() call is in there already. */
+window.addEventListener('error', (e) => {
+    logActivity('error', `script error: ${e.message} (${String(e.filename || '').split('/').pop()}:${e.lineno})`);
+});
+window.addEventListener('unhandledrejection', (e) => {
+    if (e.reason && e.reason.reported) return;
+    logActivity('error', `script error: ${(e.reason && e.reason.message) || e.reason}`);
+});
+
+/* Events pushed from Python: window.TR.on(event, payload). */
 window.TR = {
     on(event, payload) {
-        if (event === 'log') appendLog(payload);
-        if (event === 'server-exit') onServerExit(payload);
+        if (event === 'probe') applyProbe(payload.name, payload.value);
+        else if (event === 'log') appendLog(payload);
+        else if (event === 'server-exit') onServerExit(payload);
+        else if (event === 'window') setHidden(!!payload.hidden);
     },
 };
 
 /* =======================================================================
-   BOOT SCREEN
+   SMALL HELPERS
    ======================================================================= */
-function runLoader() {
-    const bar = $('#loaderBar');
-    const percent = $('#loaderPercent');
-    const started = Date.now();
-    let value = 0;
-    let settled = false;
+const now = () => new Date().toLocaleTimeString([], { hour12: false });
+const svg = (name, cls = 'ico') => `<svg class="${cls}"><use href="#i-${name}"/></svg>`;
 
-    const paint = () => {
-        bar.style.width = value + '%';
-        percent.textContent = Math.floor(value) + '%';
-    };
-
-    /* Creep towards 90% while waiting, then jump to 100 when the bridge is
-       actually up - the bar tracks readiness instead of inventing progress. */
-    const timer = setInterval(() => {
-        value = Math.min(90, value + 7);
-        paint();
-    }, 90);
-
-    const finish = () => {
-        if (settled) return;
-        settled = true;
-        clearInterval(timer);
-        value = 100;
-        paint();
-        // Floor so it does not flash, ceiling so a stuck bridge never traps us.
-        setTimeout(() => $('#loader').classList.add('done'),
-                   Math.max(0, 600 - (Date.now() - started)));
-    };
-
-    whenReady.then(finish);
-    setTimeout(finish, 4000);
+function el(tag, attrs = {}, ...children) {
+    const node = document.createElement(tag);
+    for (const [key, value] of Object.entries(attrs)) {
+        if (key === 'class') node.className = value;
+        else if (key === 'html') node.innerHTML = value;
+        else if (key.startsWith('on')) node.addEventListener(key.slice(2), value);
+        else if (value !== undefined && value !== null && value !== false) node.setAttribute(key, value);
+    }
+    for (const child of children) {
+        if (child === null || child === undefined || child === false) continue;
+        node.append(child instanceof Node ? child : document.createTextNode(String(child)));
+    }
+    return node;
 }
 
-/* =======================================================================
-   TOASTS
-   ======================================================================= */
-function toast(message, kind = '') {
-    const el = document.createElement('div');
-    el.className = 'toast ' + kind;
-    el.textContent = '> ' + message;
-    $('#toasts').appendChild(el);
+function escapeHtml(text) {
+    return String(text).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function toast(message, tone = 'info', ms = 4600) {
+    const icon = { ok: 'check', warn: 'alert', error: 'alert', info: 'info' }[tone] || 'info';
+    const node = el('div', { class: 'toast', 'data-tone': tone, html: svg(icon) }, el('span', {}, message));
+    $('#toasts').append(node);
+    while ($('#toasts').childElementCount > 4) $('#toasts').firstElementChild.remove();
     setTimeout(() => {
-        el.classList.add('out');
-        setTimeout(() => el.remove(), 300);
-    }, 4200);
+        node.classList.add('out');
+        setTimeout(() => node.remove(), 200);
+    }, ms);
 }
 
-/* Disables a button for the length of a slow privileged action (netsh,
-   ipconfig /flushdns, cert generation) so it does not look broken. */
-async function withPending(button, fn) {
-    if (button.dataset.pending) return;
-    const label = button.textContent;
-    button.dataset.pending = '1';
+function logActivity(level, text) {
+    state.activity.push({ time: now(), level, text });
+    if (state.activity.length > 300) state.activity.shift();
+    if (state.page === 'logs' && state.logTab === 'activity' && !state.hidden) renderActivity();
+}
+
+function addEvent(level, text) {
+    state.events.unshift({ time: now().slice(0, 5), level, text });
+    state.events.length = Math.min(state.events.length, EVENTS_KEEP);
+    render();
+}
+
+/* Disables a button for the length of a slow action, so a second click cannot start it twice
+   and the button says that something is happening. */
+async function busy(button, fn) {
+    if (!button || button.dataset.busy) return undefined;
+    button.dataset.busy = '1';
     button.classList.add('pending');
     button.disabled = true;
-    button.textContent = 'WORKING';
     try {
         return await fn();
     } finally {
-        delete button.dataset.pending;
+        delete button.dataset.busy;
         button.classList.remove('pending');
         button.disabled = false;
-        button.textContent = label;
+        render();
     }
+}
+
+async function copyText(text) {
+    try {
+        await navigator.clipboard.writeText(text);
+        return true;
+    } catch (e) { /* not a secure context - fall back below */ }
+    const area = el('textarea', { style: 'position:fixed;opacity:0;left:-9999px' });
+    area.value = text;
+    document.body.append(area);
+    area.select();
+    let ok = false;
+    try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+    area.remove();
+    return ok;
+}
+
+let persistTimer = null;
+/* Debounced: typing a name should not write config.json on every keystroke. Only the fields
+   typed here - the player list lives in Python and is saved there. */
+function persist() {
+    clearTimeout(persistTimer);
+    persistTimer = setTimeout(() => {
+        api('save_config', {
+            mode: state.mode,
+            local_persona: state.name.trim(),
+            public_ip: state.publicIp.trim(),
+            server_ip: state.serverIp.trim(),
+            log_view: state.logView,
+        }).catch(() => {});
+    }, 400);
+}
+
+/* =======================================================================
+   STATE IN
+   ======================================================================= */
+function applySnapshot(snap) {
+    state.ready = true;
+    state.version = snap.version;
+    state.windows = snap.windows;
+    state.config = snap.config;
+    state.mode = snap.config.mode;
+    state.admin = snap.admin;
+    state.canEditHosts = snap.can_edit_hosts;
+    state.hosts = snap.hosts;
+    state.cert = snap.cert;
+    state.server = snap.server;
+    state.avatar = snap.avatar || '';
+    state.players = snap.players;
+    state.maxGuests = snap.max_guests;
+    state.recent = snap.config.recent_servers || [];
+    state.name = snap.config.local_persona || '';
+    state.publicIp = snap.config.public_ip || '';
+    state.serverIp = snap.config.server_ip || '';
+    state.logView = C.LOG_VIEWS[snap.config.log_view] ? snap.config.log_view : 'key';
+    state.logTab = state.mode === 'client' && !state.server.running ? 'activity' : 'server';
+    state.projectUrl = snap.project_url || state.projectUrl;
+    $('#nameInput').value = state.name;
+    $('#publicIp').value = state.publicIp;
+    $('#serverIp').value = state.serverIp;
+    $('#appVersion').textContent = state.version ? `v${state.version}` : '';
+    $('#aboutVersion').textContent = state.version ? `v${state.version}` : '';
+    if (state.server.running) {
+        state.ports = { ok: true, server: true, ports: [] };
+        appendLog([`--- the server was already running (PID ${state.server.pid}) ---`]);
+    }
+}
+
+function applyProbe(name, value) {
+    performance.mark(`probe ${name}`);       // startup timing, read by app.py --self-test
+    if (!value || value.error) {
+        logActivity('warn', `check "${name}" failed: ${(value && value.error) || 'no answer'}`);
+        if (name === 'ports') state.ports = null;
+        return render();
+    }
+    if (name === 'processes') {
+        const was = state.processes;
+        state.processes = value;
+        if (was && was.known && was.ea_app !== value.ea_app) {
+            logActivity(value.ea_app ? 'ok' : 'warn', value.ea_app ? 'EA App started' : 'EA App closed');
+        }
+    } else if (name === 'addresses') {
+        state.addresses = value.list;
+        state.suggested = value.suggested;
+        if (!state.publicIp && value.suggested) {
+            state.publicIp = value.suggested;
+            $('#publicIp').value = value.suggested;
+            persist();
+        }
+    } else if (name === 'save') {
+        state.save = value;
+        /* No name yet: offer the EA nickname the EA App last gave the game (ea_identity.ea_profile). */
+        if (!state.name && value.persona) {
+            state.name = value.persona;
+            $('#nameInput').value = value.persona;
+            persist();
+        }
+        $('#nameInput').placeholder = value.persona || 'Nickname';
+    } else if (name === 'firewall') {
+        state.firewall = value;
+    } else if (name === 'ports') {
+        state.ports = value;
+    }
+    return render();
+}
+
+async function refresh(names) {
+    try {
+        const result = await api('refresh', names || null);
+        if (result.hosts) state.hosts = result.hosts;
+        if (typeof result.admin === 'boolean') state.admin = result.admin;
+        for (const [name, value] of Object.entries(result)) {
+            if (!['hosts', 'admin'].includes(name)) applyProbe(name, value);
+        }
+    } catch (e) { /* already reported */ }
+    render();
+}
+
+/* =======================================================================
+   RENDER - batched: any number of render() calls in one task paint once
+   ======================================================================= */
+let renderQueued = false;
+
+function render() {
+    if (renderQueued) return;
+    renderQueued = true;
+    requestAnimationFrame(() => {
+        renderQueued = false;
+        renderNow();
+    });
+}
+
+function checkInput() {
+    return {
+        mode: state.mode, admin: state.admin, processes: state.processes, cert: state.cert,
+        hosts: state.hosts, firewall: state.firewall, ports: state.ports, serverIp: state.serverIp,
+    };
+}
+
+function blockerInput() {
+    return {
+        mode: state.mode, name: state.name, cert: state.cert, publicIp: state.publicIp,
+        ports: state.ports, server: state.server, serverIp: state.serverIp,
+    };
+}
+
+function renderNow() {
+    document.body.dataset.mode = state.mode;
+    document.body.dataset.page = state.page;
+    document.body.dataset.live = String(state.mode === 'host' && !!state.server.running);
+    const list = C.checks(checkInput());
+    renderNav(list);
+    if (state.page === 'session') {
+        renderHeader(list);
+        renderChecks(list);
+        renderSession();
+        renderStatus();
+        renderRoster();
+        renderEvents();
+    } else if (state.page === 'logs') {
+        renderLogsPage();
+    } else if (state.page === 'settings') {
+        renderSettings();
+    }
+}
+
+/* --- sidebar --------------------------------------------------------- */
+function overallStatus(list) {
+    const sum = C.summary(list);
+    const online = (state.online || []).length;
+    if (!state.ready) return ['', 'Starting\u2026'];
+    if (state.mode === 'host' && state.server.running) return ['live', `Server live \u00b7 ${online} online`];
+    if (state.mode === 'client' && state.joinedIp) return ['live', `Connected \u00b7 ${online} online`];
+    if (sum.pending) return ['', 'Checking\u2026'];
+    if (sum.problems) return ['warn', `${sum.problems} to fix`];
+    return ['ok', state.mode === 'host' ? 'Ready to host' : 'Ready to join'];
+}
+
+function renderNav(list) {
+    $$('.nav-item').forEach((item) => {
+        const nav = item.dataset.nav;
+        const active = state.page === 'session' ? nav === state.mode : nav === state.page;
+        item.classList.toggle('active', active);
+        item.setAttribute('aria-current', active ? 'page' : 'false');
+    });
+    const problems = state.counts.warn + state.counts.error;
+    const badge = $('#navLogBadge');
+    badge.hidden = !problems;
+    badge.textContent = problems;
+    badge.classList.toggle('error', state.counts.error > 0);
+    const [tone, label] = overallStatus(list);
+    $('#profileDot').dataset.tone = tone;
+    $('#profileStatus').textContent = label;
+    $('#profileName').textContent = C.cleanName(state.name) || 'Set your name';
+    $('#profileAvatar').replaceChildren(state.avatar ? avatarNode(state.avatar) : document.createTextNode(initials(state.name)));
+}
+
+/* --- page header and banner ------------------------------------------ */
+function renderHeader(list) {
+    const host = state.mode === 'host';
+    const blockers = C.blockers(blockerInput());
+    const running = state.server.running;
+    $('#pageTitle').textContent = host ? 'Host a session' : 'Join a session';
+    let sub;
+    if (host) {
+        sub = running ? `Server live \u00b7 players connect to ${state.publicIp.trim() || 'this PC'}`
+            : 'Run the server on this PC - your friends join you over your network or a VPN.';
+    } else {
+        sub = state.joinedIp ? `Connected to ${state.joinedIp}` : 'Connect to a friend who hosts - over your network or a VPN.';
+    }
+    $('#pageSub').textContent = sub;
+
+    const serverButton = $('#btnServer');
+    if (!serverButton.dataset.busy) {
+        serverButton.className = `btn ${running ? 'btn-danger' : 'btn-primary'} host-only`;
+        serverButton.innerHTML = running ? `${svg('stop', 'ico ico-fill')}<span>Stop server</span>`
+            : `${svg('play', 'ico ico-fill')}<span>${state.serverStarting ? 'Starting\u2026' : 'Start server'}</span>`;
+        serverButton.disabled = !running && blockers.length > 0;
+        serverButton.title = !running && blockers.length ? blockers.join(' \u00b7 ') : '';
+    }
+    const connectButton = $('#btnConnect');
+    if (!connectButton.dataset.busy) {
+        connectButton.innerHTML = state.joinedIp ? `${svg('refresh')}<span>Reconnect</span>`
+            : `${svg('play', 'ico ico-fill')}<span>Connect &amp; play</span>`;
+        connectButton.disabled = blockers.length > 0 || state.connect.running;
+        connectButton.title = blockers.length ? blockers.join(' \u00b7 ') : '';
+    }
+    const game = state.processes && state.processes.game;
+    const gameButton = $('#btnGame');
+    if (!gameButton.dataset.busy) {
+        gameButton.disabled = !!game;
+        gameButton.querySelector('span').textContent = game ? 'Game running' : 'Launch game';
+    }
+
+    /* the banner: what stops the big button, or the most common silent failure */
+    const banner = $('#banner');
+    const fixable = fixPlan(list);
+    const eaMissing = state.processes && state.processes.known && !state.processes.ea_app;
+    if (blockers.length && !(host && running)) {
+        banner.hidden = false;
+        banner.dataset.tone = 'warn';
+        $('#bannerText').innerHTML = `<b>Before you can ${host ? 'start' : 'connect'}:</b> <span>${blockers.map(escapeHtml).join(' \u00b7 ')}</span>`;
+    } else if (eaMissing) {
+        banner.hidden = false;
+        banner.dataset.tone = 'warn';
+        $('#bannerText').innerHTML = '<b>The EA App is not running.</b> <span>Start it and sign in - without it the game cannot log in.</span>';
+    } else {
+        banner.hidden = true;
+    }
+    const bannerFix = $('#bannerFix');
+    if (!bannerFix.dataset.busy) bannerFix.hidden = banner.hidden || !fixable.length;
+}
+
+/* --- setup ----------------------------------------------------------- */
+function checkCopy(check) {
+    const s = check.status;
+    const hosts = state.hosts || {};
+    const host = state.mode === 'host';
+    switch (check.id) {
+    case 'admin':
+        return { detail: s === 'pending' ? 'Checking\u2026' : s === 'ok' ? 'Running elevated'
+            : 'Needed for the hosts file and the firewall', action: s === 'ok' ? null : 'Restart as admin' };
+    case 'eaApp':
+        return { detail: { pending: 'Checking\u2026', ok: 'Running - the game can log in',
+            warn: 'Not running - start it and sign in', na: "Can't check on this system" }[s],
+        tip: s === 'warn' ? 'Without the EA App the game gets no Origin token: it connects, then drops before logging in. Checked again every few seconds.' : '' };
+    case 'cert':
+        return { detail: s === 'ok' ? 'Ready' : 'Missing - generate it once', action: s === 'ok' ? null : 'Generate' };
+    case 'hosts': {
+        if (hosts.error) return { detail: `Can't read the hosts file: ${hosts.error}`, action: null };
+        if ((hosts.foreign || []).length) {
+            return { detail: `An old entry sends the game to ${hosts.effective_ip || '?'}`,
+                tip: `"${hosts.foreign.join('", "')}" sits outside the launcher's block and wins over it. Fix removes it (a backup is made).`, action: 'Fix' };
+        }
+        if (!host && !check.target && !hosts.active) {
+            return { detail: "Enter the host's address first", action: 'Turn on', disabled: true };
+        }
+        if (!hosts.active) {
+            return { detail: host ? 'Off - the game still looks for EA\u2019s servers' : `Off - will point at ${check.target}`,
+                action: host ? 'Turn on' : 'Point at host' };
+        }
+        if (check.target && hosts.ip !== check.target) {
+            return { detail: `Points at ${hosts.ip}, not ${host ? 'this PC' : check.target}`, action: host ? 'Fix' : 'Point at host' };
+        }
+        return { detail: `gosredirector.ea.com \u2192 ${hosts.ip}`, tip: hosts.path ? `Written to ${hosts.path}` : '', action: 'Turn off', ghost: true };
+    }
+    case 'firewall': {
+        if (s === 'pending') return { detail: 'Checking\u2026' };
+        if (s === 'na') return { detail: 'Windows only' };
+        const rules = state.firewall.rules || [];
+        const bad = rules.filter((r) => r.state !== 'ok');
+        const tip = rules.map((r) => `${r.name}: ${r.proto} ${r.ports} - ${r.state}`).join('\n');
+        if (!bad.length) return { detail: rules.length === 1 ? 'Game traffic allowed (UDP 3659)' : `All ${rules.length} rules in place`, tip };
+        const outdated = bad.some((r) => r.state === 'outdated');
+        return { detail: `${bad.length} of ${rules.length} ${outdated ? 'missing or outdated' : 'missing'}`, tip, action: outdated ? 'Update' : 'Add rules' };
+    }
+    case 'ports': {
+        if (s === 'pending') return { detail: 'Checking\u2026', action: null };
+        if (state.ports.server) return { detail: 'In use by your server', action: null };
+        const tip = state.ports.ports.map((p) => `${p.proto} ${p.port} (${p.purpose}): ${p.free ? 'free' : p.process ? `taken by ${p.process}` : 'taken'}`).join('\n');
+        if (s === 'ok') return { detail: `All ${state.ports.ports.length} free`, tip, action: null };
+        const taken = state.ports.ports.filter((p) => !p.free && !p.own);
+        const first = taken[0];
+        const who = first.closing ? 'still closing' : first.process || 'another program';
+        return { detail: `${first.proto} ${first.port}: ${who}${taken.length > 1 ? ` (+${taken.length - 1} more)` : ''}`, tip, action: 'Check again', ghost: true };
+    }
+    default:
+        return { detail: '' };
+    }
+}
+
+function renderChecks(list) {
+    const ids = new Set(list.map((c) => c.id));
+    for (const row of $$('#checkList .check')) {
+        const check = list.find((c) => c.id === row.dataset.check);
+        row.hidden = !ids.has(row.dataset.check);
+        if (!check) continue;
+        row.dataset.status = check.status;
+        const copy = checkCopy(check);
+        row.querySelector('.check-detail').textContent = copy.detail || '';
+        row.title = copy.tip || copy.detail || '';
+        const button = row.querySelector('[data-fix]');
+        if (button && !button.dataset.busy) {
+            button.hidden = !copy.action;
+            if (copy.action) button.textContent = copy.action;
+            button.className = `btn btn-sm ${copy.ghost ? 'btn-ghost' : 'btn-secondary'}`;
+            button.disabled = !!copy.disabled;
+        }
+    }
+    const sum = C.summary(list);
+    const allSet = state.ready && !sum.pending && !sum.problems;
+    $('#setupCount').textContent = !state.ready ? '\u2013' : allSet ? 'All set' : `${sum.ready} of ${sum.total} ready`;
+    const bar = $('#setupBar');
+    bar.style.width = `${sum.total ? (100 * sum.ready) / sum.total : 0}%`;
+    bar.parentElement.dataset.tone = allSet ? 'ok' : '';
+    /* While a session runs only a red check reopens setup - warnings would push "Online now"
+       below the fold, and the banner still names a missing EA App. */
+    const live = state.mode === 'host' ? !!state.server.running : !!state.joinedIp;
+    const broken = list.some((c) => c.status === 'error');
+    const open = state.setupOpen === null ? (live ? broken : !allSet) : state.setupOpen;
+    $('#setupCard').classList.toggle('collapsed', !open);
+    $('#setupToggle').setAttribute('aria-expanded', String(open));
+    const fixable = fixPlan(list);
+    const fixAll = $('#btnFixAll');
+    if (!fixAll.dataset.busy) fixAll.disabled = !fixable.length;
+    fixAll.title = fixable.length ? `Will: ${fixable.map((f) => f.label).join(', ')}` : 'Nothing to fix';
+}
+
+/* --- you / session --------------------------------------------------- */
+function avatarNode(src) {
+    const img = el('img', { alt: '' });
+    img.src = src;
+    return img;
+}
+
+function initials(name) {
+    const clean = C.cleanName(name) || '?';
+    return clean.replace(/[^A-Za-z0-9]/g, '').slice(0, 2).toUpperCase() || clean.slice(0, 2);
+}
+
+function renderSession() {
+    const host = state.mode === 'host';
+    const typed = state.name.trim();
+    const seen = C.cleanName(typed);
+    const note = $('#nameNote');
+    const persona = state.save && state.save.persona;
+    note.dataset.tone = '';
+    if (!typed) {
+        note.dataset.tone = 'warn';
+        note.innerHTML = persona ? `Needed - <button class="link" data-use-persona>use your EA name ${escapeHtml(persona)}</button>`
+            : 'Needed - the other players see you under it';
+    } else if (!seen) {
+        note.dataset.tone = 'error';
+        note.textContent = 'No letters the game can show - use Latin letters or digits';
+    } else if (seen !== typed) {
+        note.innerHTML = `Others see you as <span class="mono">${escapeHtml(seen)}</span> (the game shows plain ASCII)`;
+    } else if (persona && typed !== persona) {
+        note.innerHTML = `Your EA name is ${escapeHtml(persona)} - <button class="link" data-use-persona>use it</button>`;
+    } else {
+        note.textContent = host ? 'What the other players see' : 'Sent to the host when you connect';
+    }
+    /* The host's name goes to the server when it starts; a change now would only show later. */
+    const locked = host && state.server.running;
+    $('#nameInput').disabled = locked;
+    if (locked) {
+        note.dataset.tone = '';
+        note.textContent = 'Fixed while the server runs - stop it to change your name';
+    }
+    $('#nameInput').setAttribute('aria-invalid', String(!!typed && !seen));
+    $('#avatarImg').replaceChildren(state.avatar ? avatarNode(state.avatar) : document.createTextNode(initials(state.name)));
+    if (host) {
+        renderAdapters();
+        renderIpNote();
+        renderGuests();
+    } else {
+        renderRecent();
+        renderHostNote();
+        renderSave();
+    }
+}
+
+const KIND_ICON = { vpn: 'lock', lan: 'lan', virtual: 'ghost' };
+const KIND_TAG = { vpn: 'VPN', lan: 'Network', virtual: 'Virtual' };
+
+function renderAdapters() {
+    const box = $('#adapterList');
+    const key = JSON.stringify([state.addresses, state.publicIp.trim()]);
+    if (box.dataset.key === key) return;
+    box.dataset.key = key;
+    if (!state.addresses) {
+        box.replaceChildren(el('div', { class: 'options-empty' }, 'Looking at your network adapters\u2026'));
+        return;
+    }
+    if (!state.addresses.length) {
+        box.replaceChildren(el('div', { class: 'options-empty' }, 'No network adapter with an IPv4 address found - type the address below.'));
+        return;
+    }
+    box.replaceChildren(...state.addresses.map((a) => {
+        const selected = a.ip === state.publicIp.trim();
+        return el('button', {
+            class: 'option' + (selected ? ' selected' : ''), 'data-kind': a.kind, type: 'button', role: 'radio',
+            'aria-checked': String(selected), title: a.kind === 'virtual' ? 'A virtual adapter - no other PC can reach it' : `Use ${a.ip}`,
+            html: svg(KIND_ICON[a.kind] || 'lan'),
+            onclick: () => {
+                state.publicIp = a.ip;
+                $('#publicIp').value = a.ip;
+                persist();
+                render();
+            },
+        }, el('span', { class: 'option-name' }, a.adapter), el('span', { class: 'option-ip' }, a.ip), el('span', { class: 'option-radio' }));
+    }));
+}
+
+function renderIpNote() {
+    const note = $('#ipNote');
+    const value = state.publicIp.trim();
+    const picked = (state.addresses || []).find((a) => a.ip === value);
+    note.dataset.tone = '';
+    $('#publicIp').setAttribute('aria-invalid', String(!!value && !C.validIPv4(value)));
+    if (!value) {
+        note.textContent = 'Pick the adapter the other players reach you on, or type an address.';
+    } else if (!C.validIPv4(value)) {
+        note.dataset.tone = 'error';
+        note.textContent = 'Not an IPv4 address - it looks like 26.48.21.54 or 192.168.1.10.';
+    } else if (!picked) {
+        note.textContent = 'Typed by hand - it has to be an address every player can reach: the one your VPN shows, or your network card\u2019s on a shared network.';
+    } else if (picked.kind === 'virtual') {
+        note.dataset.tone = 'warn';
+        note.textContent = `${picked.adapter} is a virtual adapter - no other PC can reach it. Pick your network card or VPN.`;
+    } else if (picked.kind === 'vpn') {
+        note.textContent = `Players join over ${picked.adapter} - everyone needs that VPN running and connected to you.`;
+    } else {
+        note.textContent = `Same-network play over ${picked.adapter} - everyone on this network, no VPN needed.`;
+    }
+}
+
+function renderGuests() {
+    const list = $('#guestList');
+    const key = JSON.stringify(state.players);
+    $('#slotsPill').textContent = `${state.players.length}/${state.maxGuests}`;
+    $('#btnAddPlayer').disabled = state.players.length >= state.maxGuests;
+    if (list.dataset.key === key) return;
+    list.dataset.key = key;
+    if (state.players.length) $('#guestFold').open = true;
+    list.replaceChildren(...state.players.map(([ip, nick]) => el('li', { class: 'row' },
+        el('span', { class: 'avatar avatar-sm' }, initials(nick)),
+        el('span', { class: 'row-text' }, el('span', { class: 'row-name', title: nick }, nick), el('span', { class: 'row-sub mono' }, ip)),
+        el('button', { class: 'btn btn-ghost btn-icon', title: `Remove ${nick}`, html: svg('x'), onclick: () => removePlayer(nick) }))));
+}
+
+function renderRecent() {
+    const box = $('#recentList');
+    const current = state.serverIp.trim();
+    const key = JSON.stringify([state.recent, current]);
+    if (box.dataset.key === key) return;
+    box.dataset.key = key;
+    box.replaceChildren(...state.recent.map((ip) => el('button', {
+        class: 'chip' + (ip === current ? ' selected' : ''), type: 'button', title: 'Used before',
+        onclick: () => {
+            state.serverIp = ip;
+            $('#serverIp').value = ip;
+            onServerIpChanged();
+        },
+    }, ip)));
+}
+
+function renderHostNote() {
+    const note = $('#hostNote');
+    const ip = state.serverIp.trim();
+    const test = state.hostTest;
+    note.dataset.tone = '';
+    $('#serverIp').setAttribute('aria-invalid', String(!!ip && !C.validIPv4(ip)));
+    if (!ip) {
+        note.textContent = 'The host reads it out from their launcher.';
+    } else if (!C.validIPv4(ip)) {
+        note.dataset.tone = 'error';
+        note.textContent = 'Not an IPv4 address - it looks like 26.48.21.54.';
+    } else if (test && test.ip === ip && test.running) {
+        note.textContent = `Looking for a TurboRivals server at ${ip}\u2026`;
+    } else if (test && test.ip === ip && test.result) {
+        const r = test.result;
+        note.dataset.tone = r.ok ? 'ok' : r.reason === 'refused' ? 'warn' : 'error';
+        note.textContent = r.ok ? `Server found \u00b7 ${r.ms} ms \u00b7 ${r.players} online` : r.error;
+    } else {
+        note.textContent = 'Test shows whether the host\u2019s server answers.';
+    }
+}
+
+function renderSave() {
+    const card = $('#saveCard');
+    const save = state.save;
+    const kind = C.saveState(save);
+    card.dataset.state = kind;
+    const pill = $('#savePill');
+    pill.textContent = { pending: 'Checking', missing: 'Not found', guessed: 'Guessed', found: 'Found' }[kind];
+    pill.dataset.tone = { pending: '', missing: 'error', guessed: 'warn', found: 'ok' }[kind];
+    $('#saveId').textContent = kind === 'pending' ? '\u2014' : save.id ? String(save.id) : 'none';
+    $('#saveText').textContent = {
+        pending: 'Looking for the EA account on this PC\u2026',
+        missing: 'No EA App account found on this PC - the host cannot save your progress.',
+        guessed: 'No save of this EA account found, so this is a guess and your progress may not stick. Start the game once through the EA App, close it, then connect again.',
+        found: save && save.id ? `Found (${save.source}) and sent to the host when you connect, so your progress sticks. EA account ${save.user}.` : '',
+    }[kind];
+}
+
+/* --- server / connection --------------------------------------------- */
+function renderStatus() {
+    const host = state.mode === 'host';
+    const pill = $('#serverPill');
+    const blockers = C.blockers(blockerInput());
+    if (host) {
+        const running = state.server.running;
+        $('#statusTitle').textContent = 'Server';
+        $('#serverCard').dataset.state = running ? 'live' : 'off';
+        pill.dataset.tone = running ? 'live' : state.serverStarting ? 'warn' : '';
+        $('#serverState').textContent = running ? 'Running' : state.serverStarting ? 'Starting' : 'Stopped';
+        $('#serverAddr').textContent = state.publicIp.trim() || '\u2014';
+        $('#hostBlockers').replaceChildren(...(running ? [] : blockers).map((b) => el('li', {}, b)));
+        tickUptime();
+    } else {
+        const joined = !!state.joinedIp;
+        $('#statusTitle').textContent = 'Connection';
+        pill.dataset.tone = joined ? 'live' : state.connect.running ? 'warn' : '';
+        $('#serverState').textContent = joined ? 'Connected' : state.connect.running ? 'Connecting' : 'Not connected';
+        $('#joinBlockers').replaceChildren(...blockers.map((b) => el('li', {}, b)));
+        renderSteps();
+    }
+}
+
+function renderSteps() {
+    for (const li of $$('#connectSteps li')) {
+        const step = state.connect.steps[li.dataset.step];
+        li.dataset.status = step ? step.status : '';
+        li.querySelector('.step-note').textContent = step ? step.note || '' : '';
+    }
+}
+
+function tickUptime() {
+    if (state.hidden || state.page !== 'session') return;
+    const up = $('#serverUptime');
+    up.textContent = state.server.running && state.server.started_at
+        ? C.formatUptime(Date.now() / 1000 - state.server.started_at) : '\u2014';
+}
+
+function renderRoster() {
+    const list = $('#roster');
+    const players = state.online || [];
+    $('#onlineCount').textContent = players.length ? `${players.length} of 6` : '';
+    const key = JSON.stringify([players.map((p) => [p.uid, p.name, p.avatar ? p.avatar.length : 0, p.local]), state.mode, state.onlineError, onlineTarget()]);
+    if (list.dataset.key === key) return;
+    list.dataset.key = key;
+    if (!players.length) {
+        const target = onlineTarget();
+        const text = !target ? (state.mode === 'host' ? 'Start the server to see who is in.' : 'Connect to see who is in.')
+            : state.onlineError ? `The server does not answer: ${state.onlineError}`
+                : 'Nobody is in yet - a game shows up here once it is online.';
+        list.replaceChildren(el('li', { class: 'empty' }, text));
+        return;
+    }
+    list.replaceChildren(...players.map((p) => {
+        const you = state.mode === 'host' ? p.local : state.save && p.uid === state.save.id;
+        const pic = el('span', { class: 'avatar avatar-sm' }, p.avatar ? avatarNode(p.avatar) : initials(p.name || `#${p.uid}`));
+        const tags = el('span', { class: 'row-tags' },
+            p.local ? el('span', { class: 'tag', 'data-tone': 'accent' }, 'Host') : null,
+            you ? el('span', { class: 'tag' }, 'You') : null);
+        return el('li', { class: 'row' }, pic, el('span', { class: 'row-name', title: p.name }, p.name || `#${p.uid}`), tags);
+    }));
+}
+
+function renderEvents() {
+    const list = $('#eventList');
+    const key = `${state.events.length}:${state.events[0] ? state.events[0].time + state.events[0].text : ''}`;
+    if (list.dataset.key === key) return;
+    list.dataset.key = key;
+    if (!state.events.length) {
+        list.replaceChildren(el('li', { class: 'empty' }, 'Joins, leaves and the server\u2019s hints show up here.'));
+        return;
+    }
+    list.replaceChildren(...state.events.map((e) => el('li', { 'data-level': e.level, title: e.text }, el('time', {}, e.time), el('span', {}, e.text))));
+}
+
+/* --- logs and settings pages ----------------------------------------- */
+function renderLogsPage() {
+    const running = state.server.running;
+    const problems = state.counts.warn + state.counts.error;
+    $('#logsSub').textContent = state.logTab === 'activity' ? 'Every change the launcher made, newest last'
+        : running ? `Server live \u00b7 ${logLines.length} lines \u00b7 every run is also saved to the log folder`
+            : logLines.length ? `Server stopped \u00b7 ${logLines.length} lines` : 'The server is not running';
+    $$('#logTabs button').forEach((b) => b.classList.toggle('active', b.dataset.tab === state.logTab));
+    $$('#logViews button').forEach((b) => b.classList.toggle('active', b.dataset.view === state.logView));
+    $('#logViews').hidden = state.logTab !== 'server';
+    $('#logView').hidden = state.logTab !== 'server';
+    $('#activityView').hidden = state.logTab !== 'activity';
+    const count = $('#countProblems');
+    count.hidden = !problems;
+    count.textContent = problems;
+    $('#cmdPreview').textContent = state.mode === 'host' ? C.commandPreview({ name: state.name, publicIp: state.publicIp.trim(), players: state.players }) : '';
+    $('#btnClearLog').title = state.logTab === 'server' ? 'Clear the window - the log file keeps everything' : 'Clear the activity list';
+    if (state.logDirty) {
+        state.logDirty = false;
+        if (state.logTab === 'server') rebuildLog();
+        else renderActivity();
+    }
+}
+
+function renderSettings() {
+    $$('#restorePref button').forEach((b) => b.classList.toggle('active', b.dataset.pref === (state.config.restore_hosts_on_exit || 'ask')));
+    $('#keepCaptures').checked = !!state.config.keep_captures;
+}
+
+/* =======================================================================
+   NAVIGATION AND VISIBILITY
+   ======================================================================= */
+function setPage(page) {
+    if (page === state.page) return;
+    state.page = page;
+    if (page === 'logs') state.logDirty = true;          // drawn on demand, see appendLog
+    $('#main').scrollTop = 0;
+    render();
+}
+
+async function setMode(mode) {
+    const changed = mode !== state.mode;
+    state.mode = mode;
+    setPage('session');
+    if (!changed) return;
+    state.firewall = null;
+    previousRoster = null;
+    if (!state.server.running) state.logTab = mode === 'client' ? 'activity' : 'server';
+    render();
+    /* Saved before the refresh, not debounced: the firewall probe reads the mode from it. */
+    await api('save_config', { mode });
+    refresh(['firewall']);
+    pollOnline();
+    if (mode === 'client' && C.validIPv4(state.serverIp) && !state.hostTest) testHost();
+}
+
+/* Minimized (pushed from Python) or hidden (the page's own visibility): nothing polls and
+   nothing draws; coming back catches up in one go. */
+function setHidden(hidden) {
+    if (hidden === state.hidden) return;
+    state.hidden = hidden;
+    if (hidden) return;
+    state.logDirty = true;
+    render();
+    refreshOnReturn();
+    pollOnline();
+}
+
+let lastFocusRefresh = 0;
+function refreshOnReturn() {
+    if (!state.ready || Date.now() - lastFocusRefresh < FOCUS_REFRESH_MS) return;
+    lastFocusRefresh = Date.now();
+    refresh(['processes', 'addresses']);
 }
 
 /* =======================================================================
    SERVER LOG
    ======================================================================= */
+const logLines = [];               // {time, text, level}
 
-/* This colours the log, it never drives behaviour. */
-function classifyLine(line) {
-    const lower = line.toLowerCase();
-    if (/traceback|error|exception|refused/.test(lower)) return 'bad';
-    if (/no handler|warn|timeout|skipped/.test(lower)) return 'warn';
-    if (/joined|joincompleted|playerstate|login/.test(lower)) return 'good';
-    if (/^\s*\[|->/.test(line)) return 'hit';
-    return '';
+function logVisible() {
+    return state.page === 'logs' && state.logTab === 'server' && !state.hidden;
 }
 
-const LOG_LIMIT = 1500;
+function renderLogEmpty() {
+    const text = state.mode === 'host'
+        ? (state.server.running ? 'Waiting for the server\u2026' : 'The server is not running. Start it, and its log appears here - also saved to a file for bug reports.')
+        : 'Joining players have no server log - the host has it. Your launcher\u2019s own steps are under "Launcher".';
+    $('#logView').replaceChildren(el('div', { class: 'log-empty' }, text));
+}
 
-/* Python hands over a batch every 100 ms. One fragment, one append, one trim -
-   a burst of a few hundred lines costs the same as a single line. */
-function appendLog(lines) {
-    const batch = Array.isArray(lines) ? lines : [lines];
-    if (!batch.length) return;
+function lineMatches(line) {
+    if (!C.inView(line.level, state.logView)) return false;
+    return !state.search || line.text.toLowerCase().includes(state.search);
+}
 
-    const body = $('#logBody');
-    const empty = body.querySelector('.log-empty');
+function lineNode(line) {
+    return el('div', { class: 'ln', 'data-level': line.level }, el('time', {}, line.time), line.text || ' ');
+}
+
+/* Python hands over a batch every 100 ms. The lines are classified and kept; the DOM is only
+   touched while the log is on screen - otherwise the page draws them when it is opened. */
+function appendLog(batch) {
+    const lines = Array.isArray(batch) ? batch : [batch];
+    if (!lines.length) return;
+    const time = now();
+    const fresh = [];
+    for (const text of lines) {
+        const line = { time, text, level: C.classifyLine(text) };
+        logLines.push(line);
+        fresh.push(line);
+        if (line.level === 'error') state.counts.error++;
+        if (line.level === 'warn' || line.level === 'hint') state.counts.warn++;
+        const insight = C.insightFrom(text);
+        if (insight) {
+            addEvent(insight.level, insight.text);
+            if (insight.level !== 'warn') toast(insight.text, insight.level === 'error' ? 'error' : 'warn', 7000);
+        }
+    }
+    if (logLines.length > LOG_KEEP) logLines.splice(0, logLines.length - LOG_KEEP);
+    if (!logVisible()) {
+        state.logDirty = true;
+        render();                      // the sidebar badge
+        return;
+    }
+    const view = $('#logView');
+    const empty = view.querySelector('.log-empty');
     if (empty) empty.remove();
-
-    const stuck = body.scrollHeight - body.scrollTop - body.clientHeight < 40;
-
+    const stuck = view.scrollHeight - view.scrollTop - view.clientHeight < 40;
     const fragment = document.createDocumentFragment();
-    for (const line of batch) {
-        const row = document.createElement('div');
-        row.className = 'log-row ' + classifyLine(line);
-        row.textContent = line;
-        fragment.appendChild(row);
-    }
-    body.appendChild(fragment);
-
-    for (let over = body.childElementCount - LOG_LIMIT; over > 0; over--) {
-        body.firstElementChild.remove();
-    }
-    if (stuck) body.scrollTop = body.scrollHeight;
-}
-
-function clearLog() {
-    $('#logBody').innerHTML = '<div class="log-empty">&gt; log cleared</div>';
-}
-
-function onServerExit(code) {
-    state.serverRunning = false;
-    appendLog([`--- server exited (code ${code}) ---`]);
-    toast(code === 0 ? 'server stopped' : `server died (code ${code})`,
-          code === 0 ? '' : 'bad');
+    fresh.filter(lineMatches).forEach((line) => fragment.append(lineNode(line)));
+    view.append(fragment);
+    for (let over = view.childElementCount - LOG_RENDER; over > 0; over--) view.firstElementChild.remove();
+    if (state.follow && stuck) view.scrollTop = view.scrollHeight;
     render();
 }
 
+function rebuildLog() {
+    const view = $('#logView');
+    if (!logLines.length) return renderLogEmpty();
+    const matching = logLines.filter(lineMatches).slice(-LOG_RENDER);
+    if (!matching.length) {
+        view.replaceChildren(el('div', { class: 'log-empty' }, state.search ? `No line contains "${state.search}".` : 'Nothing in this view yet.'));
+        return undefined;
+    }
+    const fragment = document.createDocumentFragment();
+    matching.forEach((line) => fragment.append(lineNode(line)));
+    view.replaceChildren(fragment);
+    view.scrollTop = view.scrollHeight;
+    return undefined;
+}
+
+function clearLog() {
+    logLines.length = 0;
+    state.counts = { warn: 0, error: 0 };
+    renderLogEmpty();
+    render();
+}
+
+function renderActivity() {
+    const view = $('#activityView');
+    const shown = state.activity.filter((a) => !state.search || a.text.toLowerCase().includes(state.search));
+    if (!shown.length) {
+        view.replaceChildren(el('div', { class: 'log-empty' }, state.activity.length ? `No entry contains "${state.search}".`
+            : 'Nothing yet - every change the launcher makes (hosts, firewall, connecting) is listed here.'));
+        return;
+    }
+    const level = (l) => ({ ok: 'ok', warn: 'warn', error: 'error' }[l] || 'event');
+    view.replaceChildren(...shown.map((a) => el('div', { class: 'ln', 'data-level': level(a.level) }, el('time', {}, a.time), a.text)));
+    view.scrollTop = view.scrollHeight;
+}
+
 /* =======================================================================
-   RENDER
+   ACTIONS - SETUP
    ======================================================================= */
-function render() {
-    /* status bar */
-    const status = $('#adminStatus');
-    const statusText = status.querySelector('.status-text');
-    if (!state.known) {
-        status.className = 'system-status busy';
-        statusText.textContent = 'CHECKING...';
-    } else if (state.serverRunning) {
-        status.className = 'system-status live';
-        statusText.textContent = 'SERVER ONLINE';
-    } else if (state.admin) {
-        status.className = 'system-status ok';
-        statusText.textContent = 'READY';
-    } else {
-        status.className = 'system-status warn';
-        statusText.textContent = 'NO ADMIN';
-    }
-
-    /* pre-flight */
-    setCheck('#checkAdmin', state.admin,
-        state.admin ? 'running elevated' : 'hosts and firewall will not work');
-    $('#checkAdmin').querySelector('button').style.display = state.admin ? 'none' : '';
-
-    setCheck('#checkEaApp', state.eaApp,
-        state.eaApp ? 'running'
-                    : 'not running - the game gets no Origin token and never logs in');
-
-    setCheck('#checkCert', state.cert,
-        state.cert ? 'proto-lab/pki/server.der' : 'missing - generate before starting');
-    $('#checkCert').querySelector('button').style.display = state.cert ? 'none' : '';
-    $('#checkCert').style.display = state.mode === 'host' ? '' : 'none';
-
-    const hostsOn = state.hosts.active;
-    /* A line for the same name outside our block comes first in the file and the
-       game follows it, whatever the block says (hosts_switch.strip_redirects). */
-    const foreign = state.hosts.foreign || [];
-    const hostsTarget = state.mode === 'host' ? '127.0.0.1 (this machine)' : 'the host';
-    setCheck('#checkHosts', hostsOn && !foreign.length,
-        foreign.length
-            ? `old entry outside the launcher: "${foreign[0]}" - the game goes to `
-              + `${state.hosts.effective_ip || '?'}; TURN ON replaces it`
-            : hostsOn ? `gosredirector.ea.com -> ${state.hosts.ip || '?'}`
-                      : `the game still looks for EA servers - will point at ${hostsTarget}`);
-    const btnHosts = $('#btnHosts');
-    if (!btnHosts.dataset.pending) {
-        btnHosts.textContent = hostsOn ? 'TURN OFF' : 'TURN ON';
-    }
-    btnHosts.classList.toggle('off', hostsOn);
-
-    $('#firewallNote').textContent = state.mode === 'host'
-        ? 'TCP 42127,14219,17502 + UDP 17502-17503, 3659'
-        : 'UDP 3659 (player-to-player traffic)';
-
-    /* Count only the checks that actually apply: the certificate is the host's
-       business alone. Folding it in as "cert || client" used to hand the
-       joining player a free point and print 3/3 next to a red EA APP row. */
-    const hostsOk = hostsOn && !foreign.length;
-    const checks = state.mode === 'host'
-        ? [state.admin, state.eaApp, state.cert, hostsOk]
-        : [state.admin, state.eaApp, hostsOk];
-    const ready = checks.filter(Boolean).length;
-    $('#checkSummary').textContent = state.known
-        ? `${ready}/${checks.length} OK` : '--';
-
-    /* mode panels */
-    $$('.mode-panel').forEach((panel) => {
-        panel.classList.toggle('hidden', panel.dataset.panel !== state.mode);
-    });
-    $$('#modeMenu .nav-link').forEach((link) => {
-        link.classList.toggle('active', link.dataset.mode === state.mode);
-    });
-
-    /* actions */
-    $('#btnServer').classList.toggle('hidden', state.mode !== 'host');
-    $('#btnConnect').classList.toggle('hidden', state.mode !== 'client');
-
-    const btnServer = $('#btnServer');
-    if (!btnServer.dataset.pending) {
-        btnServer.textContent = state.serverRunning ? 'STOP SERVER' : 'START SERVER';
-    }
-    btnServer.classList.toggle('danger', state.serverRunning);
-
-    const serverStatus = $('#serverStatus');
-    serverStatus.textContent = state.serverRunning ? 'RUNNING' : 'OFFLINE';
-    serverStatus.className = 'status ' + (state.serverRunning ? 'running' : 'stopped');
-
-    /* players */
-    renderPlayers();
-    renderSave();
-    renderAvatar();
-    renderOnline();
-    renderAddressChips();
-    renderIpHint();
-    renderCommandPreview();
+function hostsTarget() {
+    return state.mode === 'host' ? '127.0.0.1' : (C.validIPv4(state.serverIp) ? state.serverIp.trim() : '');
 }
 
-function setCheck(selector, ok, note) {
-    const row = $(selector);
-    row.classList.toggle('ok', ok);
-    row.classList.toggle('warn', !ok);
-    row.querySelector('.check-note').textContent = note;
-}
-
-function renderPlayers() {
-    const list = $('#playerList');
-    list.innerHTML = '';
-    state.players.forEach(([ip, nick], index) => {
-        const row = document.createElement('li');
-        row.className = 'player-row';
-        row.innerHTML = `
-            <span class="player-slot">P${String(index + 2).padStart(2, '0')}</span>
-            <span class="player-nick"></span>
-            <span class="player-ip"></span>
-            <button class="player-kill">REMOVE</button>`;
-        row.querySelector('.player-nick').textContent = nick;
-        row.querySelector('.player-ip').textContent = ip;
-        row.querySelector('.player-kill').onclick = () => removePlayer(nick);
-        list.appendChild(row);
+/* Hosting, the redirect points at 127.0.0.1 - your own game has to reach the server on this
+   machine. The --public-ip address is a different thing entirely: it is what the server hands
+   to OTHER players. Sending your own hosts entry there makes the server see you arriving from
+   a LAN address, treat you as a remote player and name you Player_<last octet> instead of your
+   own name (lobby.py LOCAL_IPS). */
+async function setRedirect(on) {
+    const target = hostsTarget();
+    if (on && !target) return toast("Enter the host's address first", 'warn');
+    const result = on ? await api('hosts_on', target) : await api('hosts_off');
+    if (result.status) state.hosts = result.status;
+    if (!result.ok) {
+        toast(result.error, 'error');
+        logActivity('error', `hosts: ${result.error}`);
+        if (result.needs_admin) offerAdmin();
+        return render();
+    }
+    (result.removed || []).forEach((line) => {
+        toast(`Removed an old hosts entry: ${line}`, 'warn');
+        logActivity('warn', `hosts: removed an old entry "${line}"`);
     });
-    $('#slotsTag').textContent = `${state.players.length}/${state.maxGuests} SLOTS`;
-    $('#btnAddPlayer').disabled = state.players.length >= state.maxGuests;
+    logActivity('ok', on ? `redirect on: gosredirector.ea.com \u2192 ${target}` : 'redirect off, hosts restored');
+    toast(on ? `Redirect on \u2192 ${target}` : 'Redirect off - hosts restored', 'ok');
+    return render();
 }
 
-/* The game loads its career from this save, and the host's server has to log it in under the
-   same id - otherwise progress goes to a file the game never reads (proto-lab/ea_identity.py). */
-function renderSave() {
-    const { id, user, source } = state.save;
-    /* The EA App's profile or the save files name the save the game loads; the last resort,
-       the account's user id, is a guess (ea_identity.resolve). */
-    const guessed = source === 'EA App user id (guess)';
-    const hint = $('#saveHint');
-    $('#saveId').value = !state.known ? '--' : (id ? String(id) : 'not found');
-    hint.classList.toggle('alert', state.known && (!id || guessed));
-    hint.textContent = !state.known ? ' '
-        : !id ? 'No EA App account found on this PC - the host cannot save your progress.'
-        : !guessed ? `Found (${source}) - sent to the host on connect, so your progress sticks. EA App account ${user}.`
-        : 'Guessed - no save of this EA account found, your progress may not stick. Start the game '
-          + 'once through the EA App, close it, then connect again.';
+async function addFirewallRules() {
+    const result = await api('firewall_rules', state.mode);
+    if (!result.ok) {
+        toast(result.error, 'error');
+        logActivity('error', `firewall: ${result.error}`);
+        if (result.needs_admin) offerAdmin();
+        return;
+    }
+    if (result.status) state.firewall = result.status;
+    const added = result.rules || [];
+    logActivity('ok', added.length ? `firewall rules added: ${added.join(', ')}` : 'firewall rules already in place');
+    toast(added.length ? `Firewall: ${added.length} rule${added.length > 1 ? 's' : ''} added` : 'Firewall rules already in place', 'ok');
+}
+
+async function makeCert() {
+    const result = await api('make_cert');
+    if (!result.ok) {
+        toast(result.error, 'error');
+        logActivity('error', result.error);
+        return;
+    }
+    state.cert = true;
+    logActivity('ok', 'server certificate generated');
+    toast('Certificate ready', 'ok');
+}
+
+async function relaunchAsAdmin() {
+    const result = await api('relaunch_as_admin');
+    if (!result.ok) toast(result.error, 'warn');
+}
+
+function offerAdmin() {
+    if (state.admin) return;
+    toast('That needs administrator rights - use "Restart as admin" in Setup.', 'warn', 6000);
+    const row = $('[data-check="admin"]');
+    row.animate([{ background: 'rgba(240,177,60,.14)' }, { background: 'transparent' }], { duration: 1400 });
+}
+
+/* What "Fix all" will do, in order. Without administrator rights only what does not need
+   them - the rest waits for the restart. */
+function fixPlan(list) {
+    const status = Object.fromEntries(list.map((c) => [c.id, c.status]));
+    const plan = [];
+    if (status.cert === 'warn') plan.push({ id: 'cert', label: 'generate the certificate' });
+    const needsAdmin = [];
+    if ((status.hosts === 'warn' || status.hosts === 'error') && hostsTarget() && !(state.hosts || {}).error) {
+        needsAdmin.push({ id: 'hosts', label: 'turn the redirect on' });
+    }
+    if (status.firewall === 'warn') needsAdmin.push({ id: 'firewall', label: 'add the firewall rules' });
+    if (needsAdmin.length && !state.canEditHosts && !state.admin) plan.push({ id: 'admin', label: 'restart as administrator' });
+    else plan.push(...needsAdmin);
+    return plan;
+}
+
+async function fixEverything() {
+    const plan = fixPlan(C.checks(checkInput()));
+    for (const step of plan) {
+        if (step.id === 'cert') await makeCert();
+        if (step.id === 'hosts') await setRedirect(true);
+        if (step.id === 'firewall') await addFirewallRules();
+        if (step.id === 'admin') return relaunchAsAdmin();
+        render();
+    }
+    await refresh(['firewall', 'ports']);
+    return undefined;
+}
+
+async function runFix(id, button) {
+    await busy(button, async () => {
+        if (id === 'admin') return relaunchAsAdmin();
+        if (id === 'cert') return makeCert();
+        if (id === 'firewall') return addFirewallRules();
+        if (id === 'ports') return refresh(['ports']);
+        if (id === 'hosts') {
+            const check = C.checks(checkInput()).find((c) => c.id === 'hosts');
+            return setRedirect(check.status !== 'ok');
+        }
+        return undefined;
+    });
 }
 
 /* =======================================================================
-   PICTURE AND ONLINE NOW
+   ACTIONS - SESSION
+   ======================================================================= */
+async function addPlayer() {
+    const nick = $('#newNick').value.trim();
+    const ip = $('#newIp').value.trim();
+    const result = await api('add_player', nick, ip);
+    if (!result.ok) return toast(result.error, 'warn');
+    state.players = result.players;
+    logActivity('ok', `player listed: ${nick} at ${ip}`);
+    $('#newNick').value = '';
+    $('#newIp').value = '';
+    $('#newNick').focus();
+    return render();
+}
+
+async function removePlayer(nick) {
+    const result = await api('remove_player', nick);
+    state.players = result.players;
+    logActivity('ok', `player removed: ${nick}`);
+    render();
+}
+
+let hostTestTimer = null;
+function onServerIpChanged() {
+    state.serverIp = $('#serverIp').value;
+    persist();
+    clearTimeout(hostTestTimer);
+    const ip = state.serverIp.trim();
+    if (C.validIPv4(ip) && (!state.hostTest || state.hostTest.ip !== ip)) {
+        hostTestTimer = setTimeout(() => testHost(), 900);
+    }
+    render();
+}
+
+async function testHost() {
+    const ip = state.serverIp.trim();
+    if (!C.validIPv4(ip)) return render();
+    state.hostTest = { ip, running: true };
+    render();
+    const result = await api('test_host', ip);
+    if (state.serverIp.trim() !== ip) return undefined;      // typed on meanwhile
+    state.hostTest = { ip, result };
+    logActivity(result.ok ? 'ok' : 'warn', result.ok ? `host ${ip} answers (${result.ms} ms)` : `host ${ip}: ${result.error}`);
+    return render();
+}
+
+/* --- picture ---------------------------------------------------------------
    The picture is kept on this machine and sent to the host's server, which hands every
    launcher in the session the list of who is logged in, with pictures (commands.py).
-   ======================================================================= */
-/* Two copies: a small PNG for the launchers, a JPEG for the game (the server answers its ByteVault
-   profile picture requests with it - the game links libjpeg). The first size, or quality, that
-   fits the server's limit wins. */
+   Two copies: a small PNG for the launchers, a JPEG for the game (the server answers its
+   ByteVault profile picture requests with it - the game links libjpeg). The first size, or
+   quality, that fits the server's limit wins. */
 const AVATAR_PNG = { type: 'image/png', sizes: [128, 96, 64], qualities: [undefined] };
 const AVATAR_JPEG = { type: 'image/jpeg', sizes: [256, 192, 128], qualities: [0.85, 0.7, 0.55] };
 const AVATAR_MAX = 64 * 1024;
-
-function avatarImg(src) {
-    const img = document.createElement('img');
-    img.src = src;
-    img.alt = '';
-    return img;
-}
-
-function renderAvatar() {
-    $$('[data-avatar-pick]').forEach((button) => button.replaceChildren(
-        state.avatar ? avatarImg(state.avatar) : document.createTextNode('+')));
-    $('#brandIcon').replaceChildren(
-        state.avatar ? avatarImg(state.avatar) : document.createTextNode('TR'));
-}
 
 function loadImage(file) {
     return new Promise((resolve, reject) => {
@@ -362,8 +1138,8 @@ function loadImage(file) {
     });
 }
 
-/* Scaled and centre-cropped here, so nothing but a small square picture ever leaves this machine
-   - whatever size or format the photo was. */
+/* Scaled and centre-cropped here, so nothing but a small square picture ever leaves this
+   machine - whatever size or format the photo was. */
 function squareImage(img, format) {
     const side = Math.min(img.width, img.height);
     for (const size of format.sizes) {
@@ -373,8 +1149,7 @@ function squareImage(img, format) {
             const ctx = canvas.getContext('2d');
             ctx.fillStyle = '#000';             // JPEG has no transparency
             ctx.fillRect(0, 0, size, size);
-            ctx.drawImage(img, (img.width - side) / 2, (img.height - side) / 2, side, side,
-                          0, 0, size, size);
+            ctx.drawImage(img, (img.width - side) / 2, (img.height - side) / 2, side, side, 0, 0, size, size);
             const url = canvas.toDataURL(format.type, quality);
             if ((url.length - url.indexOf(',') - 1) * 3 / 4 <= AVATAR_MAX) return url;
         }
@@ -391,407 +1166,489 @@ async function pickAvatar(file) {
         png = squareImage(img, AVATAR_PNG);
         jpg = squareImage(img, AVATAR_JPEG);
     } catch (e) {
-        return toast(e.message, 'bad');
+        toast(e.message, 'error');
+        return;
     }
-    const result = await callApi('save_avatar', png, jpg);
-    if (!result.ok) return toast(result.error, 'bad');
+    const result = await api('save_avatar', png, jpg);
+    if (!result.ok) {
+        toast(result.error, 'error');
+        return;
+    }
     state.avatar = result.avatar;
-    renderAvatar();
-    toast('picture set', 'good');
+    render();
+    toast('Picture set', 'ok');
+    logActivity('ok', 'picture changed');
     const target = onlineTarget();
     if (target) sendAvatar(target);
 }
 
-/* The server files a picture under whoever it knows at the sender's address: the host once its
-   own server listens (hence the retries), a guest after identify. */
+/* The server files a picture under whoever it knows at the sender's address: the host once
+   its own server listens (hence the retries), a guest after identify. */
 async function sendAvatar(ip, attempts = 1) {
     if (!state.avatar) return;
     for (let i = 0; i < attempts; i++) {
-        const result = await callApi('upload_avatar', ip);
+        const result = await api('upload_avatar', ip);
         if (result.ok) return;
-        if (i === attempts - 1) return toast(`picture not sent: ${result.error}`, 'warn');
+        if (i === attempts - 1) {
+            toast(`Picture not sent: ${result.error}`, 'warn');
+            return;
+        }
         await new Promise((done) => setTimeout(done, 1000));
     }
 }
 
+/* =======================================================================
+   ACTIONS - PLAY
+   ======================================================================= */
+async function toggleServer() {
+    if (state.server.running) {
+        const result = await api('stop_server');
+        if (!result.ok) toast(result.error, 'error');
+        return;
+    }
+    state.serverStarting = true;
+    render();
+    let result;
+    try {
+        result = await api('start_server', state.name.trim(), state.publicIp.trim(), 'online');
+    } finally {
+        state.serverStarting = false;
+    }
+    if (!result.ok) {
+        if (result.ports) state.ports = result.ports;
+        toast(result.error, 'error', 8000);
+        logActivity('error', result.error);
+        addEvent('error', result.error);
+        render();
+        return;
+    }
+    state.server = { running: true, pid: result.pid, started_at: Date.now() / 1000, log_path: result.log_path };
+    state.ports = { ok: true, server: true, ports: [] };
+    state.online = [];
+    state.logTab = 'server';
+    clearLog();
+    appendLog([`--- start: ${C.commandPreview({ name: state.name, publicIp: state.publicIp.trim(), players: state.players })} ---`]);
+    logActivity('ok', `server started (PID ${result.pid})${result.log_path ? `, log: ${result.log_path}` : ''}`);
+    addEvent('live', 'Server started');
+    toast('Server is up - start the game when you are ready', 'ok');
+    render();
+    sendAvatar('127.0.0.1', 10);        // the server takes a moment to listen
+    setTimeout(pollOnline, 1500);
+}
+
+/* payload: {code, requested} - a server stopped from here exits non-zero as well
+   (TerminateProcess leaves 1), so only an exit nobody asked for is a crash. */
+function onServerExit(payload) {
+    const code = payload && typeof payload === 'object' ? payload.code : payload;
+    const crashed = !(payload && payload.requested) && code !== 0;
+    state.server = { running: false, exit_code: code };
+    state.online = null;
+    previousRoster = null;
+    appendLog([crashed ? `--- server exited (code ${code}) ---` : '--- server stopped ---']);
+    addEvent(crashed ? 'error' : 'event', crashed ? `Server stopped unexpectedly (code ${code})` : 'Server stopped');
+    toast(crashed ? `The server stopped (code ${code}) - the log says why` : 'Server stopped', crashed ? 'error' : 'info', crashed ? 8000 : 2500);
+    logActivity(crashed ? 'error' : 'ok', crashed ? `server exited with code ${code}` : 'server stopped');
+    if (crashed) {
+        state.logTab = 'server';
+        setPage('logs');
+    }
+    refresh(['ports']);
+    render();
+}
+
+async function launchGame() {
+    const result = await api('launch_game');
+    if (!result.ok) {
+        toast(result.error, 'error');
+        logActivity('error', result.error);
+        return result;
+    }
+    logActivity('ok', result.running ? 'the game is already running' : `game launched via ${result.via}`);
+    toast(result.running ? 'The game is already running' : `Launching via ${result.via}`, 'ok');
+    setTimeout(() => refresh(['processes']), 5000);
+    return result;
+}
+
+async function connect() {
+    const ip = state.serverIp.trim();
+    const name = state.name.trim();
+    if (C.blockers(blockerInput()).length || state.connect.running) return;
+    state.connect = { running: true, steps: {} };
+    const step = (id, status, note = '') => {
+        state.connect.steps[id] = { status, note };
+        render();
+    };
+    render();
+    /* the checklist is the answer to the click - bring it into view */
+    $('#connectCard').closest('.card').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    try {
+        /* 1. hosts - also takes out an older line that would win over the block */
+        step('redirect', 'run');
+        const hosts = state.hosts || {};
+        if (!hosts.active || hosts.ip !== ip || (hosts.foreign || []).length) {
+            const result = await api('hosts_on', ip);
+            if (result.status) state.hosts = result.status;
+            if (!result.ok) {
+                step('redirect', 'fail', result.error);
+                if (result.needs_admin) offerAdmin();
+                logActivity('error', `connect: ${result.error}`);
+                return;
+            }
+            (result.removed || []).forEach((line) => logActivity('warn', `hosts: removed an old entry "${line}"`));
+            logActivity('ok', `redirect on: gosredirector.ea.com \u2192 ${ip}`);
+        }
+        step('redirect', 'ok', `gosredirector.ea.com \u2192 ${ip}`);
+
+        /* 2. The launcher talks to the host by address, the game by name - so the launcher
+           reaching the host proves nothing about the game. Ask Windows what the game gets. */
+        step('dns', 'run');
+        const resolved = await api('resolved_redirector');
+        if (resolved[0] !== ip) {
+            step('dns', 'fail', `The game would reach ${resolved[0] || 'nothing'}, not ${ip} - another entry wins. Game not started.`);
+            logActivity('error', `connect: the name resolves to ${resolved[0] || 'nothing'}`);
+            return;
+        }
+        step('dns', 'ok', `The game will reach ${ip}`);
+
+        /* 3. Before the game starts: its first login has to find the id already registered. A
+           failure is not fatal - the game still runs, only its progress will not stick. */
+        step('identify', 'run');
+        const ident = await api('identify', ip, name);
+        if (ident.id !== undefined) {
+            state.save = { id: ident.id, user: ident.user, saves: ident.saves, source: ident.source, persona: ident.persona };
+        }
+        if (ident.ok) {
+            step('identify', 'ok', `Save ${ident.id} as ${C.cleanName(name)}`);
+            state.recent = [ip, ...state.recent.filter((r) => r !== ip)].slice(0, 6);
+            logActivity('ok', `career save ${ident.id} and name ${C.cleanName(name)} sent to ${ip}`);
+        } else {
+            step('identify', 'warn', `${ident.error} - progress may not be saved`);
+            logActivity('warn', `identify: ${ident.error}`);
+        }
+        state.joinedIp = ip;
+        previousRoster = null;
+        addEvent('live', `Connected to ${ip}`);
+        pollOnline();
+
+        /* 4. picture - filed under the id identify just registered */
+        if (!state.avatar) step('picture', 'skip', 'No picture set');
+        else if (!ident.ok) step('picture', 'skip', 'Skipped - the host does not know you yet');
+        else {
+            step('picture', 'run');
+            const up = await api('upload_avatar', ip);
+            step('picture', up.ok ? 'ok' : 'warn', up.ok ? 'Everyone sees it' : up.error);
+        }
+
+        /* 5. the game */
+        step('launch', 'run');
+        const launched = await api('launch_game');
+        if (launched.ok) {
+            step('launch', 'ok', launched.running ? 'Already running' : `Via ${launched.via}`);
+            logActivity('ok', launched.running ? 'the game is already running' : `game launched via ${launched.via}`);
+            toast('Redirect active - the game is starting. In the game: Search for session.', 'ok', 6000);
+            setTimeout(() => refresh(['processes']), 5000);
+        } else {
+            step('launch', 'fail', launched.error);
+            logActivity('error', launched.error);
+        }
+    } catch (e) {
+        Object.entries(state.connect.steps).forEach(([id, s]) => { if (s.status === 'run') step(id, 'fail', 'Interrupted'); });
+    } finally {
+        state.connect.running = false;
+        render();
+    }
+}
+
+/* --- ONLINE NOW --------------------------------------------------------- */
 /* Whose server to ask: our own while it runs, or the one this launcher connected to. */
 function onlineTarget() {
-    if (state.mode === 'host') return state.serverRunning ? '127.0.0.1' : '';
+    if (state.mode === 'host') return state.server.running ? '127.0.0.1' : '';
     return state.joinedIp;
 }
 
-function renderOnline() {
-    $$('.online-list').forEach((list) => {
-        list.dataset.empty = state.known ? state.onlineNote : '';
-        list.replaceChildren(...(state.online || []).map((p) => {
-            const row = document.createElement('li');
-            row.className = 'online-row';
-            const pic = document.createElement('span');
-            pic.className = 'online-avatar';
-            if (p.avatar) pic.append(avatarImg(p.avatar));
-            else pic.textContent = (p.name || '?').slice(0, 2).toUpperCase();
-            const name = document.createElement('span');
-            name.className = 'online-name';
-            name.textContent = p.name || `#${p.uid}`;
-            row.append(pic, name);
-            /* "local" is the server's own player, i.e. the host. */
-            const you = state.mode === 'host' ? p.local : p.uid === state.save.id;
-            const tags = [p.local ? 'HOST' : '', you ? 'YOU' : ''].filter(Boolean).join(' · ');
-            if (tags) {
-                const tag = document.createElement('span');
-                tag.className = 'online-tag';
-                tag.textContent = tags;
-                row.append(tag);
-            }
-            return row;
-        }));
-    });
-}
-
 let onlineBusy = false;
+let previousRoster = null;
 
 async function pollOnline() {
-    if (onlineBusy) return;
+    if (onlineBusy || !state.ready || state.hidden) return;
     const target = onlineTarget();
     if (!target) {
-        state.online = null;
-        state.onlineNote = state.mode === 'host' ? 'start the server to see who is in'
-                                                 : 'connect to see who is in';
-        return renderOnline();
+        if (state.online !== null) {
+            state.online = null;
+            render();
+        }
+        return;
     }
     onlineBusy = true;
     try {
-        const result = await callApi('fetch_players', target);
+        const result = await api('fetch_players', target);
+        if (target !== onlineTarget()) return;
         state.online = result.players;
-        state.onlineNote = result.ok ? 'nobody logged in yet' : 'the server does not answer';
+        state.onlineError = result.ok ? '' : result.error;
+        if (result.ok) {
+            if (previousRoster) {
+                const diff = C.rosterDiff(previousRoster, result.players);
+                diff.joined.forEach((p) => {
+                    addEvent('ok', `${p.name || `#${p.uid}`} joined`);
+                    if (!(state.mode === 'host' && p.local)) toast(`${p.name || `#${p.uid}`} joined the session`, 'ok', 3500);
+                });
+                diff.left.forEach((p) => addEvent('event', `${p.name || `#${p.uid}`} left`));
+            }
+            previousRoster = result.players;
+        }
+    } catch (e) {
+        /* reported by api() */
     } finally {
         onlineBusy = false;
     }
-    renderOnline();
-}
-
-/* One chip per detected adapter. Which address is right depends on how the
-   players connect, so the launcher shows what it found and lets you pick. */
-function renderAddressChips() {
-    const box = $('#addrChips');
-    const chosen = $('#publicIp').value.trim();
-    box.innerHTML = '';
-
-    state.addresses.forEach((addr) => {
-        const chip = document.createElement('button');
-        chip.type = 'button';
-        chip.className = `addr-chip ${addr.kind}` + (addr.ip === chosen ? ' active' : '');
-        chip.innerHTML = '<span class="chip-name"></span><span class="chip-ip"></span>';
-        chip.querySelector('.chip-name').textContent = addr.adapter;
-        chip.querySelector('.chip-ip').textContent = addr.ip;
-        chip.onclick = () => {
-            $('#publicIp').value = addr.ip;
-            persist();
-            render();
-        };
-        box.appendChild(chip);
-    });
-}
-
-function renderIpHint() {
-    const hint = $('#ipHint');
-    const value = $('#publicIp').value.trim();
-    const picked = state.addresses.find((a) => a.ip === value);
-    hint.classList.remove('alert');
-
-    if (!value) {
-        hint.textContent = 'Pick the adapter the other players reach you on, or type an address yourself.';
-    } else if (!picked) {
-        hint.innerHTML = 'Typed by hand. It has to be an address every player can actually reach you at &mdash; '
-            + 'over a VPN the one that VPN shows, on a shared network the one from '
-            + '<span class="mono">ipconfig</span>.';
-    } else if (picked.kind === 'virtual') {
-        hint.textContent = `${picked.adapter} is a virtual adapter - no other machine can reach it. Pick your network card or VPN instead.`;
-        hint.classList.add('alert');
-    } else if (picked.kind === 'vpn') {
-        hint.textContent = `Players join over ${picked.adapter}. Every one of them needs that VPN running and connected to you.`;
-    } else {
-        hint.textContent = `Same-network play over ${picked.adapter}. Everyone has to be on this network - no VPN needed.`;
-    }
-}
-
-/* Mirrors build_command() in commands.py. Built locally so typing costs no
-   IPC round trip; start_server() stays the authority and reports any error. */
-function renderCommandPreview() {
-    if (state.mode !== 'host') { $('#cmdPreview').textContent = ' '; return; }
-
-    const quote = (v) => (/\s/.test(v) ? `"${v}"` : v);
-    /* Deliberately no absolute path: it is always the same, and printing it
-       would put the Windows user name on screen and in any screenshot. */
-    const parts = ['TurboRivals', '--run-server', '--entitlements', 'online'];
-
-    const ip = $('#publicIp').value.trim();
-    const name = $('#persona').value.trim();
-    if (ip) parts.push('--public-ip', ip);
-    if (name) parts.push('--local-persona', quote(name));
-    state.players.forEach(([playerIp, nick]) => {
-        parts.push('--player', quote(`${playerIp}=${nick}`));
-    });
-
-    $('#cmdPreview').textContent = parts.join(' ');
+    render();
 }
 
 /* =======================================================================
-   ACTIONS
+   DIALOGS
    ======================================================================= */
-async function refreshState() {
-    const fresh = await callApi('get_state');
-    state.known = true;
-    state.admin = fresh.admin;
-    state.cert = fresh.cert;
-    state.hosts = fresh.hosts;
-    state.serverRunning = fresh.server_running;
-    state.maxGuests = fresh.max_guests;
-    state.addresses = fresh.addresses;
-    state.eaApp = fresh.ea_app;
-    state.save = fresh.save;
-    state.avatar = fresh.avatar || '';
-    $('#appVersion').textContent = fresh.version ? '· v' + fresh.version : '';
-    state.players = await callApi('get_players');
+let modalOpener = null;            // focus goes back there when the last dialog closes
 
-    const config = fresh.config;
-    state.mode = config.mode || 'host';
-    /* No name yet: offer the EA nickname the EA App last gave the game (ea_identity.ea_profile). */
-    const name = config.local_persona || (fresh.save && fresh.save.persona) || '';
-    $('#persona').value = name;
-    $('#guestName').value = name;
-    if (fresh.save && fresh.save.persona) {
-        $('#persona').placeholder = fresh.save.persona;
-        $('#guestName').placeholder = fresh.save.persona;
+function openModal(id) {
+    const modal = document.getElementById(id);
+    if (!topModal()) modalOpener = document.activeElement;
+    modal.hidden = false;
+    const focus = modal.querySelector('.btn-primary, .choice, button');
+    if (focus) setTimeout(() => focus.focus(), 30);
+}
+
+function closeModal(id) {
+    document.getElementById(id).hidden = true;
+    if (!topModal() && modalOpener && document.contains(modalOpener)) modalOpener.focus();
+}
+
+function topModal() {
+    return $$('.modal').filter((m) => !m.hidden).pop();
+}
+
+/* Tab and Shift+Tab go round inside an open dialog instead of into the page behind it. */
+function keepFocusIn(modal, e) {
+    const items = $$('button:not([disabled]), input:not([disabled]), textarea, [tabindex]:not([tabindex="-1"])', modal)
+        .filter((node) => node.offsetParent !== null);
+    if (!items.length) return;
+    const first = items[0];
+    const last = items[items.length - 1];
+    if (!modal.contains(document.activeElement)) {
+        e.preventDefault();
+        first.focus();
+    } else if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+    } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
     }
-    $('#publicIp').value = config.public_ip || fresh.suggested_ip || '';
-    $('#serverIp').value = config.server_ip || '';
-
-    render();
 }
 
-let persistTimer = null;
-
-/* Debounced: typing a name should not write config.json on every keystroke. */
-function persist() {
-    clearTimeout(persistTimer);
-    persistTimer = setTimeout(() => {
-        callApi('save_config', {
-            mode: state.mode,
-            local_persona: $('#persona').value.trim(),
-            public_ip: $('#publicIp').value.trim(),
-            server_ip: $('#serverIp').value.trim(),
-            entitlements: 'online',
-            players: state.players,
-        });
-    }, 400);
-}
-
-async function addPlayer() {
-    const nick = $('#newNick').value.trim();
-    const ip = $('#newIp').value.trim();
-    const result = await callApi('add_player', nick, ip);
-    if (!result.ok) return toast(result.error, 'bad');
-
-    state.players = result.players;
-    $('#newNick').value = '';
-    $('#newIp').value = '';
-    $('#newNick').focus();
-    persist();
-    render();
-}
-
-async function removePlayer(nick) {
-    const result = await callApi('remove_player', nick);
-    state.players = result.players;
-    persist();
-    render();
-}
-
-async function toggleHosts() {
-    /* Hosting, the redirect points at 127.0.0.1 - your own game has to reach
-       the server on this machine. The --public-ip address is a different thing
-       entirely: it is what the server hands to OTHER players. Sending your own
-       hosts entry there makes the server see you arriving from a LAN address,
-       treat you as a remote player and name you Player_<last octet> instead of
-       your own name (lobby.py LOCAL_IPS). */
-    const ip = state.mode === 'host' ? '127.0.0.1' : $('#serverIp').value.trim();
-
-    /* With an old line outside the block, "on" is not really on - TURN ON
-       (hosts_on) is what takes that line out. */
-    if (state.hosts.active && !(state.hosts.foreign || []).length) {
-        const result = await callApi('hosts_off');
-        if (!result.ok) return toast(result.error, 'bad');
-        toastRemoved(result);
-        toast('hosts restored, DNS cache flushed', 'good');
-    } else {
-        if (!ip) return toast('enter the server address', 'bad');
-        const result = await callApi('hosts_on', ip);
-        if (!result.ok) return toast(result.error, 'bad');
-        toastRemoved(result);
-        toast(`gosredirector.ea.com -> ${ip}`, 'good');
+async function openReport() {
+    openModal('reportModal');
+    const area = $('#reportText');
+    area.value = 'Gathering\u2026';
+    try {
+        const diag = await api('diagnostics');
+        const log = logLines.filter((l) => l.level !== 'noise').map((l) => l.text);
+        area.value = C.buildReport(diag, { activity: state.activity, log });
+    } catch (e) {
+        area.value = 'Could not gather the diagnostics.';
     }
-    state.hosts = await callApi('hosts_status');
 }
 
-function toastRemoved(result) {
-    (result.removed || []).forEach((line) =>
-        toast(`removed an old hosts entry: ${line}`, 'warn'));
-}
-
-async function addFirewall() {
-    const result = await callApi('firewall_rules', state.mode);
-    if (!result.ok) return toast(result.error, 'bad');
-    $('#checkFirewall').classList.add('ok');
-    $('#checkFirewall').querySelector('.check-dot').classList.remove('neutral');
-    toast(`rules added: ${result.rules.length}`, 'good');
-}
-
-async function makeCert() {
-    const result = await callApi('make_cert');
-    if (!result.ok) return toast(result.error, 'bad');
-    state.cert = true;
-    toast('certificate ready', 'good');
-}
-
-async function toggleServer() {
-    if (state.serverRunning) {
-        await callApi('stop_server');
-        state.serverRunning = false;
+function requestClose() {
+    const pref = state.config.restore_hosts_on_exit || 'ask';
+    const active = !!(state.hosts && state.hosts.active);
+    if (active && pref === 'ask') {
+        $('#closeText').innerHTML = `<span class="mono">gosredirector.ea.com</span> still points at <span class="mono">${escapeHtml(state.hosts.ip || '?')}</span>. `
+            + 'Left in place it breaks the EA App and other EA games until it is removed. Keep it only if you are still playing.';
+        $('#closeRemember').checked = false;
+        openModal('closeModal');
         return;
     }
-
-    const persona = $('#persona').value.trim();
-    if (!persona) return toast('enter your name - the server stores progress under it', 'warn');
-
-    const result = await callApi('start_server', persona, $('#publicIp').value.trim(), 'online');
-    if (!result.ok) return toast(result.error, 'bad');
-
-    state.serverRunning = true;
-    clearLog();
-    appendLog([`--- start: ${result.command.join(' ')} ---`]);
-    toast(`server up (PID ${result.pid})`, 'good');
-    persist();
-    sendAvatar('127.0.0.1', 10);        // the server takes a moment to listen
+    quit(active && pref === 'always');
 }
 
-async function connectAsClient() {
-    const ip = $('#serverIp').value.trim();
-    if (!ip) return toast('enter the server address from the host', 'bad');
-    /* The server cannot learn it anywhere else - the game never sends its EA nickname. */
-    const name = $('#guestName').value.trim();
-    if (!name) return toast('enter your name - the other players see you under it', 'warn');
+async function quit(restore) {
+    const result = await api('quit', restore);
+    if (result && !result.ok) toast(result.error, 'error');
+}
 
-    if (!state.hosts.active || state.hosts.ip !== ip || (state.hosts.foreign || []).length) {
-        const result = await callApi('hosts_on', ip);
-        if (!result.ok) return toast(result.error, 'bad');
-        toastRemoved(result);
-        state.hosts = await callApi('hosts_status');
+async function closeWith(restore) {
+    if ($('#closeRemember').checked) {
+        await api('save_config', { restore_hosts_on_exit: restore ? 'always' : 'never' });
+        state.config.restore_hosts_on_exit = restore ? 'always' : 'never';
     }
-    persist();
+    closeModal('closeModal');
+    quit(restore);
+}
 
-    /* The launcher talks to the host by address, the game by name - so the
-       launcher reaching the host proves nothing about the game. Ask Windows what
-       the game will get. */
-    const resolved = await callApi('resolved_redirector');
-    if (resolved[0] !== ip) {
-        return toast(`the game would go to ${resolved[0] || 'nowhere'}, not to ${ip} - `
-                     + 'another gosredirector.ea.com entry in hosts wins; game not started', 'bad');
-    }
+async function saveSetting(changes) {
+    Object.assign(state.config, changes);
+    render();
+    await api('save_config', changes);
+}
 
-    /* Before the game starts: its first login has to find the id already registered. A failure
-       is not fatal - the game still runs, only its progress will not stick. */
-    const ident = await callApi('identify', ip, name);
-    state.save = { id: ident.id, user: ident.user, saves: ident.saves,
-                   source: ident.source, persona: ident.persona };
-    toast(ident.ok ? `career save ${ident.id} and name ${name} sent to the host`
-                   : `${ident.error} - progress may not be saved`,
-          ident.ok ? 'good' : 'warn');
-    state.joinedIp = ip;
-    if (ident.ok) sendAvatar(ip);       // filed under the id identify just registered
-    pollOnline();
+/* =======================================================================
+   BINDING
+   ======================================================================= */
+function bind() {
+    $('#btnMinimize').onclick = () => api('minimize');
+    $('#btnClose').onclick = requestClose;
+    $$('.nav-item').forEach((item) => {
+        item.onclick = () => {
+            const nav = item.dataset.nav;
+            if (nav === 'host' || nav === 'client') setMode(nav);
+            else if (nav === 'help') openReport();
+            else setPage(nav);
+        };
+    });
+    $('#profileCard').onclick = () => {
+        setPage('session');
+        setTimeout(() => $('#nameInput').focus(), 50);
+    };
 
-    const launched = await callApi('launch_game');
-    toast(launched.ok ? `redirect active - launching via ${launched.via}`
-                      : launched.error,
-          launched.ok ? 'good' : 'bad');
+    /* setup */
+    $$('[data-fix]').forEach((button) => { button.onclick = () => runFix(button.dataset.fix, button); });
+    $('#btnFixAll').onclick = (e) => busy(e.currentTarget, fixEverything);
+    $('#bannerFix').onclick = (e) => busy(e.currentTarget, fixEverything);
+    $('#btnRecheck').onclick = (e) => busy(e.currentTarget, () => refresh());
+
+    /* you */
+    $('#nameInput').oninput = () => { state.name = $('#nameInput').value; persist(); render(); };
+    $('#publicIp').oninput = () => { state.publicIp = $('#publicIp').value; persist(); render(); };
+    $('#serverIp').oninput = onServerIpChanged;
+    $('#serverIp').onkeydown = (e) => { if (e.key === 'Enter') testHost(); };
+    $('#btnTestHost').onclick = (e) => busy(e.currentTarget, testHost);
+    $('#btnCopyIp').onclick = async () => {
+        const ip = state.publicIp.trim();
+        if (!C.validIPv4(ip)) return toast('Pick or type a valid address first', 'warn');
+        return toast(await copyText(ip) ? `${ip} copied - send it to your players` : 'Could not copy - select the address and press Ctrl+C', 'ok');
+    };
+    $('#btnAddPlayer').onclick = addPlayer;
+    $('#newIp').onkeydown = (e) => { if (e.key === 'Enter') addPlayer(); };
+    $('#newNick').onkeydown = (e) => { if (e.key === 'Enter') $('#newIp').focus(); };
+    $('#avatarPick').onclick = () => $('#avatarFile').click();
+    $('#avatarFile').onchange = (e) => {
+        pickAvatar(e.target.files[0]);
+        e.target.value = '';            // the same file picked again still fires
+    };
+    document.addEventListener('click', (e) => {
+        if (e.target.closest('[data-use-persona]') && state.save && state.save.persona) {
+            state.name = state.save.persona;
+            $('#nameInput').value = state.name;
+            persist();
+            render();
+        }
+    });
+
+    /* play */
+    $('#btnServer').onclick = (e) => busy(e.currentTarget, toggleServer);
+    $('#btnConnect').onclick = (e) => busy(e.currentTarget, connect);
+    $('#btnGame').onclick = (e) => busy(e.currentTarget, launchGame);
+    $('#serverLogLink').onclick = () => api('open_folder', 'logs');
+    $('#btnCopyAddr').onclick = async () => {
+        const ip = state.publicIp.trim();
+        if (!C.validIPv4(ip)) return toast('Pick the address players connect to first', 'warn');
+        return toast(await copyText(ip) ? `${ip} copied - send it to your players` : 'Could not copy', 'ok');
+    };
+    $('#setupToggle').onclick = () => {
+        state.setupOpen = $('#setupCard').classList.contains('collapsed');
+        render();
+    };
+
+    /* logs */
+    $$('#logTabs button').forEach((b) => {
+        b.onclick = () => { state.logTab = b.dataset.tab; state.logDirty = true; render(); };
+    });
+    $$('#logViews button').forEach((b) => {
+        b.onclick = () => { state.logView = b.dataset.view; state.logDirty = true; persist(); render(); };
+    });
+    let searchTimer = null;
+    $('#logSearch').oninput = () => {
+        clearTimeout(searchTimer);
+        searchTimer = setTimeout(() => { state.search = $('#logSearch').value.trim().toLowerCase(); state.logDirty = true; render(); }, 150);
+    };
+    $('#followLog').onchange = () => { state.follow = $('#followLog').checked; };
+    $('#btnClearLog').onclick = () => {
+        if (state.logTab === 'activity') {
+            state.activity = [];
+            renderActivity();
+            return;
+        }
+        clearLog();
+        toast('Window cleared - the log file still has everything', 'info', 2500);
+    };
+    $('#btnLogFolder').onclick = () => api('open_folder', 'logs');
+    $('#btnCopyLog').onclick = async () => {
+        const source = state.logTab === 'server' ? logLines.map((l) => l.text) : state.activity.map((a) => `${a.time} ${a.text}`);
+        if (!source.length) return toast('Nothing to copy yet', 'info', 2000);
+        return toast(await copyText(source.join('\n')) ? `${source.length} lines copied` : 'Could not copy', 'ok', 2500);
+    };
+
+    /* settings */
+    $$('#restorePref button').forEach((b) => { b.onclick = () => saveSetting({ restore_hosts_on_exit: b.dataset.pref }); });
+    $('#keepCaptures').onchange = () => saveSetting({ keep_captures: $('#keepCaptures').checked });
+    $$('[data-folder]').forEach((b) => {
+        b.onclick = async () => {
+            const result = await api('open_folder', b.dataset.folder);
+            if (!result.ok) toast(result.error, 'warn');
+        };
+    });
+    $$('[data-link]').forEach((b) => { b.onclick = () => api('open_url', state.projectUrl + b.dataset.link); });
+
+    /* dialogs */
+    $$('[data-close]').forEach((b) => { b.onclick = () => closeModal(b.closest('.modal').id); });
+    $$('.modal').forEach((m) => m.addEventListener('mousedown', (e) => { if (e.target === m && m.id !== 'welcomeModal') closeModal(m.id); }));
+    $$('[data-choose]').forEach((b) => {
+        b.onclick = () => {
+            closeModal('welcomeModal');
+            setMode(b.dataset.choose);
+            api('save_config', { onboarded: true, mode: b.dataset.choose });
+        };
+    });
+    $('#btnReportCopy').onclick = async () => toast(await copyText($('#reportText').value) ? 'Report copied - paste it into the issue' : 'Could not copy - select the text and press Ctrl+C', 'ok');
+    $('#btnReportIssue').onclick = () => api('open_url', `${state.projectUrl}/issues/new/choose`);
+    $('#btnReportLogs').onclick = () => api('open_folder', 'logs');
+    $('#btnCloseKeep').onclick = () => closeWith(false);
+    $('#btnCloseRestore').onclick = () => closeWith(true);
+
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+            const modal = topModal();
+            if (modal && modal.id !== 'welcomeModal') closeModal(modal.id);
+        }
+        if (e.key === 'Tab' && topModal()) keepFocusIn(topModal(), e);
+        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'l') {
+            e.preventDefault();
+            setPage(state.page === 'logs' ? 'session' : 'logs');
+        }
+    });
+    document.addEventListener('visibilitychange', () => setHidden(document.hidden));
+    window.addEventListener('focus', refreshOnReturn);
 }
 
 /* =======================================================================
    STARTUP
    ======================================================================= */
-
-/* Runs a slow action on a button and repaints once it settles, so render()
-   never fights withPending() over the label. */
-function onPending(selector, fn) {
-    $(selector).onclick = (event) =>
-        withPending(event.currentTarget, fn).then(render, (e) => {
-            toast(String(e), 'bad');
-            render();
-        });
-}
-
-function bind() {
-    $('#btnMinimize').onclick = () => callApi('minimize');
-    $('#btnClose').onclick = () => callApi('close');
-
-    $$('#modeMenu .nav-link').forEach((link) => {
-        link.onclick = () => {
-            state.mode = link.dataset.mode;
-            persist();
-            render();
-        };
-    });
-
-    $('[data-action="elevate"]').onclick = async (event) => {
-        await withPending(event.currentTarget, async () => {
-            const result = await callApi('relaunch_as_admin');
-            if (!result.ok) toast(result.error, 'bad');
-        });
-    };
-    onPending('[data-action="cert"]', makeCert);
-    onPending('[data-action="hosts-toggle"]', toggleHosts);
-    onPending('[data-action="firewall"]', addFirewall);
-    onPending('#btnServer', toggleServer);
-    onPending('#btnConnect', connectAsClient);
-
-    $('#btnAddPlayer').onclick = addPlayer;
-    $('#newIp').onkeydown = (e) => { if (e.key === 'Enter') addPlayer(); };
-    $('#newNick').onkeydown = (e) => { if (e.key === 'Enter') $('#newIp').focus(); };
-
-    $('#btnGame').onclick = async () => {
-        const result = await callApi('launch_game');
-        if (!result.ok) return toast(result.error, 'bad');
-        toast(`launching via ${result.via}`, 'good');
-    };
-    $('#btnClearLog').onclick = clearLog;
-
-    ['#persona', '#publicIp', '#serverIp'].forEach((sel) => {
-        $(sel).oninput = () => { renderAddressChips(); renderIpHint(); renderCommandPreview(); persist(); };
-    });
-    /* One name per machine: hosting or joining, it is the same player. The host field is what
-       persist() reads, so the guest field writes through to it. */
-    $('#guestName').oninput = () => {
-        $('#persona').value = $('#guestName').value;
-        $('#persona').oninput();
-    };
-    const syncHostName = $('#persona').oninput;
-    $('#persona').oninput = () => { $('#guestName').value = $('#persona').value; syncHostName(); };
-
-    $$('[data-avatar-pick]').forEach((button) => { button.onclick = () => $('#avatarFile').click(); });
-    $('#avatarFile').onchange = (e) => {
-        pickAvatar(e.target.files[0]);
-        e.target.value = '';            // the same file picked again still fires
-    };
-}
-
-const ONLINE_POLL_MS = 3000;
-
-/* Bind and paint immediately - the bridge catches up on its own. */
-runLoader();
 bind();
 render();
-whenReady.then(refreshState).then(() => {
-    pollOnline();
+
+whenReady.then(async () => {
+    const snap = await api('get_snapshot');
+    applySnapshot(snap);
+    document.body.classList.remove('booting');
+    performance.mark('snapshot');
+    render();
+    if (snap.first_run) openModal('welcomeModal');
+    logActivity('event', `launcher ${snap.version} started${snap.admin ? ' as administrator' : ''}`);
+    if (state.mode === 'client' && C.validIPv4(state.serverIp)) testHost();
+    lastFocusRefresh = Date.now();
+    await refresh();
+    setInterval(() => { if (!state.hidden) refresh(['processes']); }, PROCESS_POLL_MS);
+    setInterval(tickUptime, 1000);
     setInterval(pollOnline, ONLINE_POLL_MS);
+    pollOnline();
 });

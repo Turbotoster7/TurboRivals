@@ -21,6 +21,9 @@ Usage (console as administrator):
     python tools/hosts_switch.py on
     python tools/hosts_switch.py on --all --ip 192.168.1.10
     python tools/hosts_switch.py off
+
+TURBORIVALS_HOSTS=<file> points everything here at another file - for tests and for trying
+the launcher on a machine whose real hosts file should stay untouched.
 """
 
 from __future__ import annotations
@@ -28,15 +31,19 @@ from __future__ import annotations
 import argparse
 import ctypes
 import datetime as dt
+import ipaddress
 import os
 import shutil
 import sys
 from pathlib import Path
 
-HOSTS = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32/drivers/etc/hosts"
+HOSTS = Path(os.environ.get("TURBORIVALS_HOSTS")
+             or Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32/drivers/etc/hosts")
 
 BEGIN = "# >>> TurboRivals >>>"
 END = "# <<< TurboRivals <<<"
+BACKUP_GLOB = "hosts.turborivals-*.bak"
+BACKUPS_KEPT = 5            # every `on` makes one; without a cap they pile up in drivers\etc
 
 # The redirector the game actually uses. Established by observation:
 # NFS14.exe connected to 159.153.51.18:42127, and that address is
@@ -63,8 +70,69 @@ def is_admin() -> bool:
         return False
 
 
+def read_hosts_text() -> tuple[str, str]:
+    """(content, encoding to write it back with). Usually UTF-8; a file saved in a legacy
+    codepage (a comment with Polish letters, say) is read as Latin-1, which maps every byte to
+    one character and back - decoding it as UTF-8 with replacement would destroy those comments
+    on the next write. A UTF-8 BOM is dropped: in front of the first entry it breaks that entry.
+    A missing file is an empty one, as it is to Windows (some clean-up tools delete it)."""
+    try:
+        raw = HOSTS.read_bytes()
+    except FileNotFoundError:
+        return "", "utf-8"
+    try:
+        return raw.decode("utf-8-sig"), "utf-8"
+    except UnicodeDecodeError:
+        return raw.decode("latin-1"), "latin-1"
+
+
 def read_hosts() -> list[str]:
-    return HOSTS.read_text(encoding="utf-8", errors="replace").splitlines()
+    return read_hosts_text()[0].splitlines()
+
+
+def write_hosts(lines: list[str], encoding: str = "utf-8") -> None:
+    """Writes the file in place and reads it back. In place, not replaced: a new file would not
+    carry the original's permissions. OSError when the write fails or does not stick."""
+    text = "\n".join(lines) + "\n"
+    with open(HOSTS, "w", encoding=encoding) as f:
+        f.write(text)
+    if read_hosts_text()[0].replace("\r\n", "\n") != text:
+        raise OSError(f"{HOSTS} did not read back as written - something else holds the file")
+
+
+def backup() -> Path:
+    """A timestamped copy next to the file; only the newest BACKUPS_KEPT are kept."""
+    target = HOSTS.with_suffix(f".turborivals-{dt.datetime.now():%Y%m%d-%H%M%S}.bak")
+    if HOSTS.exists():
+        shutil.copy2(HOSTS, target)
+    else:
+        target.write_bytes(b"")
+    for old in sorted(HOSTS.parent.glob(BACKUP_GLOB))[:-BACKUPS_KEPT]:
+        try:
+            old.unlink()
+        except OSError:
+            pass
+    return target
+
+
+def restore(copy: Path) -> bool:
+    """Puts a backup back after a failed write - best effort, the caller reports the failure."""
+    try:
+        shutil.copyfile(copy, HOSTS)
+        return True
+    except OSError:
+        return False
+
+
+def valid_address(ip: str) -> bool:
+    """Only an IPv4 address belongs in front of the redirector names: the game resolves them for
+    IPv4 (AF_INET), and a typo here would be written into a system file."""
+    try:
+        addr = ipaddress.ip_address(ip.strip())
+    except ValueError:
+        return False
+    return (isinstance(addr, ipaddress.IPv4Address) and not addr.is_unspecified
+            and not addr.is_multicast and addr != ipaddress.IPv4Address("255.255.255.255"))
 
 
 def strip_block(lines: list[str]) -> list[str]:
@@ -157,16 +225,23 @@ def cmd_on(args) -> int:
         print("administrator rights required", file=sys.stderr)
         return 1
 
+    if not valid_address(args.ip):
+        print(f"not an IPv4 address: {args.ip}", file=sys.stderr)
+        return 1
     names = PRIMARY + (EXTRA if args.all else [])
-    lines, removed = strip_redirects(read_hosts())
+    text, encoding = read_hosts_text()
+    lines, removed = strip_redirects(text.splitlines())
 
-    backup = HOSTS.with_suffix(f".turborivals-{dt.datetime.now():%Y%m%d-%H%M%S}.bak")
-    shutil.copy2(HOSTS, backup)
-
+    copy = backup()
     block = [BEGIN] + [f"{args.ip}\t{n}" for n in names] + [END]
-    HOSTS.write_text("\n".join(lines + block) + "\n", encoding="utf-8")
+    try:
+        write_hosts(lines + block, encoding)
+    except OSError as e:
+        restore(copy)
+        print(f"writing hosts failed: {e}", file=sys.stderr)
+        return 1
 
-    print(f"backup: {backup}")
+    print(f"backup: {copy}")
     for line in removed:
         print(f"removed an old entry outside the block: {line}")
     print(f"redirected {len(names)} hosts to {args.ip}:")
@@ -180,16 +255,21 @@ def cmd_off(_args) -> int:
     if not is_admin():
         print("administrator rights required", file=sys.stderr)
         return 1
-    lines = read_hosts()
+    text, encoding = read_hosts_text()
+    lines = text.splitlines()
     cleaned, removed = strip_redirects(lines)
     if cleaned == lines:
         print("nothing to remove")
         return 0
+    copy = backup()
     if removed:
-        backup = HOSTS.with_suffix(f".turborivals-{dt.datetime.now():%Y%m%d-%H%M%S}.bak")
-        shutil.copy2(HOSTS, backup)
-        print(f"backup: {backup}")
-    HOSTS.write_text("\n".join(cleaned) + "\n", encoding="utf-8")
+        print(f"backup: {copy}")
+    try:
+        write_hosts(cleaned, encoding)
+    except OSError as e:
+        restore(copy)
+        print(f"writing hosts failed: {e}", file=sys.stderr)
+        return 1
     for line in removed:
         print(f"removed an old entry outside the block: {line}")
     print("TurboRivals redirect removed - hosts restored")
